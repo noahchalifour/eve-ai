@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     embedding_dims: int = 1536
 
     def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
         if self.env == "production" and self.auth_mode != "oidc":
             raise ValueError(
                 "EVE_AUTH_MODE must be 'oidc' when EVE_ENV=production; "
