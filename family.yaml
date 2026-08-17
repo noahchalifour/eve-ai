@@ -1,0 +1,16 @@
+# The family Eve serves. Not secret - names, roles, and capability grants.
+# Changes go through pull request; that history is the audit log.
+#
+# Permissions are enforced at the tool boundary in Phase 3. Phase 1 only
+# resolves them into graph state.
+members:
+  - sub: "noah-dev-subject"
+    name: "Noah"
+    role: adult
+    timezone: "America/Toronto"
+    permissions:
+      - home.control
+      - mail.read
+      - mail.send
+      - spend
+      - memory.write_shared
