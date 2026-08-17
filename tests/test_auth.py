@@ -3,13 +3,14 @@ import hashlib
 import hmac
 import json
 import time
+from types import SimpleNamespace
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from eve.auth import AuthError, authenticate, extract_bearer
+from eve.auth import AuthError, authenticate, deny_by_default, extract_bearer, stamp_thread_owner
 from eve.family import Family, Member
 
 NOAH = Member(
@@ -180,3 +181,24 @@ async def test_dev_mode_rejects_an_unknown_static_token(monkeypatch):
     with pytest.raises(AuthError, match="unrecognised development token"):
         await authenticate({"Authorization": "Bearer tok-forged"})
     get_settings.cache_clear()
+
+
+def _ctx(resource="threads", identity="sub-noah"):
+    return SimpleNamespace(resource=resource, user=SimpleNamespace(identity=identity))
+
+
+async def test_thread_create_returns_an_owner_filter_not_just_a_stamp():
+    """A create request replaying another member's thread_id must still be
+    checked against the owner filter, not accepted outright."""
+    value = {}
+    result = await stamp_thread_owner(_ctx(), value)
+    assert value["metadata"]["owner"] == "sub-noah"
+    assert result == {"owner": "sub-noah"}
+
+
+async def test_deny_by_default_scopes_runs_to_their_owner_instead_of_blocking_them():
+    assert await deny_by_default(_ctx(resource="runs"), {}) == {"owner": "sub-noah"}
+
+
+async def test_deny_by_default_still_denies_everything_else():
+    assert await deny_by_default(_ctx(resource="crons"), {}) is False

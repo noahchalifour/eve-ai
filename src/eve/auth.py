@@ -107,7 +107,15 @@ async def authenticate(headers: dict) -> dict:
 
 
 @auth.on
-async def deny_by_default(ctx, value) -> bool:
+async def deny_by_default(ctx, value):
+    """Fail closed for everything without an explicit handler below - except
+    `runs`. The SDK dispatches run polling/cancel/streaming under
+    `resource="runs"`, but offers no `auth.on.runs` namespace to register a
+    handler for it, so a flat deny here would 403 Eve's core conversation
+    path. Scope those to the caller's own threads instead of denying them
+    outright."""
+    if ctx.resource == "runs":
+        return {"owner": ctx.user.identity}
     return False
 
 
@@ -116,6 +124,7 @@ async def stamp_thread_owner(ctx, value):
     metadata = value.get("metadata") or {}
     metadata["owner"] = ctx.user.identity
     value["metadata"] = metadata
+    return {"owner": ctx.user.identity}
 
 
 @auth.on.threads
