@@ -94,8 +94,9 @@ Two consequences drive the design:
 1. **No IdP exists.** Authentik must be deployed. See §4.
 2. **Both model providers are subscription proxies, not metered APIs.** A
    background loop classifying household signals every minute would consume
-   the same Claude rate limits Noah uses for development work. The
-   high-volume reflex tier therefore must not run on OCP. See §7.
+   the same rate limits Noah uses for his own work. The high-volume reflex
+   tier therefore must not run on either proxy, and the subscription-backed
+   tiers need a cross-proxy fallback chain. See §7.1.
 
 ---
 
@@ -279,13 +280,52 @@ avoids reshaping state when tools arrive.
 
 | Tier | Model | Purpose | First used |
 |---|---|---|---|
-| `VOICE` | `ocp/claude-sonnet-5` | Eve herself | Phase 1 |
-| `DEEP` | `ocp/claude-opus-5` | Planning; authoring skills and tool code | Phase 5 |
-| `MECHANICAL` | `ocp/claude-haiku-4-5` | Structured, tool-heavy specialist work | Phase 3 |
+| `VOICE` | `chatgpt/gpt-5.3-chat-latest` | Eve herself | Phase 1 |
+| `DEEP` | `chatgpt/gpt-5.4` | Planning; hard reasoning | Phase 5 |
+| `MECHANICAL` | `chatgpt/gpt-5.3-instant` | Structured, tool-heavy specialist work | Phase 3 |
+| `CODE` | `chatgpt/gpt-5.3-codex` | Authoring skills and tool code | Phase 5 |
 | `REFLEX` | A metered, low-latency API model — Gemini Flash Lite recommended | Ambient signal filtering; memory extraction | Phase 2 |
 
 Only `VOICE` is exercised in Phase 1. The other tiers are defined now so that
 later phases add no new configuration surface.
+
+The subscription-backed tiers run on the ChatGPT proxy rather than the Claude
+proxy (OCP), so that Eve draws on the ChatGPT subscription. `REFLEX` stays on
+a metered key regardless: it is the one tier whose volume would otherwise
+exhaust a subscription's rate limits (§2.1).
+
+**Fallbacks.** Each subscription-backed tier declares a LiteLLM fallback to
+its OCP Claude equivalent — `VOICE` to `ocp/claude-sonnet-5`, `DEEP` to
+`ocp/claude-opus-5`, `MECHANICAL` and `CODE` to `ocp/claude-haiku-4-5`. Both
+proxies already exist, so this is configuration rather than new
+infrastructure, and it means an outage or rate-limit exhaustion on one
+subscription degrades Eve instead of stopping her.
+
+### 7.1.1 Risks carried by the ChatGPT proxy, and how they are retired
+
+The `chatgpt/*` models are registered in LiteLLM with `mode: responses`, and
+they are served by a subscription proxy rather than a metered API. Three
+things follow, all of which must be verified during Phase 1 implementation
+planning:
+
+1. **Responses-API shape.** These models expect the Responses API, not
+   Chat Completions. The LangChain client must be constructed accordingly
+   (`use_responses_api=True`), or LiteLLM must be confirmed to translate
+   transparently. This is a Phase 1 concern because `VOICE` is exercised
+   immediately.
+2. **Tool-calling fidelity.** Phase 3 depends entirely on reliable function
+   calling, and subscription proxies are the component most likely to support
+   it partially. A tool-calling smoke test against `chatgpt/*` through LiteLLM
+   is a Phase 1 exit criterion, even though Phase 1 ships no tools — finding
+   this out in Phase 3 would invalidate the topology, not just a model choice.
+3. **Shared rate limits.** Eve's conversational traffic now competes with
+   Noah's own ChatGPT usage. The fallback chain above is the mitigation; if it
+   fires often in practice, the answer is to move `VOICE` to OCP and leave the
+   cheaper tiers on ChatGPT.
+
+If the first two verifications fail, the tier table reverts to the OCP Claude
+models with no other change to this design — `models.py` is the sole owner of
+model identifiers (§5) precisely so that this stays a one-file decision.
 
 ### 7.2 LiteLLM changes required
 
