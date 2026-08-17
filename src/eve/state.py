@@ -1,0 +1,23 @@
+"""Graph state. `permissions` is resolved in Phase 1 and consumed in Phase 3;
+carrying it now means the tools loop does not reshape state when it lands."""
+
+from __future__ import annotations
+
+from typing import Annotated, TypedDict
+
+from langgraph.graph.message import add_messages
+
+
+class MemberContext(TypedDict):
+    sub: str
+    name: str
+    role: str
+    timezone: str
+    permissions: list[str]
+    local_time: str
+
+
+class EveState(TypedDict):
+    messages: Annotated[list, add_messages]
+    member: MemberContext
+    system_prompt: str
