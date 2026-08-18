@@ -142,8 +142,8 @@ Indexes:
 ```sql
 CREATE INDEX ON eve_memory USING gin (content_tsv);
 CREATE INDEX ON eve_memory USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON eve_memory (scope_kind, scope_id, layer) WHERE superseded_by IS NULL;
-CREATE INDEX ON eve_memory (subject) WHERE superseded_by IS NULL;
+CREATE INDEX ON eve_memory (scope_kind, scope_id, layer) WHERE superseded_why IS NULL;
+CREATE INDEX ON eve_memory (subject) WHERE superseded_why IS NULL;
 ```
 
 pgvector's HNSW rather than VectorChord's `vchordrq`: the image provides both,
@@ -152,10 +152,13 @@ than this one. Revisit past a million rows, which this corpus will not reach.
 
 ### 4.2 Nothing is deleted
 
-Retirement sets `superseded_by` and `superseded_why`. The partial indexes make
-retired rows vanish from every read at no cost, and the history stays for
-Phase 5's eval harness, which needs to answer "what did Eve believe on the day
-she got that wrong."
+Retirement sets `superseded_why`, and `superseded_by` when a replacement
+exists. **`superseded_why IS NULL` is the live predicate** — not
+`superseded_by IS NULL`, which would be wrong for an eviction, where the row
+is retired and replaced by nothing. The partial indexes make retired rows
+vanish from every read at no cost, and the history stays for Phase 5's eval
+harness, which needs to answer "what did Eve believe on the day she got that
+wrong."
 
 The one exception is an explicit instruction to forget, which hard-deletes.
 "Eve, forget I said that" has to mean the row is gone; a tombstone that still
