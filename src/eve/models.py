@@ -1,13 +1,29 @@
 """Model tier routing. This module is the ONLY place model identifiers appear.
 
-Retiering Eve - or falling back from the ChatGPT proxy to the Claude proxy -
-is a one-file change by construction (spec section 5).
+Retiering Eve is a one-file change by construction (spec section 5).
 
-All tiers are served by LiteLLM at `settings.litellm_base_url`. The
-`chatgpt/*` models are registered in LiteLLM with `mode: responses`, so the
-client is constructed with `use_responses_api=True`. The live tier
-(`tests/test_live_models.py`) verifies that assumption against the real proxy;
-nothing else in the codebase may depend on it until it has.
+All tiers are served by LiteLLM at `settings.litellm_base_url`. The `chatgpt/*`
+models are registered there with `mode: responses`, so the client is built with
+`use_responses_api=True`.
+
+WHICH MODELS WORK, AND WHY THESE. Probed against the live proxy on 2026-08-18
+(see ADR 0004). Signing in with a ChatGPT account restricts Codex to a specific
+model set, and OpenAI renamed that set for the 5.6 generation:
+
+  - `gpt-5.6-sol` / `-terra` / `-luna` are the current ChatGPT-subscription
+    models - flagship, balanced, and fast/cheap respectively.
+  - The older `chatgpt/*` names are refused by the backend: "The
+    \'gpt-5.3-instant\' model is not supported when using Codex with a ChatGPT
+    account". `gpt-5.4` still answers but is LEGACY and retires 2026-08-31.
+  - Every `ocp/*` Claude model answers and streams, but that proxy strips tool
+    definitions before they reach the model - asked to call a tool, Claude
+    replies it has no such tool. Conversational only, so `ocp/*` cannot serve
+    as a fallback for any tool-using tier. Phase 3 depends on this.
+
+There is consequently no tool-capable fallback in the instance. Vault holds an
+`anthropic_api_key` that is not wired into any LiteLLM model entry; wiring it
+in is the cheapest way to get one.
+
 """
 
 from __future__ import annotations
@@ -33,10 +49,10 @@ class Tier(str, Enum):
 # subscription proxy (spec section 2.1), and that key is provisioned at the
 # start of Phase 2.
 TIER_MODELS: dict[Tier, str | None] = {
-    Tier.VOICE: "chatgpt/gpt-5.3-chat-latest",
-    Tier.DEEP: "chatgpt/gpt-5.4",
-    Tier.MECHANICAL: "chatgpt/gpt-5.3-instant",
-    Tier.CODE: "chatgpt/gpt-5.3-codex",
+    Tier.VOICE: "chatgpt/gpt-5.6-terra",
+    Tier.DEEP: "chatgpt/gpt-5.6-sol",
+    Tier.MECHANICAL: "chatgpt/gpt-5.6-luna",
+    Tier.CODE: "chatgpt/gpt-5.6-sol",
     Tier.REFLEX: None,
 }
 

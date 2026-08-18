@@ -12,7 +12,7 @@ def test_every_tier_except_reflex_is_mapped():
 
 
 def test_voice_tier_is_the_chatgpt_conversational_model():
-    assert TIER_MODELS[Tier.VOICE] == "chatgpt/gpt-5.3-chat-latest"
+    assert TIER_MODELS[Tier.VOICE] == "chatgpt/gpt-5.6-terra"
 
 
 def test_model_is_pointed_at_litellm(monkeypatch):
@@ -24,7 +24,7 @@ def test_model_is_pointed_at_litellm(monkeypatch):
     get_settings.cache_clear()
 
     model = get_model(Tier.VOICE)
-    assert model.model_name == "chatgpt/gpt-5.3-chat-latest"
+    assert model.model_name == "chatgpt/gpt-5.6-terra"
     assert "litellm.test" in str(model.openai_api_base)
 
 

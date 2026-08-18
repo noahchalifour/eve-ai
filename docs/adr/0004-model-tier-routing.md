@@ -23,50 +23,44 @@ otherwise exhaust subscription rate limits.
 `tests/test_live_models.py` checks response shape, token streaming, and tool
 calling against the live proxy.
 
-**Status as of 2026-08-17: written, not yet run.** The implementing agent
-does not hold a LiteLLM virtual key for `litellm.chalifour.dev`, so the
-suite could not be executed to completion. One attempted run was made to
-confirm the harness itself is sound:
+**Run on 2026-08-18. The tier table was wrong, and the finding is load-bearing
+for Phase 3.**
 
-```bash
-EVE_LIVE_TESTS=1 uv run pytest tests/test_live_models.py -v -m live
-```
+Probing every model `litellm.chalifour.dev` serves produced:
 
-All three tests failed identically, at the transport layer, before any
-response-shape or tool-calling assertion was reached:
+| Model | Answers | Streams | Tool calls |
+|---|---|---|---|
+| `chatgpt/gpt-5.4` | yes | 13 chunks | **yes** |
+| `chatgpt/gpt-5.4-pro`, `gpt-5.3-codex`, `-codex-spark`, `-instant`, `-chat-latest` | refused | — | — |
+| `ocp/claude-sonnet-5`, `ocp/claude-haiku-4-5` | yes | 3 chunks | **no** |
 
-```
-openai.AuthenticationError: Error code: 401 - {'error': {'message':
-"Authentication Error, LiteLLM Virtual Key expected. Received=****,
-expected to start with 'sk-'.", 'type': 'auth_error', 'param': 'None',
-'code': '401'}}
-```
+Two things this settled:
 
-This confirms the test harness constructs and sends the request correctly
-and reaches the proxy; it says nothing about whether `use_responses_api`
-or tool calling work, because a real virtual key never reached the model.
+1. **The ChatGPT credential is a ChatGPT-account Codex sign-in**, which serves
+   a restricted model set. The refusals are all *"The '<model>' model is not
+   supported when using Codex with a ChatGPT account"* — including
+   `gpt-5.3-codex`. OpenAI renamed that set for the 5.6 generation, and
+   `gpt-5.4` is legacy with a **2026-08-31 retirement date**. The tiers
+   therefore now target `gpt-5.6-sol` / `-terra` / `-luna`, registered in
+   LiteLLM the same day (infrastructure repo, `kubernetes/apps/litellm`).
+   Those three are documented as available to ChatGPT sign-in but could not be
+   probed before registration; **confirm them after that change rolls out.**
 
-**The command the user must run to retire this risk:**
+2. **`ocp/*` cannot do tool calling at all.** Not "declined to call" — the
+   proxy strips tool definitions before the model sees them, and Claude replies
+   that it has no such tool. `use_responses_api=True` also 404s against OCP, so
+   it is Chat Completions only.
 
-```bash
-EVE_LIVE_TESTS=1 EVE_LITELLM_API_KEY=<eve virtual key> \
-  uv run pytest tests/test_live_models.py -v -m live
-```
+Consequence for the fallback design: **the OCP fallback chain this ADR assumed
+does not work for any tool-using tier.** Falling back from a `chatgpt/*` model
+to `ocp/claude-*` would silently produce an agent that cannot call tools, which
+in Phase 3 means a specialist that cannot act while still answering fluently —
+the worst failure mode available. No tool-capable fallback currently exists in
+the instance. Vault holds an unused `anthropic_api_key`; wiring it into LiteLLM
+is the cheapest way to get one, and should happen before Phase 3.
 
-**What each outcome means:**
-
-- **All three pass:** both proxy assumptions hold. No further action; this
-  section should be updated to record the pass.
-- **`test_voice_tier_responds_through_litellm` (and/or
-  `test_voice_tier_streams_tokens`) fails with a request-shape error:**
-  `use_responses_api=True` in `src/eve/models.py` is wrong for this proxy.
-  Flip it to `False`, rerun, and record which setting works here.
-- **`test_voice_tier_emits_tool_calls` fails** (the other two pass): the
-  ChatGPT proxy does not reliably return tool calls. Change `TIER_MODELS`
-  in `src/eve/models.py` to the OCP Claude equivalents
-  (`ocp/claude-sonnet-5`, `ocp/claude-opus-5`, `ocp/claude-haiku-4-5`,
-  `ocp/claude-haiku-4-5`), rerun, and record the reversal here. No other
-  file changes are required for that fallback, by construction.
+Response shape: `use_responses_api=True` is correct for `chatgpt/*` and wrong
+for `ocp/*`.
 
 ## Consequences
 
