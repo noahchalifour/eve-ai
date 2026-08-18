@@ -93,3 +93,32 @@ async def test_system_prompt_is_sent_to_the_model_and_not_stored_in_messages(
     assert "You are Eve." in seen["messages"][0].content
     # The system prompt is rebuilt every turn, never persisted into history.
     assert all(m.type != "system" for m in result["messages"])
+
+
+async def test_persona_is_sent_as_a_developer_message_not_a_system_message(
+    monkeypatch,
+):
+    """The ChatGPT backend rejects system messages outright.
+
+    Verified live on 2026-08-18: it answers `System messages are not allowed`
+    and the entire turn errors, so Eve cannot speak at all. The Responses API
+    wants the `developer` role instead, which langchain-openai emits from this
+    marker. Without it Eve is mute against every chatgpt/* model.
+    """
+    seen = {}
+
+    class RecordingModel(GenericFakeChatModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            seen["messages"] = input
+            return AIMessage(content="ok")
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    app = build_graph(
+        model_factory=lambda _t: RecordingModel(messages=iter([]))
+    ).compile()
+    await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    persona = seen["messages"][0]
+    assert persona.additional_kwargs.get("__openai_role__") == "developer"
