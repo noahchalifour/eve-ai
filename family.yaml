@@ -1,16 +1,33 @@
 # The family Eve serves. Not secret - names, roles, and capability grants.
 # Changes go through pull request; that history is the audit log.
 #
+# `sub` is the OIDC subject claim from Authentik. The `eve` provider runs
+# sub_mode: hashed_user_id, which authentik resolves to the User model's own
+# `uid` (providers/oauth2/id_token.py) - a stable value that survives a
+# username or email change, unlike the username itself.
+#
+# To get a new member's value after enrolling them in Authentik:
+#
+#   kubectl -n authentik exec deploy/authentik-worker -- ak shell -c \
+#     "from authentik.core.models import User; \
+#      print(User.objects.get(username='<username>').uid)"
+#
 # Permissions are enforced at the tool boundary in Phase 3. Phase 1 only
 # resolves them into graph state.
 members:
-  # TODO(Phase 0): "noah-dev-subject" is a development placeholder matching
-  # EVE_DEV_TOKENS in .env.example, NOT a real identity. Replace it with the
-  # Authentik subject UUID before running in `oidc` mode - until then an
-  # otherwise-valid Authentik token resolves to no member and 401s with
-  # "unknown member", which reads like a token problem and is not one.
-  - sub: "noah-dev-subject"
+  - sub: "a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb"
     name: "Noah"
+    role: adult
+    timezone: "America/Toronto"
+    permissions:
+      - home.control
+      - mail.read
+      - mail.send
+      - spend
+      - memory.write_shared
+
+  - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
+    name: "Kendra"
     role: adult
     timezone: "America/Toronto"
     permissions:
