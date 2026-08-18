@@ -18,7 +18,7 @@ members:
   - sub: "a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb"
     name: "Noah"
     role: adult
-    timezone: "America/Toronto"
+    timezone: "America/Vancouver"
     permissions:
       - home.control
       - mail.read
@@ -29,7 +29,7 @@ members:
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"
     role: adult
-    timezone: "America/Toronto"
+    timezone: "America/Vancouver"
     permissions:
       - home.control
       - mail.read
