@@ -1,11 +1,14 @@
 import asyncio
+import importlib
 from datetime import UTC, datetime
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from eve.memory import recall as recall_mod
+from eve.memory import recall as memory_recall
 from eve.memory.types import Memory
+
+recall_mod = importlib.import_module("eve.memory.recall")
 
 CONFIG = {"configurable": {"thread_id": "t1"}}
 
@@ -86,6 +89,78 @@ async def test_a_slow_embedding_degrades_to_lexical_rather_than_failing(
     assert [m.id for m in bundle["episodic"]] == ["e1"]
     assert bundle["profile"], "always-on layers must survive a degraded turn"
     assert wired["vector"] == 0
+
+
+async def test_embedding_that_finishes_after_its_budget_is_not_used(
+    monkeypatch, wired
+):
+    """Catch a deadline applied only after slow store reads complete."""
+    release_embedding = asyncio.Event()
+
+    async def embed_after_budget(text):
+        await release_embedding.wait()
+        return [0.0] * 1535 + [1.0]
+
+    async def slow_always_on(sub, thread_id):
+        await asyncio.sleep(0.03)
+        release_embedding.set()
+        await asyncio.sleep(0)
+        return ([_mem("p1", "Noah is vegetarian", "profile")],
+                [_mem("h1", "The dog is Cooper", "household")],
+                "They talked about dinner.")
+
+    monkeypatch.setattr(recall_mod, "embed_query", embed_after_budget)
+    monkeypatch.setattr(recall_mod, "load_always_on", slow_always_on)
+    monkeypatch.setattr(recall_mod, "EMBED_BUDGET_OVERRIDE_S", 0.01)
+
+    bundle = (await recall_mod.recall(_state(), CONFIG))["memory"]
+
+    assert bundle["vector_used"] is False
+    assert [m.id for m in bundle["episodic"]] == ["e1"]
+    assert wired["vector"] == 0
+
+
+async def test_cancelling_recall_cancels_and_awaits_its_embedding(
+    monkeypatch, wired
+):
+    """Catch an embedding task detached when recall is cancelled mid-read."""
+    embedding_started = asyncio.Event()
+    embedding_cancelled = asyncio.Event()
+    release_embedding = asyncio.Event()
+    store_started = asyncio.Event()
+
+    async def blocking_embed(text):
+        embedding_started.set()
+        try:
+            await release_embedding.wait()
+            return [0.0] * 1535 + [1.0]
+        finally:
+            embedding_cancelled.set()
+
+    async def blocking_always_on(sub, thread_id):
+        store_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(recall_mod, "embed_query", blocking_embed)
+    monkeypatch.setattr(recall_mod, "load_always_on", blocking_always_on)
+
+    task = asyncio.create_task(recall_mod.recall(_state(), CONFIG))
+    try:
+        await embedding_started.wait()
+        await store_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(embedding_cancelled.wait(), timeout=0.1)
+    finally:
+        release_embedding.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def test_package_recall_export_is_callable():
+    assert callable(memory_recall)
 
 
 async def test_a_failing_embedding_degrades_rather_than_raising(

@@ -50,6 +50,24 @@ def _budget_seconds() -> float:
     return get_settings().memory_recall_embed_budget_ms / 1000.0
 
 
+async def _embed_within_budget(query: str) -> list[float]:
+    """Bound the embedding from task creation, not from when it is awaited."""
+    async with asyncio.timeout(_budget_seconds()):
+        return await embed_query(query)
+
+
+async def _cancel_and_await(task: asyncio.Task[object]) -> None:
+    """Leave no detached embedding task without swallowing cancellation."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise
+    except Exception:
+        pass
+
+
 async def recall(state: dict, config: RunnableConfig) -> dict:
     started = perf_counter()
     settings = get_settings()
@@ -61,56 +79,58 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
     # overlap. The lexical round trip is a few milliseconds of the budget the
     # embedding would otherwise have had entirely to itself.
     embed_task = (
-        asyncio.create_task(embed_query(query)) if query.strip() else None
-    )
-
-    profile, household, digest = await load_always_on(sub, thread_id)
-    lexical = (
-        await search_episodic_lexical(sub, query, limit=_CANDIDATES)
+        asyncio.create_task(_embed_within_budget(query))
         if query.strip()
-        else []
+        else None
     )
 
-    episodic: list[Memory] = lexical
-    vector_used = False
-    if embed_task is not None:
-        remaining = _budget_seconds() - (perf_counter() - started)
-        try:
-            embedding = await asyncio.wait_for(embed_task, timeout=max(remaining, 0.0))
-        except Exception:
-            # Timeout, transport error, a zero vector - all the same response.
-            # wait_for cancels the task for us on timeout; cancel() is a no-op
-            # if it already finished.
-            embed_task.cancel()
-            logger.debug("recall: vector arm missed its budget", exc_info=True)
-        else:
-            vectors = await search_episodic_vector(
-                sub, embedding, limit=_CANDIDATES
-            )
-            episodic = _fuse_memories(lexical, vectors)
-            vector_used = True
-
-    share = settings.memory_token_budget // 3
-    profile = fit_budget(profile, share)
-    household = fit_budget(household, share)
-    # Whatever the always-on layers did not spend flows to episodic, which is
-    # the only unbounded layer and so the only one that can use it.
-    spent = sum(len(m.content) // 4 for m in (*profile, *household))
-    episodic = fit_budget(episodic, settings.memory_token_budget - spent)
-
-    latency_ms = (perf_counter() - started) * 1000
-    _record_span(profile, household, episodic, vector_used, latency_ms)
-
-    return {
-        "memory": MemoryBundle(
-            profile=profile,
-            household=household,
-            episodic=episodic,
-            digest=digest,
-            vector_used=vector_used,
-            latency_ms=latency_ms,
+    try:
+        profile, household, digest = await load_always_on(sub, thread_id)
+        lexical = (
+            await search_episodic_lexical(sub, query, limit=_CANDIDATES)
+            if query.strip()
+            else []
         )
-    }
+
+        episodic: list[Memory] = lexical
+        vector_used = False
+        if embed_task is not None:
+            try:
+                embedding = await embed_task
+            except Exception:
+                # Timeout, transport error, a zero vector - all the same response.
+                logger.debug("recall: vector arm missed its budget", exc_info=True)
+            else:
+                vectors = await search_episodic_vector(
+                    sub, embedding, limit=_CANDIDATES
+                )
+                episodic = _fuse_memories(lexical, vectors)
+                vector_used = True
+
+        share = settings.memory_token_budget // 3
+        profile = fit_budget(profile, share)
+        household = fit_budget(household, share)
+        # Whatever the always-on layers did not spend flows to episodic, which is
+        # the only unbounded layer and so the only one that can use it.
+        spent = sum(len(m.content) // 4 for m in (*profile, *household))
+        episodic = fit_budget(episodic, settings.memory_token_budget - spent)
+
+        latency_ms = (perf_counter() - started) * 1000
+        _record_span(profile, household, episodic, vector_used, latency_ms)
+
+        return {
+            "memory": MemoryBundle(
+                profile=profile,
+                household=household,
+                episodic=episodic,
+                digest=digest,
+                vector_used=vector_used,
+                latency_ms=latency_ms,
+            )
+        }
+    finally:
+        if embed_task is not None:
+            await _cancel_and_await(embed_task)
 
 
 def _fuse_memories(lexical: list[Memory], vectors: list[Memory]) -> list[Memory]:
