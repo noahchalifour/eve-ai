@@ -4,6 +4,11 @@
 # Permissions are enforced at the tool boundary in Phase 3. Phase 1 only
 # resolves them into graph state.
 members:
+  # TODO(Phase 0): "noah-dev-subject" is a development placeholder matching
+  # EVE_DEV_TOKENS in .env.example, NOT a real identity. Replace it with the
+  # Authentik subject UUID before running in `oidc` mode - until then an
+  # otherwise-valid Authentik token resolves to no member and 401s with
+  # "unknown member", which reads like a token problem and is not one.
   - sub: "noah-dev-subject"
     name: "Noah"
     role: adult

@@ -189,7 +189,16 @@ def _ctx(resource="threads", identity="sub-noah"):
 
 async def test_thread_create_returns_an_owner_filter_not_just_a_stamp():
     """A create request replaying another member's thread_id must still be
-    checked against the owner filter, not accepted outright."""
+    checked against the owner filter, not accepted outright.
+
+    Note what this does and does not prove about the running server. In
+    aegra-api 0.10.3 the return value asserted below is never consulted on
+    thread creation: `api/threads.py:173` reads only a `"metadata"` key out of
+    the handler's result, stamps `metadata["owner"]` itself unconditionally at
+    `:200`, and blocks the `if_exists` replay with a `user_id` predicate at
+    `:186-188`. The test is kept because the SDK's documented contract is that
+    a returned filter *is* applied, and a future version may honour it again -
+    but a passing assertion here is not evidence that the server does."""
     value = {}
     result = await stamp_thread_owner(_ctx(), value)
     assert value["metadata"]["owner"] == "sub-noah"

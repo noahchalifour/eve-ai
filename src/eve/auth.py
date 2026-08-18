@@ -112,10 +112,11 @@ async def deny_by_default(ctx, value):
 
     Runs need no carve-out here: empirically (aegra-api 0.10.3's
     `core/auth_registry.py` `ROUTE_AUTH_MAP`, an exhaustive route -> resource
-    map), no route ever authorizes under `resource="runs"` - run creation,
-    reads, and deletes all dispatch under `resource="threads"` (actions
-    `create_run`/`read`/`delete`), which `only_own_threads` below already
-    scopes to the caller. If a future Aegra version starts dispatching a
+    map), no route ever authorizes under `resource="runs"` - every run route
+    dispatches under `resource="threads"`: creation as `create_run`, a single
+    run read as `read`, listing a thread's runs as `search`, cancel as
+    `update`, and delete as `delete`. `only_own_threads` below scopes all five
+    to the caller. If a future Aegra version starts dispatching a
     real `resource="runs"` event, this flat deny would 403 it, and
     `test_run_is_not_blocked_by_authorization` in
     tests/test_integration.py is the regression guard that will catch it."""

@@ -1,7 +1,9 @@
 name: build
 
 on:
+  pull_request:
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -14,8 +16,10 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest -m "not integration and not live" -v
 
+  # Publishing stays tag-only; `test` above now runs on every PR and push.
   image:
     needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read

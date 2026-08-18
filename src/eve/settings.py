@@ -48,6 +48,20 @@ class Settings(BaseSettings):
                 "EVE_AUTH_MODE must be 'oidc' when EVE_ENV=production; "
                 f"got {self.auth_mode!r}"
             )
+        if self.auth_mode == "oidc":
+            # Without these, every request fails a signature or claim check
+            # and the deployment answers 401 to everyone - a symptom that
+            # reads like a token problem. Refuse to start instead.
+            missing = [
+                name
+                for name in ("oidc_issuer", "oidc_audience", "oidc_jwks_url")
+                if not getattr(self, name)
+            ]
+            if missing:
+                raise ValueError(
+                    "EVE_AUTH_MODE=oidc requires "
+                    + ", ".join(f"EVE_{name.upper()}" for name in missing)
+                )
 
 
 @lru_cache(maxsize=1)

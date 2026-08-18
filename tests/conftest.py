@@ -1,11 +1,13 @@
 """Shared test fixtures.
 
-Both `get_settings` and `get_model` are `lru_cache`d process-wide singletons.
+`get_settings`, `get_model`, `get_family` and `load_persona` are all
+`lru_cache`d process-wide singletons, and all four are settings-derived.
 Tests that mutate env vars to exercise settings-dependent behavior (e.g.
-`test_model_is_pointed_at_litellm`) clear those caches before use but leave
-the mutated singleton cached afterward, which would otherwise leak into every
-later test in the session. Clearing both caches around every test keeps them
-isolated regardless of run order.
+`test_model_is_pointed_at_litellm`) clear caches before use but leave the
+mutated singleton cached afterward, which would otherwise leak into every
+later test in the session. Clearing every one of them around every test keeps
+them isolated regardless of run order - most tests monkeypatch the importing
+module's reference instead, which works but does not generalise.
 """
 
 from __future__ import annotations
@@ -18,17 +20,21 @@ import time
 import httpx
 import pytest
 
+from eve.context import load_persona
+from eve.family import get_family
 from eve.models import get_model
 from eve.settings import get_settings
+
+_CACHED = (get_settings, get_model, get_family, load_persona)
 
 
 @pytest.fixture(autouse=True)
 def _clear_caches():
-    get_settings.cache_clear()
-    get_model.cache_clear()
+    for cached in _CACHED:
+        cached.cache_clear()
     yield
-    get_settings.cache_clear()
-    get_model.cache_clear()
+    for cached in _CACHED:
+        cached.cache_clear()
 
 
 SERVER_URL = "http://127.0.0.1:2026"

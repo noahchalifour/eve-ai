@@ -5,8 +5,9 @@ is a one-file change by construction (spec section 5).
 
 All tiers are served by LiteLLM at `settings.litellm_base_url`. The
 `chatgpt/*` models are registered in LiteLLM with `mode: responses`, so the
-client is constructed with `use_responses_api=True`; Task 8 verifies that
-assumption against the live proxy before any tool work depends on it.
+client is constructed with `use_responses_api=True`. The live tier
+(`tests/test_live_models.py`) verifies that assumption against the real proxy;
+nothing else in the codebase may depend on it until it has.
 """
 
 from __future__ import annotations
