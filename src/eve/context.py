@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from langchain_core.runnables import RunnableConfig
 
 from eve.family import Member, get_family
+from eve.memory.types import MemoryBundle
 from eve.settings import get_settings
 from eve.state import EveState, MemberContext
 
@@ -36,14 +37,43 @@ def build_member_context(member: Member, now: datetime) -> MemberContext:
     )
 
 
-def build_system_prompt(persona: str, member: MemberContext) -> str:
-    return (
+def _section(title: str, memories: list) -> str:
+    if not memories:
+        return ""
+    lines = "\n".join(f"- {memory.content}" for memory in memories)
+    return f"\n### {title}\n{lines}\n"
+
+
+def build_system_prompt(
+    persona: str, member: MemberContext, memory: MemoryBundle | None = None
+) -> str:
+    prompt = (
         f"{persona}\n\n"
         "## Who you are speaking with\n"
         f"- Name: {member['name']}\n"
         f"- Role in the family: {member['role']}\n"
         f"- Their local time right now: {member['local_time']}\n"
     )
+    if memory is None:
+        return prompt
+
+    # Standing facts and retrieved episodes are separated on purpose, and
+    # episodic carries a hedge in its heading. Merged into one list, a fuzzy
+    # vector match reads to the model with exactly the same authority as
+    # "Noah is vegetarian", and Eve states a guess as a fact.
+    body = (
+        _section("What you know about them", memory["profile"])
+        + _section("What you know about this household", memory["household"])
+        + _section(
+            "From earlier conversations - may be relevant, may not",
+            memory["episodic"],
+        )
+    )
+    if memory["digest"]:
+        body += f"\n### Where this conversation has got to\n{memory['digest']}\n"
+    if not body:
+        return prompt
+    return prompt + "\n## What you remember\n" + body
 
 
 async def load_context(state: EveState, config: RunnableConfig) -> dict:
