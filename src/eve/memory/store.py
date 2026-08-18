@@ -261,9 +261,16 @@ async def upsert_digest(thread_id: str, content: str) -> None:
     key here (scope_id is a plain text column shared with three other layers),
     and adding a partial unique index for a row written once every six turns
     is machinery for nothing.
+
+    The pair runs inside `conn.transaction()` even though the pool is
+    autocommit: psycopg opens a real transaction block for the duration of
+    the `async with` and commits it on exit, so a concurrent read (or a
+    second overlapping call for the same thread_id) can never observe the
+    gap between the DELETE and the INSERT - no transient zero-digest read,
+    no chance of two rows landing side by side.
     """
     pool = await get_pool()
-    async with pool.connection() as conn:
+    async with pool.connection() as conn, conn.transaction():
         await conn.execute(
             "DELETE FROM eve_memory WHERE layer='digest' AND scope_kind='thread'"
             " AND scope_id=%s",

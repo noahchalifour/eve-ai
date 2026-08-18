@@ -355,6 +355,18 @@ async def test_upsert_digest_replaces_rather_than_accumulates(pool):
 
 
 async def test_eviction_retires_the_weakest_until_the_cap_is_met(pool):
+    """Salience is deliberately anti-correlated with insertion order (and
+    thus with recency): fact 0 is inserted first (oldest `last_seen_at`) but
+    given the HIGHEST salience, fact 4 is inserted last (newest) but given
+    the LOWEST. All five rows land within the same instant, so the decay
+    factor is effectively identical across them and salience alone decides
+    the order.
+
+    If `evict_over_cap` ordered by recency/decay alone - e.g. a regression
+    that dropped `salience *` from its ORDER BY - it would keep the most
+    RECENTLY inserted rows (fact 2/3/4) instead of the ones this test
+    expects (fact 0/1/2), so this test can only pass if salience is
+    genuinely part of the ranking, not decay masquerading as it."""
     for i in range(5):
         mid = await store.add(
             layer="profile", scope_kind="member", scope_id="sub-noah",
@@ -362,12 +374,12 @@ async def test_eviction_retires_the_weakest_until_the_cap_is_met(pool):
         )
         async with pool.connection() as conn:
             await conn.execute(
-                "UPDATE eve_memory SET salience=%s WHERE id=%s", (i / 10.0, mid)
+                "UPDATE eve_memory SET salience=%s WHERE id=%s", ((4 - i) / 10.0, mid)
             )
     evicted = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
     profile, _, _ = await store.load_always_on("sub-noah", "t1")
     assert evicted == 2
-    assert {m.content for m in profile} == {"fact 2", "fact 3", "fact 4"}
+    assert {m.content for m in profile} == {"fact 0", "fact 1", "fact 2"}
 
 
 async def test_eviction_supersedes_rather_than_deletes(pool):
@@ -384,6 +396,52 @@ async def test_eviction_supersedes_rather_than_deletes(pool):
             "SELECT count(*) FROM eve_memory WHERE superseded_why='evicted'"
         )
         assert (await cur.fetchone())[0] == 2
+
+
+async def test_eviction_is_idempotent(pool):
+    """The subselect's `superseded_why IS NULL` guard exists precisely so
+    that calling `evict_over_cap` twice with the same arguments does
+    nothing the second time. Without that guard, every already-evicted row
+    is re-selected on every run and the returned count is wrong forever -
+    silently, with no error."""
+    for i in range(5):
+        mid = await store.add(
+            layer="profile", scope_kind="member", scope_id="sub-noah",
+            kind="fact", content=f"fact {i}",
+        )
+        async with pool.connection() as conn:
+            await conn.execute(
+                "UPDATE eve_memory SET salience=%s WHERE id=%s", (i / 10.0, mid)
+            )
+    first = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
+    second = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
+    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    assert first == 2
+    assert second == 0
+    assert {m.content for m in profile} == {"fact 2", "fact 3", "fact 4"}
+
+
+async def test_supersede_accepts_new_id_none_for_an_eviction(pool):
+    """The brief requires `supersede(old_id, new_id, why)` to accept
+    `new_id=None` for an eviction, which replaces nothing. Without a direct
+    test, this branch is only exercised by evict_over_cap's own inline
+    UPDATE - never through supersede() itself - and it would silently stay
+    dead code if that changed."""
+    old = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="an evicted-style fact",
+    )
+    await store.supersede(old, None, "evicted")
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT superseded_why, superseded_by FROM eve_memory WHERE id=%s",
+            (old,),
+        )
+        why, by = await cur.fetchone()
+        assert why == "evicted"
+        assert by is None
+    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    assert profile == []
 
 
 async def test_overlapping_finds_candidates_by_subject_and_by_vector(pool):
