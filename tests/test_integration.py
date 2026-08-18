@@ -45,15 +45,31 @@ async def test_thread_is_created_and_stamped_with_its_owner(aegra_server):
 
 
 async def test_a_member_cannot_read_another_members_thread(aegra_server):
+    """A bare `pytest.raises(Exception)` would also pass on a network hiccup
+    or a client-side validation error without ever exercising authorization.
+    Assert the specific status observed, matching the 404-is-a-pass
+    convention established by the cross-member resume/delete tests below."""
     thread = await _client(aegra_server, "tok-noah").threads.create()
-    with pytest.raises(Exception):
+    with pytest.raises(APIStatusError) as exc_info:
         await _client(aegra_server, "tok-kid").threads.get(thread["thread_id"])
+    assert exc_info.value.status_code == 404
 
 
 async def test_search_returns_only_the_callers_own_threads(aegra_server):
-    await _client(aegra_server, "tok-noah").threads.create()
+    """Must create a thread for BOTH members. With only `tok-kid` ever
+    creating threads, `all(...)` over kid's results is vacuously true on a
+    clean database regardless of whether the search filter does anything -
+    it only had teeth here because of leftover rows from earlier runs. The
+    non-empty check and the explicit "noah's thread_id is absent" assertion
+    are what actually catch a broken filter."""
+    noah_thread = await _client(aegra_server, "tok-noah").threads.create()
+    kid_thread = await _client(aegra_server, "tok-kid").threads.create()
     kid_threads = await _client(aegra_server, "tok-kid").threads.search()
+    assert len(kid_threads) > 0
     assert all(t["metadata"]["owner"] == "sub-kid" for t in kid_threads)
+    kid_thread_ids = {t["thread_id"] for t in kid_threads}
+    assert kid_thread["thread_id"] in kid_thread_ids
+    assert noah_thread["thread_id"] not in kid_thread_ids
 
 
 # --- Additional tests: cross-member bypass and the runs-resource assumption ---

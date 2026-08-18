@@ -196,8 +196,14 @@ async def test_thread_create_returns_an_owner_filter_not_just_a_stamp():
     assert result == {"owner": "sub-noah"}
 
 
-async def test_deny_by_default_scopes_runs_to_their_owner_instead_of_blocking_them():
-    assert await deny_by_default(_ctx(resource="runs"), {}) == {"owner": "sub-noah"}
+async def test_deny_by_default_denies_runs_too():
+    """No former carve-out here: aegra-api 0.10.3 never dispatches an auth
+    event with resource="runs" (see the docstring on deny_by_default), so
+    this resource name is unreachable in practice - covered anyway so a flat
+    `False` stays correct if that ever changes and the SDK starts passing
+    it through, which would then need its own handler rather than silently
+    falling through here."""
+    assert await deny_by_default(_ctx(resource="runs"), {}) is False
 
 
 async def test_deny_by_default_still_denies_everything_else():

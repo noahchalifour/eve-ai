@@ -108,14 +108,17 @@ async def authenticate(headers: dict) -> dict:
 
 @auth.on
 async def deny_by_default(ctx, value):
-    """Fail closed for everything without an explicit handler below - except
-    `runs`. The SDK dispatches run polling/cancel/streaming under
-    `resource="runs"`, but offers no `auth.on.runs` namespace to register a
-    handler for it, so a flat deny here would 403 Eve's core conversation
-    path. Scope those to the caller's own threads instead of denying them
-    outright."""
-    if ctx.resource == "runs":
-        return {"owner": ctx.user.identity}
+    """Fail closed for everything without an explicit handler below.
+
+    Runs need no carve-out here: empirically (aegra-api 0.10.3's
+    `core/auth_registry.py` `ROUTE_AUTH_MAP`, an exhaustive route -> resource
+    map), no route ever authorizes under `resource="runs"` - run creation,
+    reads, and deletes all dispatch under `resource="threads"` (actions
+    `create_run`/`read`/`delete`), which `only_own_threads` below already
+    scopes to the caller. If a future Aegra version starts dispatching a
+    real `resource="runs"` event, this flat deny would 403 it, and
+    `test_run_is_not_blocked_by_authorization` in
+    tests/test_integration.py is the regression guard that will catch it."""
     return False
 
 
