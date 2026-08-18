@@ -247,3 +247,154 @@ async def test_vector_search_does_not_leak_another_members_episode(pool):
 
 def test_subjects_in_lowercases_and_drops_stopwords():
     assert store.subjects_in("How is Cooper doing?") == ["cooper", "doing"]
+
+
+async def test_add_returns_an_id_that_reads_back(pool):
+    mid = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah is vegetarian",
+        subject="noah",
+        source_thread="t1",
+    )
+    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    assert [(m.id, m.content) for m in profile] == [(mid, "Noah is vegetarian")]
+
+
+async def test_supersede_hides_the_old_row_but_keeps_it(pool):
+    """The row survives because Phase 5's eval harness needs to answer 'what
+    did Eve believe on the day she got that wrong'."""
+    old = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="Kendra works Tuesdays",
+    )
+    new = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="Kendra works Wednesdays",
+    )
+    await store.supersede(old, new, "contradicted")
+    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    assert [m.content for m in profile] == ["Kendra works Wednesdays"]
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) FROM eve_memory")
+        assert (await cur.fetchone())[0] == 2
+
+
+async def test_forget_actually_deletes(pool):
+    """'Eve, forget I said that' has to mean the row is gone. A tombstone
+    that still holds the text is a quiet lie to a family member about their
+    own data."""
+    mid = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="something private",
+    )
+    await store.forget(mid)
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) FROM eve_memory")
+        assert (await cur.fetchone())[0] == 0
+
+
+async def test_reinforce_bumps_last_seen_and_salience(pool):
+    mid = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="x",
+    )
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_memory SET last_seen_at = now() - interval '30 days'"
+        )
+    await store.reinforce(mid)
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT salience, now() - last_seen_at < interval '1 minute'"
+            " FROM eve_memory WHERE id=%s",
+            (mid,),
+        )
+        salience, recent = await cur.fetchone()
+        assert salience > 0.5
+        assert recent
+
+
+async def test_reinforce_clamps_salience_at_one(pool):
+    """Otherwise a fact mentioned every day drifts to a salience no other
+    memory can ever outrank, and the layer stops being sortable."""
+    mid = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", content="x",
+    )
+    for _ in range(20):
+        await store.reinforce(mid)
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT salience FROM eve_memory WHERE id=%s", (mid,))
+        assert (await cur.fetchone())[0] <= 1.0
+
+
+async def test_set_embeddings_makes_a_row_findable_by_vector(pool):
+    mid = await store.add(
+        layer="episodic", scope_kind="member", scope_id="sub-noah",
+        kind="event", content="the dishwasher",
+    )
+    assert await store.search_episodic_vector("sub-noah", _VEC, limit=5) == []
+    await store.set_embeddings([(mid, _VEC)])
+    found = await store.search_episodic_vector("sub-noah", _VEC, limit=5)
+    assert [m.id for m in found] == [mid]
+
+
+async def test_upsert_digest_replaces_rather_than_accumulates(pool):
+    await store.upsert_digest("t1", "first summary")
+    await store.upsert_digest("t1", "second summary")
+    _, _, digest = await store.load_always_on("sub-noah", "t1")
+    assert digest == "second summary"
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) FROM eve_memory WHERE layer='digest'"
+        )
+        assert (await cur.fetchone())[0] == 1
+
+
+async def test_eviction_retires_the_weakest_until_the_cap_is_met(pool):
+    for i in range(5):
+        mid = await store.add(
+            layer="profile", scope_kind="member", scope_id="sub-noah",
+            kind="fact", content=f"fact {i}",
+        )
+        async with pool.connection() as conn:
+            await conn.execute(
+                "UPDATE eve_memory SET salience=%s WHERE id=%s", (i / 10.0, mid)
+            )
+    evicted = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
+    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    assert evicted == 2
+    assert {m.content for m in profile} == {"fact 2", "fact 3", "fact 4"}
+
+
+async def test_eviction_supersedes_rather_than_deletes(pool):
+    """A mistakenly evicted fact has to be recoverable, and 'why did she
+    forget that' has to have an answer."""
+    for i in range(3):
+        await store.add(
+            layer="profile", scope_kind="member", scope_id="sub-noah",
+            kind="fact", content=f"fact {i}",
+        )
+    await store.evict_over_cap("profile", "member", "sub-noah", cap=1)
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) FROM eve_memory WHERE superseded_why='evicted'"
+        )
+        assert (await cur.fetchone())[0] == 2
+
+
+async def test_overlapping_finds_candidates_by_subject_and_by_vector(pool):
+    by_subject = await store.add(
+        layer="profile", scope_kind="member", scope_id="sub-noah",
+        kind="fact", subject="kendra", content="Kendra works Tuesdays",
+    )
+    by_vector = await store.add(
+        layer="episodic", scope_kind="member", scope_id="sub-noah",
+        kind="event", content="unrelated words entirely",
+    )
+    await store.set_embeddings([(by_vector, _VEC)])
+    found = await store.overlapping("sub-noah", ["kendra"], _VEC, limit=10)
+    assert {m.id for m in found} == {by_subject, by_vector}

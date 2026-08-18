@@ -158,3 +158,216 @@ async def search_episodic_vector(
         """,
         {"sub": sub, "vec": to_pgvector(embedding), "limit": limit},
     )
+
+
+async def _execute(sql: str, params: dict | tuple) -> None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(sql, params)
+
+
+async def add(
+    *,
+    layer: str,
+    scope_kind: str,
+    scope_id: str,
+    kind: str,
+    content: str,
+    subject: str | None = None,
+    confidence: float = 0.7,
+    salience: float = 0.5,
+    source_thread: str | None = None,
+    source_run: str | None = None,
+) -> str:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """
+            INSERT INTO eve_memory
+              (layer, scope_kind, scope_id, kind, subject, content,
+               confidence, salience, source_thread, source_run)
+            VALUES
+              (%(layer)s, %(scope_kind)s, %(scope_id)s, %(kind)s, %(subject)s,
+               %(content)s, %(confidence)s, %(salience)s, %(thread)s, %(run)s)
+            RETURNING id
+            """,
+            {
+                "layer": layer,
+                "scope_kind": scope_kind,
+                "scope_id": scope_id,
+                "kind": kind,
+                "subject": subject,
+                "content": content,
+                "confidence": confidence,
+                "salience": salience,
+                "thread": source_thread,
+                "run": source_run,
+            },
+        )
+        return str((await cur.fetchone())[0])
+
+
+async def supersede(old_id: str, new_id: str | None, why: str) -> None:
+    """Retire a row. `new_id` may be None for an eviction, which replaces
+    nothing."""
+    await _execute(
+        "UPDATE eve_memory SET superseded_by = %(new)s, superseded_why = %(why)s"
+        " WHERE id = %(old)s AND superseded_why IS NULL",
+        {"old": old_id, "new": new_id, "why": why},
+    )
+
+
+async def reinforce(memory_id: str) -> None:
+    """Restated or used - reset the decay clock and raise salience.
+
+    Salience is clamped at 1.0. Without the clamp a fact mentioned daily
+    drifts to a value nothing else can outrank, and the layer stops being
+    sortable at all.
+    """
+    await _execute(
+        "UPDATE eve_memory"
+        " SET last_seen_at = now(), salience = least(salience + 0.1, 1.0)"
+        " WHERE id = %s",
+        (memory_id,),
+    )
+
+
+async def forget(memory_id: str) -> None:
+    """Hard delete. The ONE exception to supersede-don't-delete (spec 4.2).
+
+    'Eve, forget I said that' has to mean the row is gone. A tombstone that
+    still holds the text is not forgetting - it is a quiet lie to a family
+    member about their own data.
+    """
+    await _execute("DELETE FROM eve_memory WHERE id = %s", (memory_id,))
+
+
+async def set_embeddings(pairs: list[tuple[str, list[float]]]) -> None:
+    if not pairs:
+        return
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "UPDATE eve_memory SET embedding = %s::vector WHERE id = %s",
+                [(to_pgvector(vec), mid) for mid, vec in pairs],
+            )
+
+
+async def upsert_digest(thread_id: str, content: str) -> None:
+    """One digest row per thread, replaced in place.
+
+    Delete-then-insert rather than ON CONFLICT: there is no natural unique
+    key here (scope_id is a plain text column shared with three other layers),
+    and adding a partial unique index for a row written once every six turns
+    is machinery for nothing.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "DELETE FROM eve_memory WHERE layer='digest' AND scope_kind='thread'"
+            " AND scope_id=%s",
+            (thread_id,),
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, source_thread)"
+            " VALUES ('digest','thread',%s,'digest',%s,%s)",
+            (thread_id, content, thread_id),
+        )
+
+
+async def evict_over_cap(
+    layer: str, scope_kind: str, scope_id: str, cap: int
+) -> int:
+    """Retire the weakest rows until the scope fits under its cap.
+
+    Eviction is what makes the cap mean anything. A profile that grows without
+    limit stops being a profile and becomes an episodic log with a misleading
+    name (spec 3).
+
+    The subselect's WHERE must filter on `superseded_why IS NULL`, not
+    `superseded_by IS NULL`: an eviction replaces nothing, so an evicted row's
+    `superseded_by` stays NULL forever. Filtering on the wrong column would
+    re-select every already-evicted row on every run and the returned count
+    would never mean anything.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """
+            UPDATE eve_memory SET superseded_why = 'evicted',
+                                  superseded_by = NULL
+            WHERE id IN (
+              SELECT id FROM eve_memory
+              WHERE superseded_why IS NULL
+                AND layer = %(layer)s AND scope_kind = %(kind)s
+                AND scope_id = %(scope)s
+              ORDER BY salience
+                -- Half-life decay, matching ranking.recency_decay and
+                -- search_episodic_lexical's SQL: exp(-ln(2) * age / half_life)
+                -- is 0.5 at age == half_life, not exp(-age/half_life)'s
+                -- ~0.368 (e-folding decay - a different constant with the
+                -- same shape, and this codebase does not get to hold three
+                -- opinions about what "half-life" means. 365 days here,
+                -- deliberately much longer than episodic recall's 90:
+                -- eviction decides what to keep forever, not what is
+                -- relevant to surface right now.
+                * exp(-ln(2) * EXTRACT(EPOCH FROM (now() - last_seen_at))
+                      / 86400.0 / 365.0)
+                DESC
+              OFFSET %(cap)s
+            )
+            RETURNING id
+            """,
+            {"layer": layer, "kind": scope_kind, "scope": scope_id, "cap": cap},
+        )
+        return len(await cur.fetchall())
+
+
+async def overlapping(
+    sub: str, subjects: list[str], embedding: list[float] | None, limit: int = 10
+) -> list[Memory]:
+    """Existing memories a new fact might contradict.
+
+    Extraction judges new facts against these rather than in a vacuum - which
+    is the whole reason contradiction handling lives at write time and not in
+    a nightly reconciler that would see two conflicting sentences and no way
+    to tell which is current (spec 5.4).
+    """
+    if embedding is None:
+        return await _fetch(
+            f"""
+            SELECT {_COLUMNS} FROM eve_memory
+            WHERE superseded_why IS NULL AND layer <> 'digest'
+              AND ((scope_kind='member' AND scope_id=%(sub)s)
+                   OR scope_kind='household')
+              AND subject = ANY(%(subjects)s)
+            LIMIT %(limit)s
+            """,
+            {"sub": sub, "subjects": subjects, "limit": limit},
+        )
+    return await _fetch(
+        f"""
+        (SELECT {_COLUMNS} FROM eve_memory
+         WHERE superseded_why IS NULL AND layer <> 'digest'
+           AND ((scope_kind='member' AND scope_id=%(sub)s)
+                OR scope_kind='household')
+           AND subject = ANY(%(subjects)s)
+         LIMIT %(limit)s)
+        UNION
+        (SELECT {_COLUMNS} FROM eve_memory
+         WHERE superseded_why IS NULL AND layer <> 'digest'
+           AND embedding IS NOT NULL
+           AND ((scope_kind='member' AND scope_id=%(sub)s)
+                OR scope_kind='household')
+         ORDER BY embedding <=> %(vec)s::vector
+         LIMIT %(limit)s)
+        """,
+        {
+            "sub": sub,
+            "subjects": subjects,
+            "vec": to_pgvector(embedding),
+            "limit": limit,
+        },
+    )
