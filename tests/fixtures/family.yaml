@@ -1,0 +1,11 @@
+members:
+  - sub: "sub-noah"
+    name: "Noah"
+    role: adult
+    timezone: "America/Toronto"
+    permissions: [spend, home.control]
+  - sub: "sub-kid"
+    name: "Kid"
+    role: child
+    timezone: "America/Toronto"
+    permissions: [home.control]

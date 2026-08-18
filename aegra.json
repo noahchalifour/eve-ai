@@ -1,0 +1,8 @@
+{
+  "graphs": {
+    "eve": "./src/eve/graph.py:graph"
+  },
+  "auth": {
+    "path": "./src/eve/auth.py:auth"
+  }
+}

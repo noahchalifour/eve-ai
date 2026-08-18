@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aegra-api>=0.10.3",
+    "aegra-cli>=0.10.3",
     "langchain-openai>=1.5.1",
     "langgraph>=1.2.11",
     "pydantic-settings>=2.15.0",
