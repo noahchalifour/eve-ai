@@ -130,15 +130,41 @@ other**, and the distinction matters when reading test failures:
    *before* any handler in `auth.py` runs. This is why cross-member thread
    access — read, resume (`create_run`), delete — returns **404**, not 403:
    Aegra declines to even confirm the thread exists to a non-owner.
-2. `src/eve/auth.py`'s handlers are defense in depth on top of that:
-   `stamp_thread_owner` stamps `metadata.owner` on creation, `only_own_threads`
-   filters every other thread action to the caller's identity, and
-   `scope_store_to_member` prefixes every store namespace with the caller's
-   identity so Phase 2's memory writes can never cross members.
+2. `src/eve/auth.py`'s handlers are defense in depth on top of that.
+   `only_own_threads` is the one that is genuinely applied: `threads.py:238,
+   268, 834` pass its returned dict through `build_metadata_filter` and AND it
+   into the query, so search, read and delete are filtered twice.
+   `stamp_thread_owner` stamps `metadata.owner` on creation, but Aegra stamps
+   it itself, unconditionally and from the authenticated user, at
+   `threads.py:200` — ours changes nothing in this version. It is kept because
+   the SDK's documented contract is that the returned filter is applied, and
+   because being wrong in the safe direction costs nothing.
    `deny_by_default` (`@auth.on`) fails closed for any resource/action
    without an explicit handler — including one operators are likely to
    forget, like the resume path — because the SDK otherwise lets an
-   unmatched request through unfiltered.
+   unmatched request through unfiltered. This is the one handler here that is
+   unambiguously load-bearing: nothing in Aegra stops an authenticated family
+   member from creating, updating or deleting assistants, or from touching
+   any of the four `crons` actions. `deny_by_default` does.
+
+**Store isolation is Aegra's, not ours, and this matters for Phase 2.**
+`scope_store_to_member` mutates `value["namespace"]` and returns `None`.
+Aegra's store routes read only the **return value** (`api/store.py:44-51`:
+`if filters: if "namespace" in filters: request.namespace = filters["namespace"]`),
+so the mutation is discarded and the handler is inert *as a scoping
+mechanism*. What it does do is matter as the **allow** — without a handler
+matching `store`, `deny_by_default` would block store access outright.
+
+What actually isolates the store is Aegra's own `apply_namespace_scoping`
+(`api/store.py:289-310`), which buries every namespace under
+`["users", <identity>, ...]` unconditionally. It cannot be escaped by a
+crafted client prefix: a client sending `["users", "<someone-else>"]` lands at
+`["users", "<caller>", "users", "<someone-else>"]`. The isolation is real and
+stronger than ours would have been.
+
+The consequence for Phase 2: editing `scope_store_to_member` to carve out a
+shared family namespace will have **no effect**. The lever is `aegra.json`'s
+`store.scopes` map (`api/store.py:261-286`), currently unset here.
 
 One consequence worth stating plainly: **run operations authorize under
 `resource="threads"`, not `"runs"`.** `aegra_api/core/auth_registry.py`'s
@@ -174,10 +200,13 @@ likely already running. Container-internal ports are standard.
 
 ## Running the tests
 
-Three tiers, matching the pytest markers declared in `pyproject.toml`:
+Three tiers, matching the pytest markers declared in `pyproject.toml`.
+`addopts` deselects `integration` and `live` by default, so a bare `pytest`
+is the unit tier; an explicit `-m` on the command line replaces that
+expression rather than adding to it.
 
 ```bash
-# Unit — no network, no services
+# Unit — no network, no services (the default; the -m is explicit for clarity)
 uv run pytest -m "not integration and not live"
 
 # Integration — real Postgres, Redis, and a live `aegra serve`
@@ -194,9 +223,30 @@ in production), and `family.yaml` loading — all against fakes, no network.
 Integration tests spin up `aegra serve` itself against the compose stack and
 drive it through `langgraph_sdk`, covering thread creation, persistence,
 cross-member access denial, and the run/resource-scoping behavior described
-above. Live tests are not yet implemented in this repository — Task 8 adds
-them, and they are the tier that verifies the `chatgpt/*` Responses-API
-assumption in `models.py` against the real proxy.
+above. Live tests (`tests/test_live_models.py`) are the tier that verifies
+the `chatgpt/*` Responses-API assumption in `models.py` against the real
+proxy — response shape, incremental streaming, and tool calls.
+
+## Observability
+
+Tracing is configuration, not code: there is no application-level callback in
+this repository, and none is needed. Aegra emits the spans itself when these
+are set in the environment (see `.env.example`, where they are commented out
+so local runs do not trace):
+
+```bash
+OTEL_TARGETS=LANGFUSE
+LANGFUSE_BASE_URL=https://langfuse.chalifour.dev
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+Per-member attribution is native. `create_run_config` passes `user.identity`
+into `get_tracing_metadata` (`services/langgraph_service.py:747-748`), and
+`observability/span_enrichment.py:113-118` sets `langfuse.user.id` and
+`langfuse.session.id` (the thread) on the trace. Graph and model spans land
+under the one trace because both are emitted by the same instrumented process.
+Nothing here needs to ride on thread `owner` metadata.
 
 ## Deployment
 
@@ -214,3 +264,4 @@ responsibility ends at building and publishing the image
 - [ADR 0001 — Specialists are subgraph tools, not separate services](adr/0001-agents-as-subgraph-tools.md)
 - [ADR 0002 — No model call may precede the first streamed token](adr/0002-no-llm-before-first-token.md)
 - [ADR 0003 — The embedding model and dimension are pinned](adr/0003-embedding-model-pinned.md)
+- [ADR 0004 — Model tier routing](adr/0004-model-tier-routing.md)
