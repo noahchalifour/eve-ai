@@ -206,5 +206,44 @@ async def test_vector_search_ignores_rows_with_no_embedding(pool):
     assert await store.search_episodic_vector("sub-noah", _VEC, limit=5) == []
 
 
+async def test_lexical_search_does_not_leak_another_members_episode(pool):
+    """`load_always_on` already proves member isolation for profile facts;
+    the episodic search arms have their own scope predicate and need their
+    own proof, or a regression here would leak one member's memories to
+    another through search rather than through the always-on load."""
+    await _insert(
+        pool, scope_id="sub-kendra", content="Kendra's secret dishwasher plan"
+    )
+    found = await store.search_episodic_lexical("sub-noah", "dishwasher", limit=10)
+    assert found == []
+
+
+async def test_lexical_search_finds_household_episodes_for_any_member(pool):
+    """The other half of the scope predicate: a household-scoped episode is
+    not owned by whichever member happens to match scope_id, it is visible to
+    everyone."""
+    await _insert(
+        pool,
+        scope_kind="household",
+        scope_id="",
+        content="We decided to replace the dishwasher in March",
+    )
+    found = await store.search_episodic_lexical("sub-kendra", "dishwasher", limit=10)
+    assert [m.content for m in found] == [
+        "We decided to replace the dishwasher in March"
+    ]
+
+
+async def test_vector_search_does_not_leak_another_members_episode(pool):
+    """Same isolation proof as the lexical arm, for the nearest-neighbour
+    path: a member-scoped embedding must not surface for a different
+    caller, no matter how close the vector."""
+    from eve.memory.embed import to_pgvector
+
+    await _insert(pool, scope_id="sub-kendra", embedding=to_pgvector(_VEC))
+    found = await store.search_episodic_vector("sub-noah", _VEC, limit=5)
+    assert found == []
+
+
 def test_subjects_in_lowercases_and_drops_stopwords():
     assert store.subjects_in("How is Cooper doing?") == ["cooper", "doing"]
