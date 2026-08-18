@@ -27,4 +27,8 @@ USER 10001
 
 # `aegra serve` runs the API and its background workers in ONE process
 # (WORKER_COUNT x N_JOBS_PER_WORKER). There is no separate worker command.
-CMD ["aegra", "serve"]
+#
+# `eve-migrate` applies Eve's own memory schema first; Aegra runs its own
+# Alembic migrations separately at startup. `exec` so aegra, not sh, receives
+# SIGTERM - without it the pod takes the full termination grace period to die.
+CMD ["sh", "-c", "eve-migrate && exec aegra serve"]
