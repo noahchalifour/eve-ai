@@ -31,3 +31,14 @@ def test_model_is_pointed_at_litellm(monkeypatch):
 def test_reflex_tier_is_not_available_until_phase_2():
     with pytest.raises(NotImplementedError, match="Phase 2"):
         get_model(Tier.REFLEX)
+
+
+def test_voice_model_declares_streaming(monkeypatch):
+    """`streaming=True` must be explicitly set, not merely truthy by default:
+    langchain-core's `_should_stream` consults `model_fields_set`, so a model
+    that inherited the default would not route `ainvoke` through `_astream`
+    and Eve's first token would arrive with her last one."""
+    monkeypatch.setenv("EVE_LITELLM_API_KEY", "sk-test")
+    model = get_model(Tier.VOICE)
+    assert "streaming" in model.model_fields_set
+    assert model.streaming is True

@@ -44,6 +44,33 @@ async def test_graph_puts_member_context_into_state(monkeypatch):
     assert "You are Eve." in result["system_prompt"]
 
 
+async def test_the_graph_streams_tokens_rather_than_one_blob(monkeypatch):
+    """Eve's headline product property (ADR 0002, spec 4.2 item 3): tokens
+    arrive incrementally rather than as one blob. `stream_mode="messages"` is
+    the mode Aegra relays to SSE, and `await model.ainvoke` in the `eve` node
+    only yields token-level chunks through it because langchain-core's
+    `_should_stream` routes the call through `_astream`. Nothing else on this
+    branch fails if that stops being true - the live streaming test exercises
+    `model.astream` directly, a different call path.
+
+    The other half of the mechanism, `streaming=True` reaching the real
+    client, is pinned by `test_voice_model_declares_streaming` in
+    tests/test_models.py; a fake model cannot carry that kwarg."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    app = build_graph(model_factory=_fake_factory).compile()
+    chunks = [
+        chunk
+        async for chunk in app.astream(
+            {"messages": [HumanMessage("hello")]}, CONFIG, stream_mode="messages"
+        )
+    ]
+
+    assert len(chunks) > 1, "the turn arrived as one blob, not a token stream"
+    assert "".join(message.content for message, _meta in chunks) == "Hi Noah."
+
+
 async def test_system_prompt_is_sent_to_the_model_and_not_stored_in_messages(
     monkeypatch,
 ):

@@ -33,14 +33,35 @@ def test_system_prompt_contains_persona_and_member():
     assert "2026-08-17" in prompt
 
 
-async def test_load_context_resolves_the_authenticated_member(monkeypatch):
+class PrincipalObject:
+    """Stands in for `aegra_api.models.auth.User`: an attribute-only principal
+    with no `__getitem__`. Aegra injects one of these into
+    `config["configurable"]["langgraph_auth_user"]` on every real run."""
+
+    def __init__(self, identity: str) -> None:
+        self.identity = identity
+
+
+@pytest.mark.parametrize(
+    "principal",
+    [
+        pytest.param({"identity": "sub-noah"}, id="mapping"),
+        pytest.param(PrincipalObject("sub-noah"), id="object"),
+    ],
+)
+async def test_load_context_resolves_the_authenticated_member(monkeypatch, principal):
+    """Both principal shapes must resolve. The mapping is what the LangGraph
+    SDK documents and what a hand-built test config looks like; the object is
+    what Aegra actually injects, and subscripting it raised
+    `TypeError: 'User' object is not subscriptable` on every real run."""
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
 
-    config = {"configurable": {"langgraph_auth_user": {"identity": "sub-noah"}}}
+    config = {"configurable": {"langgraph_auth_user": principal}}
     result = await load_context({"messages": []}, config)
 
     assert result["member"]["name"] == "Noah"
+    assert result["member"]["sub"] == "sub-noah"
     assert "You are Eve." in result["system_prompt"]
 
 

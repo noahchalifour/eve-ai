@@ -7,6 +7,7 @@ Eve's first streamed token.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -46,7 +47,14 @@ def build_system_prompt(persona: str, member: MemberContext) -> str:
 
 
 async def load_context(state: EveState, config: RunnableConfig) -> dict:
-    identity = config["configurable"]["langgraph_auth_user"]["identity"]
+    # Aegra injects a pydantic `aegra_api.models.auth.User` here, which has no
+    # `__getitem__`; the LangGraph SDK's own documentation describes a
+    # dict-shaped principal, and the shape our unit tests hand-build. Read it
+    # tolerantly so neither shape breaks the graph.
+    principal = config["configurable"]["langgraph_auth_user"]
+    identity = (
+        principal["identity"] if isinstance(principal, Mapping) else principal.identity
+    )
     member = get_family().get(identity)
     member_ctx = build_member_context(member, datetime.now(tz=ZoneInfo("UTC")))
     return {

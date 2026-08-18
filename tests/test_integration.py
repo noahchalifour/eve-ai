@@ -1,11 +1,15 @@
 """End-to-end integration tests against a live `aegra serve` instance.
 
 Requires `docker compose -f docker-compose.test.yml up -d` (Postgres + Redis)
-to be running. Marked `integration` so the default test run (unit tests only)
-skips these; select them explicitly with `-m integration`.
+to be running. Marked `integration`, and `pyproject.toml`'s pytest `addopts`
+deselects that marker, so a bare `pytest` skips these; select them explicitly
+with `-m integration`, which overrides `addopts`.
 """
 
 from __future__ import annotations
+
+import asyncio
+import time
 
 import httpx
 import pytest
@@ -113,14 +117,14 @@ async def test_cross_member_delete_is_rejected(aegra_server):
 
 async def test_run_is_not_blocked_by_authorization(aegra_server):
     """Starting a run on the owner's own thread must not be denied by the
-    authorization layer. `deny_by_default` in src/eve/auth.py special-cases
-    `ctx.resource == "runs"` on an assumption about Aegra's dispatch that has
-    never been checked against a running server; a 403 here means that
-    assumption is wrong and Eve's core conversation path is broken.
+    authorization layer. A 403 here means `deny_by_default` in src/eve/auth.py
+    is failing closed on a resource/action Eve's core conversation path needs,
+    and that path is broken.
 
-    The run itself is expected to fail downstream (no working LiteLLM key in
-    this test environment) - only the absence of a 403 at the authorization
-    layer is asserted here.
+    This asserts only the HTTP status. What the run then *does* is
+    `test_a_turn_executes_our_graph_under_aegra` below - the two are separate
+    because they fail for different reasons and a reader debugging one should
+    not have to disentangle the other.
     """
     client = _client(aegra_server, "tok-noah")
     thread = await client.threads.create()
@@ -132,3 +136,80 @@ async def test_run_is_not_blocked_by_authorization(aegra_server):
         )
     except APIStatusError as exc:
         assert exc.status_code != 403
+
+
+async def _run_to_completion(client, thread_id: str) -> dict:
+    """Dispatch one turn and wait for the run to reach a terminal state.
+
+    `runs.join` blocks until the worker finishes but returns `{}` on failure
+    rather than raising, so the run is re-read afterwards for its real status.
+    """
+    run = await client.runs.create(
+        thread_id, "eve", input={"messages": [{"role": "user", "content": "hi"}]}
+    )
+    await client.runs.join(thread_id, run["run_id"])
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        run = await client.runs.get(thread_id, run["run_id"])
+        if run["status"] not in ("pending", "running"):
+            return run
+        await asyncio.sleep(0.5)
+    raise AssertionError(f"run did not finish within 60s: status={run['status']}")
+
+
+async def test_a_turn_executes_our_graph_under_aegra(aegra_server):
+    """A dispatched turn must actually execute `load_context` under Aegra and
+    reach the model call.
+
+    This is the test that would have caught the `langgraph_auth_user` seam:
+    Aegra injects a pydantic `aegra_api.models.auth.User` into
+    `config["configurable"]["langgraph_auth_user"]`, not the plain dict the
+    unit tests hand-build, so subscripting it raised
+    `TypeError: 'User' object is not subscriptable` on every real run while
+    every test on the branch still passed.
+
+    There is no working LiteLLM key in this environment, so the turn cannot
+    produce an assistant message - the `eve` node fails with a 401 from the
+    proxy. That is a fact about the environment, not about our graph, so what
+    is asserted here is everything up to and including that boundary:
+
+    - `load_context` completed and its output was checkpointed, i.e. the
+      member was resolved off the real Aegra principal and the persona was
+      assembled (`values["member"]`, `values["system_prompt"]`);
+    - the graph advanced to the `eve` node (`next == ["eve"]`), i.e. the turn
+      reached the model call;
+    - nothing in *our* code raised: no task failed inside `load_context`.
+
+    Any failure in `load_context` - a `TypeError` from the principal shape, an
+    unknown member, a missing persona file - fails all three.
+    """
+    client = _client(aegra_server, "tok-noah")
+    thread = await client.threads.create()
+    run = await _run_to_completion(client, thread["thread_id"])
+
+    state = await client.threads.get_state(thread["thread_id"])
+    values = state["values"]
+
+    failed_in_our_graph = [
+        task for task in state["tasks"] if task["name"] == "load_context"
+    ]
+    assert not failed_in_our_graph, (
+        f"load_context did not complete: {failed_in_our_graph} "
+        f"(run error: {run.get('error_message')})"
+    )
+
+    assert values["member"]["sub"] == "sub-noah"
+    assert values["member"]["name"] == "Noah"
+    assert values["member"]["permissions"] == ["home.control", "spend"]
+    assert values["member"]["local_time"]
+    assert "You are Eve" in values["system_prompt"]
+    assert "Noah" in values["system_prompt"]
+
+    if run["status"] == "success":
+        # A future environment with a working key gets the whole turn.
+        assert values["messages"][-1]["type"] == "ai"
+    else:
+        assert state["next"] == ["eve"], (
+            "the turn did not reach the model call; "
+            f"run status={run['status']} error={run.get('error_message')}"
+        )
