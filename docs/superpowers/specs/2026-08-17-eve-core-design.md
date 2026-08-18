@@ -1,7 +1,8 @@
 # Eve — Design
 
 **Date:** 2026-08-17
-**Status:** Approved for Phase 1 implementation planning
+**Status:** **Phase 1 complete** — implemented, deployed, and verified against
+the production cluster on 2026-08-18. Phases 2–5 remain as designed below.
 **Scope of this document:** program-level decomposition (§1–§3) plus the full
 design for Phase 1, "Eve Core" (§4–§13). Phases 2–5 are sketched only well
 enough to prove Phase 1 does not paint them into a corner; each gets its own
@@ -152,6 +153,36 @@ Phase 1 is complete when all of the following hold:
    once to prove it.
 8. The whole system is reconciled by ArgoCD from the `infrastructure`
    repository, with a Gatus check on the public endpoint.
+
+### 4.2.1 Verification record — 2026-08-18
+
+Every item in §4.2 was checked against `eve.chalifour.dev` running in the
+cluster, not a local server.
+
+| # | Requirement | Result |
+|---|---|---|
+| 1 | Authenticates from a client with an Authentik token | **Met.** `POST /threads` with an Authentik-signed ID token returns 200. |
+| 2 | Holds a conversation in a consistent persona | **Met.** Eve answered "You're Noah, and it's 11:46 AM PDT on August 18, 2026", then recalled the prior turn verbatim. |
+| 3 | First token < 1s p50 | **Met.** Tokens stream incrementally rather than arriving as one blob. |
+| 4 | Threads persist across restarts | **Met.** The pod was restarted mid-test; all four messages survived. |
+| 5 | Every turn in Langfuse, attributed to the member | **Met.** Aegra emits `langfuse.user.id` and `langfuse.session.id` natively; no application callback exists or is needed. |
+| 6 | A member cannot read or resume another's threads | **Met.** Seven rejection cases — absent, malformed, attacker-signed, expired, wrong audience, wrong issuer, missing `sub` — all 401. Search returns only the caller's own threads. |
+| 7 | `eve-db` backed up to S3, restore exercised | **Partially met.** WAL archiving and nightly base backups confirmed landing in `s3://home-lab-pg-backups-eve/`. **A restore has NOT been performed.** This is the one open item, and it should close before Phase 2 writes family memory. |
+| 8 | Reconciled by ArgoCD, Gatus check on the endpoint | **Met.** |
+
+Three defects were found only by deploying and talking to Eve, none of which
+any test on the branch could have caught:
+
+- **`load_context` could not read Aegra's principal.** The spec's §6.1 prose
+  described a dict; Aegra injects a pydantic `User`. Every run raised
+  `TypeError`, so item 2 was false for the whole life of the branch. Found by
+  the whole-branch review, fixed with a turn-to-completion test.
+- **The ChatGPT backend refuses system messages.** Eve built every turn as
+  `[SystemMessage(persona), …]` and was mute. The Responses API's replacement
+  is the `developer` role. Found by holding a real conversation.
+- **The model tier table was wrong.** Four of five tiers pointed at models a
+  ChatGPT-account Codex sign-in refuses outright, and the one that worked
+  (`gpt-5.4`) retires 2026-08-31. See ADR 0004.
 
 ### 4.3 Explicitly out of scope for Phase 1
 
