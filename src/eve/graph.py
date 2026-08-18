@@ -22,10 +22,25 @@ from eve.models import Tier, get_model
 from eve.state import EveState
 
 
+# The ChatGPT backend refuses system messages outright - verified live on
+# 2026-08-18, it answers `{"detail":"System messages are not allowed"}` and the
+# whole turn fails. The Responses API's replacement is the `developer` role,
+# which langchain-openai emits when a SystemMessage carries this marker.
+#
+# Keep the marker even if the tiers move off `chatgpt/*`: LiteLLM translates
+# `developer` back to a system message for providers that want one, so this is
+# portable, whereas a bare SystemMessage is not.
+_OPENAI_DEVELOPER_ROLE = {"__openai_role__": "developer"}
+
+
+def _persona_message(system_prompt: str) -> SystemMessage:
+    return SystemMessage(system_prompt, additional_kwargs=_OPENAI_DEVELOPER_ROLE)
+
+
 def build_graph(model_factory=get_model) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         model = model_factory(Tier.VOICE)
-        messages = [SystemMessage(state["system_prompt"]), *state["messages"]]
+        messages = [_persona_message(state["system_prompt"]), *state["messages"]]
         return {"messages": [await model.ainvoke(messages, config)]}
 
     builder = StateGraph(EveState)
