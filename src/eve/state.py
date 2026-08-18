@@ -7,6 +7,8 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
+from eve.memory.types import MemoryBundle
+
 
 class MemberContext(TypedDict):
     sub: str
@@ -21,3 +23,6 @@ class EveState(TypedDict):
     messages: Annotated[list, add_messages]
     member: MemberContext
     system_prompt: str
+    # Written by `recall`, rendered into the system prompt by `load_context`'s
+    # builder, read by `extract`. Phase 3's tools loop reads it too.
+    memory: MemoryBundle

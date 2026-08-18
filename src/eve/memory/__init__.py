@@ -6,3 +6,8 @@ docs/superpowers/specs/2026-08-18-eve-memory-design.md.
 
 Import from this module, not from its submodules.
 """
+
+from eve.memory import recall
+from eve.memory.types import Memory, MemoryBundle
+
+__all__ = ["Memory", "MemoryBundle", "recall"]
