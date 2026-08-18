@@ -36,9 +36,15 @@ class Settings(BaseSettings):
     prompt_file: Path = Path("prompts/eve.md")
 
     # PINNED. Changing either value requires re-embedding ALL of Eve's memory
-    # (spec section 7.3, ADR 0003). Unused until Phase 2; declared here so
-    # Phase 2 inherits the pin rather than re-deciding it.
-    embedding_model: str = "openai:text-embedding-3-small"
+    # (spec section 7.3, ADR 0003). The Gemini conditional ADR 0003 carried
+    # since Phase 1 resolved when the metered REFLEX key was provisioned: the
+    # key is Gemini, so the embedding model is too.
+    #
+    # gemini-embedding-001 emits 3072 dimensions trained with Matryoshka
+    # representation learning. Truncating to 1536 breaks unit norm, so
+    # memory/embed.py re-normalises. Cosine distance over non-normalised
+    # vectors fails silently - wrong rankings, no error.
+    embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dims: int = 1536
 
     def model_post_init(self, __context: Any) -> None:

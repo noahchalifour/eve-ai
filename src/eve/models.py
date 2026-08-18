@@ -45,30 +45,27 @@ class Tier(str, Enum):
     REFLEX = "reflex"         # ambient filtering, memory extraction (Phase 2)
 
 
-# REFLEX is deliberately unmapped: it must run on a metered key rather than a
-# subscription proxy (spec section 2.1), and that key is provisioned at the
-# start of Phase 2.
-TIER_MODELS: dict[Tier, str | None] = {
+TIER_MODELS: dict[Tier, str] = {
     Tier.VOICE: "chatgpt/gpt-5.6-terra",
     Tier.DEEP: "chatgpt/gpt-5.6-sol",
     Tier.MECHANICAL: "chatgpt/gpt-5.6-luna",
     Tier.CODE: "chatgpt/gpt-5.6-sol",
-    Tier.REFLEX: None,
+    # Metered Google key, NOT the ChatGPT subscription proxy: this tier runs
+    # on every turn (extraction) and in Phase 4 on every household signal, and
+    # must not consume the rate limits Noah uses for his own work (spec 2.1).
+    Tier.REFLEX: "gemini/gemini-flash-lite-latest",
 }
 
 
 @lru_cache(maxsize=None)
 def get_model(tier: Tier) -> BaseChatModel:
-    name = TIER_MODELS[tier]
-    if name is None:
-        raise NotImplementedError(
-            f"tier {tier.value!r} is not provisioned until Phase 2"
-        )
     settings = get_settings()
     return ChatOpenAI(
-        model=name,
+        model=TIER_MODELS[tier],
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key or "unset",
-        use_responses_api=True,
+        # The chatgpt/* models are registered with `mode: responses`. Gemini
+        # is not, and sending it a Responses-API request fails.
+        use_responses_api=TIER_MODELS[tier].startswith("chatgpt/"),
         streaming=True,
     )

@@ -11,8 +11,10 @@ def test_defaults_are_development_and_dev_auth():
 
 def test_embedding_pin_is_present():
     # Pinned forever: changing either value requires re-embedding all memory.
+    # Amended 2026-08-18 (ADR 0003): the Gemini conditional resolved, so the
+    # pin moved from openai:text-embedding-3-small to the Gemini model below.
     s = Settings()
-    assert s.embedding_model == "openai:text-embedding-3-small"
+    assert s.embedding_model == "gemini/gemini-embedding-001"
     assert s.embedding_dims == 1536
 
 
