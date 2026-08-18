@@ -26,10 +26,28 @@ def get_weather(city: str) -> str:
     return f"sunny in {city}"
 
 
+def _text_of(message) -> str:
+    """Flatten an AIMessage's content to plain text.
+
+    The Responses API returns `content` as a list of content blocks, not a
+    string - verified live on 2026-08-18. Eve's graph never touches `.content`
+    (the `eve` node passes the whole message through), so this shape is fine
+    for the app; anything that reads message text must handle both forms.
+    """
+    content = message.content
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
 async def test_voice_tier_responds_through_litellm():
     model = get_model(Tier.VOICE)
     reply = await model.ainvoke([HumanMessage("Reply with exactly: pong")])
-    assert reply.content.strip()
+    assert _text_of(reply).strip(), f"no text in reply: {reply.content!r}"
 
 
 async def test_voice_tier_streams_tokens():
