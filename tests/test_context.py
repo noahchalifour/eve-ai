@@ -126,6 +126,10 @@ def test_each_populated_layer_gets_its_own_section():
         digest="They were planning dinner.",
     )
     prompt = build_system_prompt("You are Eve.", MEMBER, bundle)
+    assert "### What you know about them" in prompt
+    assert "### What you know about this household" in prompt
+    assert "### From earlier conversations - may be relevant, may not" in prompt
+    assert "### Where this conversation has got to" in prompt
     assert "Noah is vegetarian" in prompt
     assert "The dog is Cooper" in prompt
     assert "Replacing the dishwasher in March" in prompt

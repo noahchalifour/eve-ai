@@ -60,7 +60,6 @@ def aegra_server():
         "EVE_DEV_TOKENS": '{"tok-noah": "sub-noah", "tok-kid": "sub-kid"}',
         "EVE_FAMILY_FILE": "tests/fixtures/family.yaml",
         "EVE_PROMPT_FILE": "prompts/eve.md",
-        "EVE_LITELLM_API_KEY": "sk-not-used-in-this-test",
         # Ports 15432/16379 rather than the defaults 5432/6379: see the
         # comment in docker-compose.test.yml. Only the host side changed.
         "DATABASE_URL": "postgresql://eve:eve@127.0.0.1:15432/eve",

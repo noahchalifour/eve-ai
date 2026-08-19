@@ -23,6 +23,6 @@ class EveState(TypedDict):
     messages: Annotated[list, add_messages]
     member: MemberContext
     system_prompt: str
-    # Written by `recall`, rendered into the system prompt by `load_context`'s
-    # builder, read by `extract`. Phase 3's tools loop reads it too.
+    # Written by `recall`, rendered into the system prompt by `eve` after
+    # recall completes, and read by `extract`. Phase 3's tools loop reads it too.
     memory: MemoryBundle

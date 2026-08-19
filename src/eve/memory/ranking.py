@@ -22,7 +22,7 @@ def recency_decay(age_days: float, half_life_days: float) -> float:
     # ln(2) makes this an actual half-life: value is exactly 0.5 at
     # age_days == half_life_days. exp(-age/half_life) alone (the brief's
     # original formula) is a mean-lifetime/e-folding decay - it reaches
-    # 1/e (~0.368), not 0.5, at that point. See task-45-report.md.
+    # 1/e (~0.368), not 0.5, at that point.
     return math.exp(-math.log(2) * max(age_days, 0.0) / half_life_days)
 
 

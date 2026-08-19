@@ -1,5 +1,5 @@
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from eve.memory.ranking import (
     estimate_tokens,
