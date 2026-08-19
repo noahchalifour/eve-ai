@@ -44,6 +44,17 @@ def _resolve_scope(op: Operation, member: dict) -> tuple[str, str, str]:
     return op.layer or "episodic", "member", member["sub"]
 
 
+def _is_single_sentence(content: str) -> bool:
+    """Accept one non-empty, terminally punctuated sentence and nothing else."""
+    trimmed = content.strip()
+    return (
+        bool(trimmed)
+        and trimmed[-1] in ".!?"
+        and bool(trimmed[:-1].strip())
+        and not any(mark in trimmed[:-1] for mark in ".!?")
+    )
+
+
 async def apply_operations(
     operations: list[Operation], member: dict, thread_id: str | None, run_id: str | None
 ) -> dict[str, int]:
@@ -55,7 +66,7 @@ async def apply_operations(
 
     for op in operations:
         if op.op == "add":
-            if not op.content:
+            if not op.content or not _is_single_sentence(op.content):
                 continue
             layer, scope_kind, scope_id = _resolve_scope(op, member)
             subject = op.subject.strip().lower() if op.subject else None
@@ -161,18 +172,21 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
 
 async def _maybe_refresh_digest(state: dict, thread_id: str | None) -> None:
     """Refresh a thread digest on the configured cadence."""
-    if not thread_id:
-        return
-    settings = get_settings()
-    turns = sum(1 for m in state["messages"] if isinstance(m, HumanMessage))
-    if turns == 0 or turns % settings.memory_digest_every_n_turns != 0:
-        return
-    transcript = "\n".join(
-        f"{'Them' if isinstance(m, HumanMessage) else 'Eve'}: {m.content}"
-        for m in state["messages"]
-        if isinstance(m, HumanMessage | AIMessage)
-    )
     try:
+        if not thread_id:
+            return
+        settings = get_settings()
+        cadence = settings.memory_digest_every_n_turns
+        if cadence <= 0:
+            return
+        turns = sum(1 for m in state["messages"] if isinstance(m, HumanMessage))
+        if turns == 0 or turns % cadence != 0:
+            return
+        transcript = "\n".join(
+            f"{'Them' if isinstance(m, HumanMessage) else 'Eve'}: {m.content}"
+            for m in state["messages"]
+            if isinstance(m, HumanMessage | AIMessage)
+        )
         summary = await get_model(Tier.REFLEX).ainvoke(
             [
                 HumanMessage(

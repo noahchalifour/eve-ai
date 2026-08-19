@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import importlib
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -130,6 +131,17 @@ async def test_operations_missing_required_fields_are_dropped(recorded):
     assert counts == {}
 
 
+async def test_add_with_multiple_sentences_is_rejected_at_the_write_boundary(recorded):
+    """Catch a structured-model add that would turn one durable row into two facts."""
+    ops = [Operation(
+        op="add", layer="profile", kind="fact",
+        content="Cooper likes walks. Cooper dislikes rain.",
+    )]
+    counts = await extract_mod.apply_operations(ops, MEMBER_SHARED, "t1", "r1")
+    assert recorded["add"] == []
+    assert counts == {}
+
+
 async def test_eviction_runs_for_the_layers_that_are_capped(recorded):
     ops = [Operation(op="add", layer="profile", kind="fact", content="x.")]
     await extract_mod.apply_operations(ops, MEMBER_SHARED, "t1", "r1")
@@ -152,6 +164,32 @@ async def test_a_model_failure_does_not_break_the_turn(monkeypatch, recorded):
         "memory": None,
     }
     assert await extract_mod.extract(state, {"configurable": {}}) == {}
+
+
+async def test_zero_digest_cadence_does_not_break_a_completed_turn(
+    monkeypatch, recorded
+):
+    """Digest setup runs after streaming and must not be able to fail the turn."""
+    class Recording:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, _messages):
+            return Extraction(operations=[])
+
+    monkeypatch.setattr(extract_mod, "get_model", lambda _tier: Recording())
+    monkeypatch.setattr(extract_mod, "overlapping", _no_overlap)
+    monkeypatch.setattr(
+        extract_mod,
+        "get_settings",
+        lambda: SimpleNamespace(memory_digest_every_n_turns=0),
+    )
+    state = {
+        "messages": [HumanMessage("hi"), AIMessage("hello")],
+        "member": MEMBER_SHARED,
+        "memory": None,
+    }
+    assert await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}}) == {}
 
 
 async def _no_overlap(sub, subjects, embedding, limit=10):
