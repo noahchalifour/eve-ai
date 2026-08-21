@@ -1965,8 +1965,10 @@ async def test_eve_calls_a_tool_and_returns_the_final_answer(monkeypatch):
 
 
 async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(monkeypatch):
+    from typing import Annotated
+
     from langchain_core.messages import ToolMessage
-    from langchain_core.tools import tool
+    from langchain_core.tools import InjectedToolCallId, tool
     from langgraph.types import Command
 
     spec = {
@@ -1975,7 +1977,9 @@ async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(mo
     }
 
     @tool
-    async def fake_search_skills(query: str, tool_call_id: str) -> Command:
+    async def fake_search_skills(
+        query: str, tool_call_id: Annotated[str, InjectedToolCallId]
+    ) -> Command:
         """stand-in for eve.skills.search.search_skills"""
         return Command(
             update={
