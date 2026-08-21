@@ -118,3 +118,124 @@ async def test_recall_survives_the_database_having_no_memories(
     assert memory["household"] == []
     assert memory["episodic"] == []
     assert memory["digest"] is None
+
+
+@requires_litellm_key
+async def test_a_superseded_fact_is_not_recalled_but_the_row_survives(
+    aegra_server, clean_memory
+):
+    """DoD item 2. `extract` decides *when* to supersede via the REFLEX model
+    (unprovisioned - see ADR 0004/Prerequisite P1), but the mechanism it calls
+    is `store.supersede`, exercised directly here exactly as extract.py calls
+    it. This proves recall honours `superseded_why IS NULL` end-to-end through
+    a real Aegra turn, and that supersession retires the row instead of
+    deleting it (ADR 0005) - both real requirements independent of REFLEX.
+    """
+    old_id = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah is vegetarian",
+        subject="noah",
+    )
+    new_id = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah eats meat now",
+        subject="noah",
+    )
+    await store.supersede(old_id, new_id, "contradicted")
+
+    client = get_client(
+        url=aegra_server, headers={"Authorization": "Bearer tok-noah"}
+    )
+    thread = await client.threads.create()
+    await _run_to_success(client, thread["thread_id"], "what should we eat?")
+
+    state = await client.threads.get_state(thread["thread_id"])
+    profile = state["values"]["memory"]["profile"]
+    assert [memory["content"] for memory in profile] == ["Noah eats meat now"]
+
+    pool = await db.get_pool()
+    async with pool.connection() as conn:
+        content, superseded_by, superseded_why = await (
+            await conn.execute(
+                "SELECT content, superseded_by, superseded_why "
+                "FROM eve_memory WHERE id = %s",
+                (old_id,),
+            )
+        ).fetchone()
+    # psycopg returns the uuid column as `uuid.UUID`, not the `str` `store.add`
+    # returns - stringify rather than compare types that were never meant to
+    # be the same.
+    assert (content, str(superseded_by), superseded_why) == (
+        "Noah is vegetarian",
+        new_id,
+        "contradicted",
+    )
+
+
+@requires_litellm_key
+async def test_forgetting_a_fact_hard_deletes_it(aegra_server, clean_memory):
+    """DoD item 3. As with supersession, the natural-language "forget that"
+    trigger lives behind the unprovisioned REFLEX model; `store.forget` is the
+    mechanism it calls, exercised directly. A tombstone that still holds the
+    text is not forgetting (ADR 0005), so this asserts the row is gone, not
+    merely retired.
+    """
+    forgotten_id = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah's social security number is 000-00-0000",
+        subject="noah",
+    )
+    await store.forget(forgotten_id)
+
+    client = get_client(
+        url=aegra_server, headers={"Authorization": "Bearer tok-noah"}
+    )
+    thread = await client.threads.create()
+    await _run_to_success(client, thread["thread_id"], "what do you know about me?")
+
+    state = await client.threads.get_state(thread["thread_id"])
+    assert state["values"]["memory"]["profile"] == []
+
+    pool = await db.get_pool()
+    async with pool.connection() as conn:
+        count = await (
+            await conn.execute(
+                "SELECT count(*) FROM eve_memory WHERE id = %s", (forgotten_id,)
+            )
+        ).fetchone()
+    assert count == (0,)
+
+
+@requires_litellm_key
+async def test_recall_degrades_cleanly_and_reports_its_own_latency(
+    aegra_server, clean_memory
+):
+    """DoD items 4 and 5, against the real deployed LiteLLM proxy rather than
+    a fake. Gemini is not yet registered there (Prerequisite P1 is still
+    open), so the vector arm genuinely fails on every live turn today - this
+    is item 5's "forced embedding failure" happening for real, not simulated.
+    `latency_ms` is recall's own contribution to TTFT, the same number
+    `eve.recall.latency_ms` reports to Langfuse in production (ADR 0002).
+    """
+    client = get_client(
+        url=aegra_server, headers={"Authorization": "Bearer tok-noah"}
+    )
+    thread = await client.threads.create()
+    await _run_to_success(client, thread["thread_id"], "hello")
+
+    memory = (await client.threads.get_state(thread["thread_id"]))["values"]["memory"]
+    assert memory["vector_used"] is False
+    # Generous ceiling: a real network round trip to a homelab proxy, not the
+    # 150ms p50 operational target Langfuse tracks over a day. This guards
+    # against a gross regression (e.g. the budget timeout stops firing),
+    # not the SLA itself.
+    assert memory["latency_ms"] < 1000
