@@ -216,14 +216,16 @@ async def test_forgetting_a_fact_hard_deletes_it(aegra_server, clean_memory):
 
 
 @requires_litellm_key
-async def test_recall_degrades_cleanly_and_reports_its_own_latency(
+async def test_recall_completes_and_reports_its_own_latency_regardless_of_the_vector_arm(
     aegra_server, clean_memory
 ):
-    """DoD items 4 and 5, against the real deployed LiteLLM proxy rather than
-    a fake. Gemini is not yet registered there (Prerequisite P1 is still
-    open), so the vector arm genuinely fails on every live turn today - this
-    is item 5's "forced embedding failure" happening for real, not simulated.
-    `latency_ms` is recall's own contribution to TTFT, the same number
+    """DoD items 4 and 5, against the real deployed LiteLLM proxy. Gemini was
+    registered 2026-08-21 (Prerequisite P1), so the vector arm may now land
+    within budget or may still miss it on real internet round-trip latency to
+    a homelab proxy plus Google - either is a legitimate outcome and this
+    does not assert which. What must always hold, and is what item 5 actually
+    asks: the turn completes and reports a latency regardless. `latency_ms`
+    is recall's own contribution to TTFT, the same number
     `eve.recall.latency_ms` reports to Langfuse in production (ADR 0002).
     """
     client = get_client(
@@ -233,9 +235,100 @@ async def test_recall_degrades_cleanly_and_reports_its_own_latency(
     await _run_to_success(client, thread["thread_id"], "hello")
 
     memory = (await client.threads.get_state(thread["thread_id"]))["values"]["memory"]
-    assert memory["vector_used"] is False
-    # Generous ceiling: a real network round trip to a homelab proxy, not the
-    # 150ms p50 operational target Langfuse tracks over a day. This guards
-    # against a gross regression (e.g. the budget timeout stops firing),
-    # not the SLA itself.
+    assert isinstance(memory["vector_used"], bool)
+    # Generous ceiling: a real network round trip to a homelab proxy (and,
+    # now, from there to Google), not the 150ms p50 operational target
+    # Langfuse tracks over a day. This guards against a gross regression
+    # (e.g. the budget timeout stops firing), not the SLA itself.
     assert memory["latency_ms"] < 1000
+
+
+@requires_litellm_key
+async def test_stating_a_contradiction_supersedes_the_old_fact(
+    aegra_server, clean_memory
+):
+    """DoD item 2, the conversational path this time - now that Gemini closes
+    Prerequisite P1, the REFLEX model itself has to notice the contradiction
+    from the exchange alone and call `supersede` against the exact candidate
+    id `extract` showed it. Nothing here tells it to; that judgment is the
+    thing being verified. The old fact's `subject` must appear as a literal
+    word in what's said, or `store.overlapping`'s subject-token match (no
+    embedding arm at write time - extract.py passes `embedding=None`) never
+    surfaces it as a candidate in the first place.
+    """
+    old_id = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah is vegetarian",
+        subject="noah",
+    )
+    client = get_client(
+        url=aegra_server, headers={"Authorization": "Bearer tok-noah"}
+    )
+    thread = await client.threads.create()
+    await _run_to_success(
+        client,
+        thread["thread_id"],
+        "Noah has started eating meat again - he's not vegetarian anymore.",
+    )
+
+    pool = await db.get_pool()
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT superseded_why FROM eve_memory WHERE id = %s", (old_id,)
+            )
+        ).fetchone()
+    assert row is not None and row[0] is not None
+
+    # extract runs after the answer streams within the SAME turn, so it
+    # cannot have affected that turn's own (already-loaded) recall - ask
+    # again to observe a fresh one.
+    await _run_to_success(client, thread["thread_id"], "what should we eat tonight?")
+    state = await client.threads.get_state(thread["thread_id"])
+    contents = [m["content"] for m in state["values"]["memory"]["profile"]]
+    assert "Noah is vegetarian" not in contents
+
+
+@requires_litellm_key
+async def test_asking_eve_to_forget_something_hard_deletes_it_via_reflex(
+    aegra_server, clean_memory
+):
+    """DoD item 3, the conversational path. As above, the REFLEX model has to
+    recognise this as an explicit forget instruction (extract.md: "Only ever
+    in response to an explicit instruction") and call `forget`, unprompted by
+    anything in this test beyond the exchange itself.
+    """
+    forgotten_id = await store.add(
+        layer="profile",
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        content="Noah's social security number is 000-00-0000",
+        subject="noah",
+    )
+    client = get_client(
+        url=aegra_server, headers={"Authorization": "Bearer tok-noah"}
+    )
+    thread = await client.threads.create()
+    await _run_to_success(
+        client,
+        thread["thread_id"],
+        # "noah's" (possessive) tokenizes to one word under
+        # `store.subjects_in`'s `[a-z0-9']+` regex, which never matches the
+        # stored `subject="noah"` and so never surfaces it as a candidate -
+        # phrased without the possessive for that reason, not for the model.
+        "Please forget that Noah gave you his social security number - "
+        "delete it completely, don't just hide it.",
+    )
+
+    pool = await db.get_pool()
+    async with pool.connection() as conn:
+        count = await (
+            await conn.execute(
+                "SELECT count(*) FROM eve_memory WHERE id = %s", (forgotten_id,)
+            )
+        ).fetchone()
+    assert count == (0,)
