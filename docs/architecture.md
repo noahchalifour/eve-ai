@@ -1,37 +1,46 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 1, "Eve
-Core." For the program-level roadmap and the full Phase 1 design rationale,
-see [`docs/superpowers/specs/2026-08-17-eve-core-design.md`](superpowers/specs/2026-08-17-eve-core-design.md)
-(the "spec"). For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-17-eve-core.md`](superpowers/plans/2026-08-17-eve-core.md).
+This document describes what exists in this repository today: Phase 2,
+"Memory." For the Phase 2 design rationale and definition of done, see
+[`docs/superpowers/specs/2026-08-18-eve-memory-design.md`](superpowers/specs/2026-08-18-eve-memory-design.md).
+For the task-by-task build record, see
+[`docs/superpowers/plans/2026-08-18-eve-memory.md`](superpowers/plans/2026-08-18-eve-memory.md).
 
 ## The graph
 
 ```
-START -> load_context -> eve -> END
+START -> load_context -> recall -> eve -> extract -> END
 ```
 
-Two nodes, defined in `src/eve/graph.py`:
+Four nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
   `config["configurable"]["langgraph_auth_user"]`, resolves the matching
   entry in `family.yaml`, stamps the member's local time, and assembles the
-  system prompt from `prompts/eve.md` plus member context. The prompt is
-  rebuilt from scratch every turn and passed to the model rather than
-  appended to `messages`, so edits to the persona or to a member's context
-  take effect on existing threads instead of being frozen into history.
-- **`eve`** invokes the `VOICE` tier model (`src/eve/models.py`) with the
-  assembled messages and streams the response.
+  initial system prompt from `prompts/eve.md` plus member context. It performs
+  no memory I/O and makes no model call.
+- **`recall`** (`src/eve/memory/recall.py`) loads profile, household and thread
+  digest memory, starts lexical episodic search immediately, and races one
+  embedding call against a bounded budget for the vector arm. A timeout or
+  embedding failure produces a complete lexical-only bundle.
+- **`eve`** rebuilds the system prompt after recall, so current memory is
+  included, then invokes the `VOICE` tier model (`src/eve/models.py`) and
+  streams the response. The prompt is never appended to `messages`, so persona,
+  member-context, and memory edits affect existing threads instead of being
+  frozen into history.
+- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
+  The `REFLEX` model produces structured add, reinforce, supersede, and forget
+  operations; valid writes, digest refresh, embeddings, and cap eviction are
+  applied best-effort so extraction failure cannot erase a completed answer.
 
-It is two nodes because of the latency contract in
-[ADR 0002](adr/0002-no-llm-before-first-token.md): no model call may precede
-the first streamed token. `load_context` is pure local computation in
-single-digit milliseconds, so nothing sits in front of Eve's first token.
-Later phases extend the graph without reshaping it — Phase 2 adds a `recall`
-step that runs *concurrently* with the `eve` call, and Phase 3 wraps `eve` in
-a tools loop, per [ADR 0001](adr/0001-agents-as-subgraph-tools.md).
+The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
+forbids a *generative* model call before the first streamed token.
+`load_context` is pure local computation; `recall` is the one concession: a
+single bounded and cancellable embedding call that can degrade to lexical-only.
+Phase 3 wraps `eve` in a tools loop, per
+[ADR 0001](adr/0001-agents-as-subgraph-tools.md), without moving a generative
+router in front of Eve.
 
 The graph is compiled **without** a checkpointer (`src/eve/graph.py`).
 Aegra attaches its own Postgres-backed persistence to graphs it serves;
@@ -48,12 +57,24 @@ src/eve/
   models.py         # tier -> LiteLLM model; sole owner of model identifiers
   graph.py          # the state graph
   auth.py           # Auth() handler: JWT/dev auth + resource scoping
+  memory/
+    types.py        # Memory/MemoryBundle and extraction schemas
+    ranking.py      # pure decay, reciprocal-rank fusion, token budgeting
+    db.py           # pool and advisory-locked ordered-DDL migrations
+    embed.py        # Gemini embedding client, truncation, re-normalisation
+    store.py        # every eve_memory SQL read and write
+    recall.py       # pre-answer hybrid retrieval node
+    extract.py      # post-stream structured extraction and writes
 ```
 
 The import graph is acyclic: `settings` and `family` depend on nothing
-internal; `context` depends on `family`, `settings`, and `state`; `models`
-depends on `settings`; `graph` depends on `context`, `models`, and `state`;
-`auth` depends on `family` and `settings`.
+internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
+-> `db` and `embed`; `db`/`embed`/`types` -> `store`; and
+`embed`/`ranking`/`store`/`types` -> `recall`, while `extract` depends on
+`embed`, `store`, `types`, `models`, and `settings`. `context` depends on
+`family`, `settings`, `state`, and memory types; `models` depends on `settings`;
+`graph` depends on `context`, `memory`, `models`, and `state`; `auth` depends on
+`family` and `settings`.
 
 `models.py` is a deliberate chokepoint: model identifiers appear nowhere else
 in the codebase, so retiering — or falling back from the ChatGPT proxy to the
@@ -62,16 +83,15 @@ Claude proxy — is a one-file change. The tiers, all served through LiteLLM
 
 | Tier | Model | Purpose | First used |
 |---|---|---|---|
-| `VOICE` | `chatgpt/gpt-5.3-chat-latest` | Eve herself | Phase 1 |
-| `DEEP` | `chatgpt/gpt-5.4` | Planning; hard reasoning | Phase 5 |
-| `MECHANICAL` | `chatgpt/gpt-5.3-instant` | Structured, tool-heavy specialist work | Phase 3 |
-| `CODE` | `chatgpt/gpt-5.3-codex` | Authoring skills and tool code | Phase 5 |
-| `REFLEX` | unmapped — a metered API key, provisioned before Phase 2 | Ambient filtering; memory extraction | Phase 2 |
+| `VOICE` | `chatgpt/gpt-5.6-terra` | Eve herself | Phase 1 |
+| `DEEP` | `chatgpt/gpt-5.6-sol` | Planning; hard reasoning | Phase 5 |
+| `MECHANICAL` | `chatgpt/gpt-5.6-luna` | Structured, tool-heavy specialist work | Phase 3 |
+| `CODE` | `chatgpt/gpt-5.6-sol` | Authoring skills and tool code | Phase 5 |
+| `REFLEX` | `gemini/gemini-flash-lite-latest` | Ambient filtering; memory extraction | Phase 2 |
 
-Only `VOICE` is exercised in Phase 1; `get_model(Tier.REFLEX)` raises
-`NotImplementedError` until that key exists. The `chatgpt/*` models are
-registered in LiteLLM with `mode: responses`, so the LangChain client is
-constructed with `use_responses_api=True`.
+The `chatgpt/*` models are registered in LiteLLM with `mode: responses`, so
+the LangChain client sets `use_responses_api=True` for those tiers. `REFLEX`
+uses the metered Gemini route and the Chat Completions-compatible API instead.
 
 One deliberate exception to "model identifiers live only in `models.py`":
 `tests/test_models.py::test_voice_tier_is_the_chatgpt_conversational_model`
@@ -147,7 +167,7 @@ other**, and the distinction matters when reading test failures:
    member from creating, updating or deleting assistants, or from touching
    any of the four `crons` actions. `deny_by_default` does.
 
-**Store isolation is Aegra's, not ours, and this matters for Phase 2.**
+**Store API isolation is Aegra's, not ours.**
 `scope_store_to_member` mutates `value["namespace"]` and returns `None`.
 Aegra's store routes read only the **return value** (`api/store.py:44-51`:
 `if filters: if "namespace" in filters: request.namespace = filters["namespace"]`),
@@ -162,9 +182,11 @@ crafted client prefix: a client sending `["users", "<someone-else>"]` lands at
 `["users", "<caller>", "users", "<someone-else>"]`. The isolation is real and
 stronger than ours would have been.
 
-The consequence for Phase 2: editing `scope_store_to_member` to carve out a
-shared family namespace will have **no effect**. The lever is `aegra.json`'s
-`store.scopes` map (`api/store.py:261-286`), currently unset here.
+Phase 2 did not use this store. Eve owns `eve_memory` and enforces profile,
+household, episodic, and digest scope in its SQL queries. Consequently neither
+`scope_store_to_member` nor the available `aegra.json` `store.scopes` lever was
+used to implement memory. The handler remains only as the allow rule for
+clients that use Aegra's separate Store API.
 
 One consequence worth stating plainly: **run operations authorize under
 `resource="threads"`, not `"runs"`.** `aegra_api/core/auth_registry.py`'s
@@ -185,11 +207,40 @@ timezone, and permission strings per member — so it lives in git and changes
 by pull request. Permissions are resolved into `EveState` in Phase 1 but not
 acted on; Phase 3 enforces them at the tool boundary.
 
+## Memory
+
+Eve owns one `eve_memory` table with four layers that share a shape but have
+different retrieval policies:
+
+- **Profile** facts belong to one member and are always loaded for that member.
+- **Household** facts are shared and always loaded for every family member.
+- **Episodic** events and decisions are retrieved on demand by hybrid search.
+- **Digest** is one rolling summary scoped to a thread.
+
+Retired rows remain as history. `superseded_why IS NULL` is the live predicate
+used by partial indexes and reads. A contradiction points `superseded_by` at
+its replacement; an eviction has `superseded_by=NULL` but is still retired by
+`superseded_why='evicted'`. Only an explicit request to forget hard-deletes.
+
+Recall starts the full-text/entity and embedding arms together. The lexical arm
+cannot depend on the network; the vector arm is fused in only if its embedding
+lands within `EVE_MEMORY_RECALL_EMBED_BUDGET_MS` (120ms by default). Otherwise
+the turn continues with always-on memory and lexical episodic results. Episodic
+recency uses true half-life decay,
+`exp(-ln(2) * age_days / half_life_days)`, evaluated at read time.
+
+The schema is installed by the `eve-migrate` console script under a Postgres
+advisory lock. The production Dockerfile runs exactly
+`eve-migrate && exec aegra serve` in its `CMD`, so schema failure prevents
+Aegra from starting. Local `aegra dev` does not execute the container command,
+so run the migration explicitly after starting Postgres.
+
 ## Running locally
 
 ```bash
 cp .env.example .env                      # dev auth mode, local ports
 docker compose -f docker-compose.test.yml up -d   # Postgres (15432), Redis (16379)
+uv run eve-migrate
 uv run aegra dev
 ```
 
@@ -222,8 +273,11 @@ handler (valid/expired/wrong-audience/unknown-key tokens, `dev` mode refused
 in production), and `family.yaml` loading — all against fakes, no network.
 Integration tests spin up `aegra serve` itself against the compose stack and
 drive it through `langgraph_sdk`, covering thread creation, persistence,
-cross-member access denial, and the run/resource-scoping behavior described
-above. Live tests (`tests/test_live_models.py`) are the tier that verifies
+cross-member access denial, memory SQL, and the run/resource-scoping behavior
+described above. The two tests that require a successful full graph turn skip
+when `EVE_LITELLM_API_KEY` is absent; a passing integration tier with those
+skips is not end-to-end Aegra evidence. Live tests (`tests/test_live_models.py`)
+are the tier that verifies
 the `chatgpt/*` Responses-API assumption in `models.py` against the real
 proxy — response shape, incremental streaming, and tool calls.
 
@@ -265,3 +319,4 @@ responsibility ends at building and publishing the image
 - [ADR 0002 — No model call may precede the first streamed token](adr/0002-no-llm-before-first-token.md)
 - [ADR 0003 — The embedding model and dimension are pinned](adr/0003-embedding-model-pinned.md)
 - [ADR 0004 — Model tier routing](adr/0004-model-tier-routing.md)
+- [ADR 0005 — Memory storage: one table, supersession, read-time decay](adr/0005-memory-storage.md)

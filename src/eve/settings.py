@@ -3,6 +3,7 @@ the rest of the package, so every other module may depend on it freely."""
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,13 +37,37 @@ class Settings(BaseSettings):
     prompt_file: Path = Path("prompts/eve.md")
 
     # PINNED. Changing either value requires re-embedding ALL of Eve's memory
-    # (spec section 7.3, ADR 0003). Unused until Phase 2; declared here so
-    # Phase 2 inherits the pin rather than re-deciding it.
-    embedding_model: str = "openai:text-embedding-3-small"
+    # (spec section 7.3, ADR 0003). The Gemini conditional ADR 0003 carried
+    # since Phase 1 resolved when the metered REFLEX key was provisioned: the
+    # key is Gemini, so the embedding model is too.
+    #
+    # gemini-embedding-001 emits 3072 dimensions trained with Matryoshka
+    # representation learning. Truncating to 1536 breaks unit norm, so
+    # memory/embed.py re-normalises. Cosine distance over non-normalised
+    # vectors fails silently - wrong rankings, no error.
+    embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dims: int = 1536
+
+    # Memory (Phase 2). Eve keeps its own small pool rather than reaching into
+    # Aegra's internal db_manager.lg_pool: that is a private attribute path,
+    # and a silent rename in an aegra-api bump would break memory in
+    # production to save fifteen lines. Defaults to Aegra's own DATABASE_URL
+    # so the cluster needs no new variable.
+    database_url: str = ""
+    memory_token_budget: int = 1200
+    memory_episodic_half_life_days: float = 90.0
+    # The ceiling on how long recall may wait for the embedding before
+    # shipping lexical-only. Every millisecond here is spent before Eve's
+    # first token (ADR 0002 as amended).
+    memory_recall_embed_budget_ms: int = 120
+    memory_profile_cap: int = 40
+    memory_household_cap: int = 60
+    memory_digest_every_n_turns: int = 6
 
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
+        if not self.database_url:
+            self.database_url = os.environ.get("DATABASE_URL", "")
         if self.env == "production" and self.auth_mode != "oidc":
             raise ValueError(
                 "EVE_AUTH_MODE must be 'oidc' when EVE_ENV=production; "
