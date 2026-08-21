@@ -33,7 +33,7 @@ holds a long-lived token, unrelated to this phase.
 
 Neither blocks the start of implementation — the tools-loop mechanism, the
 specialist-loop factory, and the skills layer can all be built and unit-tested
-first. They block live verification of the Mail and Spend specialists
+first. They block live verification of the Mail and Finances specialists
 specifically (§12), so the implementation plan should sequence them early
 enough not to stall at the end.
 
@@ -66,7 +66,7 @@ specialist that leaks its own voice into the reply (a different tone, a
   calendar. `family.yaml` grants no calendar permission today, and there is no
   calendar system chosen to integrate against. Scoped down to the three
   domains that already have a permission string and a real system behind them:
-  Home, Mail, Spend. Calendar gets its own spec when there's a system to point
+  Home, Mail, Finances. Calendar gets its own spec when there's a system to point
   it at.
 - **No live MCP server.** The skills layer's MCP half (§5) is built and
   tested against a local mock server. Wiring a real one is deferred to
@@ -94,7 +94,7 @@ loop fails visibly instead of burning the latency and cost budget silently.
 
 Three things are new:
 
-1. **Specialists** (§4) — Home, Mail, Spend. Each a small subgraph with its
+1. **Specialists** (§4) — Home, Mail, Finances. Each a small subgraph with its
    own agentic loop, exposed to `eve`'s tool list as one opaque tool.
 2. **Skills** (§5) — `search_skills`, backed by `SKILL.md` procedures and a
    generic MCP dispatcher, with newly discovered MCP tools dynamically bound
@@ -129,7 +129,7 @@ def build_specialist(
 ) -> BaseTool: ...
 ```
 
-`home.py`, `mail.py`, and `spend.py` each call it once. The factory builds a
+`home.py`, `mail.py`, and `finances.py` each call it once. The factory builds a
 small ReAct-style subgraph on `Tier.MECHANICAL`
 (`chatgpt/gpt-5.6-luna` today), wraps it as a single async tool that takes a
 natural-language request and returns a final string, and applies the
@@ -148,11 +148,11 @@ Each specialist's own tool list is a thin HTTP client against `eve-tools`
   draft and send. `send_email` additionally requires `mail.send` — a member
   with only `mail.read` can ask Eve to summarize their inbox but not send on
   their behalf.
-- **Spend** (`spend`): read transactions, read budgets and cash flow from
-  Monarch Money. Whether any write action belongs here (categorizing a
+- **Finances** (`finances`): read transactions, read budgets and cash flow
+  from Monarch Money. Whether any write action belongs here (categorizing a
   transaction, flagging one for review) is a question for implementation
   planning once the Monarch Money API's actual write surface is known — read
-  access alone already satisfies "Eve can answer a real spend question."
+  access alone already satisfies "Eve can answer a real financial question."
 
 Exact tool signatures are an implementation-planning detail, not a design
 decision — same treatment Phase 1 gave its own open deployment questions.
@@ -266,12 +266,17 @@ re-litigating them here:
 `family.yaml`'s own comment has said "permissions are enforced at the tool
 boundary in Phase 3" since Phase 1. This is that boundary.
 
+Phase 1's `spend` permission string is renamed to `finances` in this phase, to
+match the specialist it now gates — `family.yaml` is updated in the same
+commit as this spec, ahead of implementation, since it is a one-line rename
+with no other consumer to break.
+
 Two checks, both inside `eve`'s main container, both before any call reaches
 `eve-tools`:
 
 - **Coarse**, at the `eve` → specialist edge: calling `ask_mail` at all
   requires `mail.read` or `mail.send`; calling `ask_home` requires
-  `home.control`; calling `ask_spend` requires `spend`.
+  `home.control`; calling `ask_finances` requires `finances`.
 - **Fine**, inside a specialist's own loop: Mail's `send_email` tool
   additionally requires `mail.send`, checked against the same
   `MemberContext.permissions` list, threaded into specialist subgraph state
@@ -347,7 +352,7 @@ Deployment gains an env var pointing at `eve-tools`' in-cluster DNS name.
 |---|---|
 | 1 | Eve turns a real Home Assistant device on or off within a single conversational turn. |
 | 2 | Eve reads and sends real Gmail messages, correctly gated by `mail.read` vs. `mail.send`. |
-| 3 | Eve answers a real spend or budget question from Monarch Money. |
+| 3 | Eve answers a real financial or budget question from Monarch Money. |
 | 4 | A member lacking a permission gets a graceful in-conversation explanation, never a graph error. |
 | 5 | `eve-tools` holds no family or permission data, has no cluster credentials, and has no Ingress. |
 | 6 | `search_skills` finds an authored `SKILL.md` procedure and Eve visibly follows it. |
