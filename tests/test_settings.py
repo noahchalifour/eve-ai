@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from eve.settings import Settings, get_settings
@@ -78,3 +80,12 @@ def test_memory_defaults_match_the_spec():
     assert s.memory_recall_embed_budget_ms == 120
     assert s.memory_profile_cap == 40
     assert s.memory_household_cap == 60
+
+
+def test_phase_3_settings_have_sane_defaults():
+    s = Settings()
+    assert s.tools_base_url == "http://eve-tools:8090"
+    assert s.tools_api_key == ""
+    assert s.skills_dir == Path("skills")
+    assert s.specialist_max_iterations == 6
+    assert s.dynamic_tools_cap == 8
