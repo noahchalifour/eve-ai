@@ -8,6 +8,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph.message import add_messages
 
 from eve.memory.types import MemoryBundle
+from eve.skills.types import DynamicToolSpec
 
 
 class MemberContext(TypedDict):
@@ -29,3 +30,7 @@ class EveState(TypedDict):
     # strictly (unlike a plain TypedDict at runtime): a specialist tool invoked
     # before `recall` populates it - or in a test - must be able to pass `None`.
     memory: MemoryBundle | None
+    # Specs only - see eve.skills.types.DynamicToolSpec. Materialized into
+    # real callables fresh on every model call (eve.skills.materialize,
+    # Task 11), never stored as one.
+    dynamic_tools: list[DynamicToolSpec]
