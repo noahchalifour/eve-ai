@@ -1,6 +1,4 @@
-"""src/eve/tools_client.py
-
-The one door from Eve's main container to eve-tools. Every call is an HTTP
+"""The one door from Eve's main container to eve-tools. Every call is an HTTP
 request with a timeout; failures degrade to a returned error string rather
 than a raised exception, because the caller is always a tool whose result
 goes straight to a model - a raised exception here would fail the whole

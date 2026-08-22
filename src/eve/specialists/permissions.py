@@ -1,6 +1,4 @@
-"""src/eve/specialists/permissions.py
-
-Permission enforcement at the tool boundary. `family.yaml`'s own comment has
+"""Permission enforcement at the tool boundary. `family.yaml`'s own comment has
 said "enforced at the tool boundary in Phase 3" since Phase 1; this is that
 boundary, applied twice per design doc section 8 - coarse at the eve ->
 specialist edge (Task 4), fine inside a specialist's own tools (Task 6's
