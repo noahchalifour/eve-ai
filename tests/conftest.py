@@ -1,13 +1,14 @@
 """Shared test fixtures.
 
-`get_settings`, `get_model`, `get_family` and `load_persona` are all
-`lru_cache`d process-wide singletons, and all four are settings-derived.
-Tests that mutate env vars to exercise settings-dependent behavior (e.g.
-`test_model_is_pointed_at_litellm`) clear caches before use but leave the
-mutated singleton cached afterward, which would otherwise leak into every
-later test in the session. Clearing every one of them around every test keeps
-them isolated regardless of run order - most tests monkeypatch the importing
-module's reference instead, which works but does not generalise.
+`get_settings`, `get_model`, `get_family`, `load_persona` and
+`get_tools_settings` are all `lru_cache`d process-wide singletons, and all
+five are settings-derived. Tests that mutate env vars to exercise
+settings-dependent behavior (e.g. `test_model_is_pointed_at_litellm`) clear
+caches before use but leave the mutated singleton cached afterward, which
+would otherwise leak into every later test in the session. Clearing every
+one of them around every test keeps them isolated regardless of run order -
+most tests monkeypatch the importing module's reference instead, which works
+but does not generalise.
 """
 
 from __future__ import annotations
@@ -26,8 +27,9 @@ from eve.family import get_family
 from eve.models import get_model
 from eve.settings import get_settings
 from eve.skills import mcp_registry
+from eve_tools.settings import get_tools_settings
 
-_CACHED = (get_settings, get_model, get_family, load_persona)
+_CACHED = (get_settings, get_model, get_family, load_persona, get_tools_settings)
 
 
 class FakeToolCallingModel(GenericFakeChatModel):
