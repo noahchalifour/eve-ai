@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# --no-install-project: eve-tools is never "the project" uv_build knows how
+# to package (that's "eve", src/eve) - this installs only the dependency
+# tree from the shared lockfile, and PYTHONPATH below makes src/eve_tools
+# importable without needing it to be.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY src/eve_tools ./src/eve_tools
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PORT=8090
+
+EXPOSE 8090
+
+RUN useradd --system --uid 10002 --no-create-home eve-tools \
+    && chown -R eve-tools:eve-tools /app
+USER 10002
+
+CMD ["uvicorn", "eve_tools.app:app", "--host", "0.0.0.0", "--port", "8090"]

@@ -48,6 +48,20 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dims: int = 1536
 
+    # Phase 3 (Specialists + Skills). See docs/superpowers/specs/
+    # 2026-08-21-eve-specialists-design.md section 7 and section 9.
+    tools_base_url: str = "http://eve-tools:8090"
+    tools_api_key: str = ""
+    skills_dir: Path = Path("skills")
+    # A specialist's own model+tool loop; not the outer eve<->tools cycle,
+    # which is bounded separately below (design doc section 3).
+    specialist_max_iterations: int = 6
+    # The outer eve<->tools cycle. LangGraph's platform recursion_limit
+    # defaults to 10007 and cannot be set at `.compile()` time, so the graph
+    # counts its own steps instead - see eve/graph.py.
+    max_tool_loop_iterations: int = 6
+    dynamic_tools_cap: int = 8
+
     # Memory (Phase 2). Eve keeps its own small pool rather than reaching into
     # Aegra's internal db_manager.lg_pool: that is a private attribute path,
     # and a silent rename in an aegra-api bump would break memory in
