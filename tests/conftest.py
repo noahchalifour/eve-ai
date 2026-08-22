@@ -16,10 +16,12 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
 import time
 
 import httpx
 import pytest
+import uvicorn
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from eve.context import load_persona
@@ -125,4 +127,82 @@ def aegra_server():
         _terminate()
         raise RuntimeError("aegra did not become ready within 90s")
     yield SERVER_URL
+    _terminate()
+
+
+EVE_TOOLS_URL = "http://127.0.0.1:18090"
+
+
+@pytest.fixture(scope="session")
+def stub_home_assistant():
+    """A stand-in for the real home lab's Home Assistant instance, run
+    in-process on a background thread rather than as a subprocess: it has no
+    dependencies of its own to isolate, and `eve_tools_server` below needs
+    it started and torn down as an ordinary session fixture dependency."""
+    from tests.fixtures.stub_home_assistant import app as stub_app
+
+    config = uvicorn.Config(stub_app, host="127.0.0.1", port=18091, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            if httpx.get("http://127.0.0.1:18091/api/states/x", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.2)
+    else:
+        raise RuntimeError("stub Home Assistant did not start")
+    yield "http://127.0.0.1:18091"
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def eve_tools_server(stub_home_assistant):
+    """Start the real `eve-tools` service against the stub Home Assistant
+    above. `start_new_session=True` and killing the whole process group on
+    teardown mirrors `aegra_server`: `uv run uvicorn` spawns its worker as a
+    separate child rather than exec'ing into it, so a plain terminate leaks
+    it."""
+    env = {
+        **os.environ,
+        "EVE_TOOLS_API_KEY": "test-key",
+        "EVE_TOOLS_HOME_ASSISTANT_URL": stub_home_assistant,
+        "EVE_TOOLS_HOME_ASSISTANT_TOKEN": "unused-in-stub",
+    }
+    proc = subprocess.Popen(
+        ["uv", "run", "uvicorn", "eve_tools.app:app", "--host", "127.0.0.1", "--port", "18090"],
+        env=env,
+        start_new_session=True,
+    )
+
+    def _terminate():
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            os.killpg(pgid, signal.SIGKILL)
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            if httpx.get(f"{EVE_TOOLS_URL}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+    else:
+        _terminate()
+        raise RuntimeError("eve-tools did not become ready within 20s")
+    yield EVE_TOOLS_URL
     _terminate()
