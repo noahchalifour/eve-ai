@@ -62,3 +62,13 @@ async def test_voice_tier_emits_tool_calls():
     reply = await model.ainvoke([HumanMessage("What is the weather in Toronto?")])
     assert reply.tool_calls, "proxy did not return tool calls"
     assert reply.tool_calls[0]["name"] == "get_weather"
+
+
+async def test_mechanical_tier_emits_tool_calls():
+    # ADR 0004 probed gpt-5.4 for tool calling before the gpt-5.6-* rename;
+    # gpt-5.6-luna (MECHANICAL) was never confirmed live. Every specialist
+    # (design doc section 4) depends on this.
+    model = get_model(Tier.MECHANICAL).bind_tools([get_weather])
+    reply = await model.ainvoke([HumanMessage("What is the weather in Toronto?")])
+    assert reply.tool_calls, "proxy did not return tool calls for MECHANICAL tier"
+    assert reply.tool_calls[0]["name"] == "get_weather"

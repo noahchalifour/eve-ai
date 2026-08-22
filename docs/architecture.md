@@ -1,18 +1,19 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 2,
-"Memory." For the Phase 2 design rationale and definition of done, see
-[`docs/superpowers/specs/2026-08-18-eve-memory-design.md`](superpowers/specs/2026-08-18-eve-memory-design.md).
+This document describes what exists in this repository today: Phase 3,
+"Specialists + Skills." For the Phase 3 design rationale and definition of
+done, see
+[`docs/superpowers/specs/2026-08-21-eve-specialists-design.md`](superpowers/specs/2026-08-21-eve-specialists-design.md).
 For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-18-eve-memory.md`](superpowers/plans/2026-08-18-eve-memory.md).
+[`docs/superpowers/plans/2026-08-21-eve-specialists.md`](superpowers/plans/2026-08-21-eve-specialists.md).
 
 ## The graph
 
 ```
-START -> load_context -> recall -> eve -> extract -> END
+START -> load_context -> recall -> eve <-> tools -> extract -> END
 ```
 
-Four nodes, wired in `src/eve/graph.py`:
+Five nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
@@ -25,10 +26,18 @@ Four nodes, wired in `src/eve/graph.py`:
   embedding call against a bounded budget for the vector arm. A timeout or
   embedding failure produces a complete lexical-only bundle.
 - **`eve`** rebuilds the system prompt after recall, so current memory is
-  included, then invokes the `VOICE` tier model (`src/eve/models.py`) and
-  streams the response. The prompt is never appended to `messages`, so persona,
-  member-context, and memory edits affect existing threads instead of being
-  frozen into history.
+  included, binds the static specialist/skill tools plus any
+  dynamically-discovered ones (freshly materialized from state on every
+  call), then invokes the `VOICE` tier model (`src/eve/models.py`) and
+  streams the response. The prompt is never appended to `messages`, so
+  persona, member-context, and memory edits affect existing threads instead
+  of being frozen into history.
+- **`tools`** (`src/eve/graph.py`'s `tools_node`) runs whichever tool calls
+  `eve` emitted — a specialist, `search_skills`, `search_memory`, or a
+  materialized dynamic tool — and routes back to `eve`. `tools_condition`
+  decides per turn whether `eve` continues to `extract` or loops back
+  through `tools` again, bounded by LangGraph's own recursion limit rather
+  than a custom counter.
 - **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
   The `REFLEX` model produces structured add, reinforce, supersede, and forget
   operations; valid writes, digest refresh, embeddings, and cap eviction are
@@ -38,7 +47,7 @@ The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
 `load_context` is pure local computation; `recall` is the one concession: a
 single bounded and cancellable embedding call that can degrade to lexical-only.
-Phase 3 wraps `eve` in a tools loop, per
+Phase 3 wraps `eve` in the `eve <-> tools` cycle, per
 [ADR 0001](adr/0001-agents-as-subgraph-tools.md), without moving a generative
 router in front of Eve.
 
@@ -98,6 +107,44 @@ One deliberate exception to "model identifiers live only in `models.py`":
 asserts the `VOICE` model string directly. A test whose job is to pin the
 tier-to-model mapping has to name the model, or it asserts nothing. Retiering
 `VOICE` deliberately touches that test; this is not an oversight to "fix."
+
+This tree predates Phase 3's `specialists/`, `skills/`, and `tools_client.py`
+additions to `src/eve/`, and the separate `src/eve_tools/` package; see
+"Specialists and skills" below.
+
+## Specialists and skills
+
+Phase 3 gives `eve` a tool-calling loop (the graph's `eve <-> tools` cycle)
+that reaches three domain specialists and one extensible skills layer,
+without any of them holding a third-party credential directly:
+
+- **`src/eve/specialists/`** — `home.py`, `mail.py`, and `finances.py` each
+  wrap a small tool-calling agent built by `base.py`'s `build_specialist`
+  (running on `Tier.MECHANICAL`) as a single opaque tool for `eve`;
+  `permissions.py` enforces `family.yaml` permissions once at that
+  specialist boundary and again inside `mail.py`'s `send_email`, which needs
+  `mail.send` on top of the coarser `mail.read`/`mail.send` check on
+  `ask_mail` itself.
+- **`src/eve/skills/`** — `search_skills` (`search.py`) is the one tool that
+  turns Eve's fixed toolset into an extensible one: it matches a query
+  against authored SKILL.md procedures (`registry.py`) and registered MCP
+  tool descriptions (`mcp_registry.py`), returning a procedure's text
+  directly or appending a `DynamicToolSpec` (`types.py`) to state, which
+  `materialize.py` turns back into a real callable tool on the next model
+  call (never held live in state, because Aegra checkpoints `EveState` to
+  Postgres across turns).
+- **`src/eve/tools_client.py`** — the one door from Eve's main container to
+  `eve-tools`. Every specialist tool and every materialized dynamic tool
+  calls its `invoke()`, an HTTP request with a timeout whose failures
+  degrade to a returned error string rather than a raised exception, so a
+  broken tool call lets Eve explain the problem instead of failing the turn.
+- **`src/eve_tools/`** — a separate FastAPI service and, per
+  [ADR 0006](adr/0006-eve-tools-isolation.md), the only
+  third-party-credentialed HTTP surface in the deployment: `home_assistant.py`,
+  `gmail.py`, and `monarch.py` hold the Home Assistant, Gmail, and Monarch
+  Money clients, `mcp_dispatch.py` opens a fresh connection per call to a
+  dynamically-discovered MCP server (`mcp_servers.py`), and `app.py`
+  dispatches every request to one of them by a namespaced tool name.
 
 ## Aegra and `aegra.json`
 
@@ -204,8 +251,9 @@ up before it can run a conversation at all.
 
 The family roster itself (`family.yaml`) holds no secrets — name, role,
 timezone, and permission strings per member — so it lives in git and changes
-by pull request. Permissions are resolved into `EveState` in Phase 1 but not
-acted on; Phase 3 enforces them at the tool boundary.
+by pull request. Permissions are resolved into `EveState` in Phase 1; Phase 3
+enforces them at the tool boundary (`src/eve/specialists/permissions.py`),
+described in "Specialists and skills" below.
 
 ## Memory
 
@@ -320,3 +368,4 @@ responsibility ends at building and publishing the image
 - [ADR 0003 — The embedding model and dimension are pinned](adr/0003-embedding-model-pinned.md)
 - [ADR 0004 — Model tier routing](adr/0004-model-tier-routing.md)
 - [ADR 0005 — Memory storage: one table, supersession, read-time decay](adr/0005-memory-storage.md)
+- [ADR 0006 — Specialist and skill tool execution runs in an isolated service](adr/0006-eve-tools-isolation.md)
