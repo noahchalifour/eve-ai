@@ -11,6 +11,19 @@ from eve.memory.types import MemoryBundle
 from eve.skills.types import DynamicToolSpec
 
 
+def _replace_dynamic_tools(
+    _old: list[DynamicToolSpec], new: list[DynamicToolSpec]
+) -> list[DynamicToolSpec]:
+    """Last-write-wins. A reducer is what gives a channel a default: without
+    one LangGraph uses `LastValue`, which holds no value at all until
+    something writes it, so on a fresh thread the key is simply absent from
+    state and every tool taking `Annotated[EveState, InjectedState]` fails
+    pydantic validation of the injected state before its body ever runs.
+    Not `operator.add`: `search_skills` already merges against the existing
+    list and caps it, then returns the whole new list."""
+    return new
+
+
 class MemberContext(TypedDict):
     sub: str
     name: str
@@ -33,4 +46,4 @@ class EveState(TypedDict):
     # Specs only - see eve.skills.types.DynamicToolSpec. Materialized into
     # real callables fresh on every model call (eve.skills.materialize,
     # Task 11), never stored as one.
-    dynamic_tools: list[DynamicToolSpec]
+    dynamic_tools: Annotated[list[DynamicToolSpec], _replace_dynamic_tools]

@@ -334,3 +334,175 @@ async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(mo
     assert called_with.get("invoked") is True
     assert result["messages"][-1].content == "You rolled a 4."
     assert result["dynamic_tools"] == [spec]
+
+
+async def test_a_static_tool_works_on_a_fresh_thread(monkeypatch):
+    """`dynamic_tools` needs a reducer to have a default.
+
+    Every other tool test here either monkeypatches `_STATIC_TOOLS` with
+    fakes that take no `InjectedState`, or hand-builds a state dict that
+    already carries `dynamic_tools` - so none of them exercise the only path
+    production ever takes: a brand-new thread, invoked with nothing but
+    `messages`. Without a reducer that channel is a `LastValue` with no value
+    at all, the key is absent from the injected state, and pydantic rejects
+    it for every real tool that asks for state. `search_skills` here is the
+    real one, out of the real `_STATIC_TOOLS`.
+    """
+    # No skills on disk -> `rank_skills` returns before it would embed
+    # anything, so the tool completes locally. The point under test is the
+    # injected state, not the ranking.
+    monkeypatch.setattr("eve.skills.search.load_skills", lambda mcp_tools: [])
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    search_call = {
+        "name": "search_skills", "args": {"query": "roll a die"},
+        "id": "call-1", "type": "tool_call",
+    }
+    fake_model = FakeToolCallingModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[search_call]),
+                AIMessage(content="Nothing for that."),
+            ]
+        )
+    )
+
+    app = build_graph(
+        model_factory=lambda _t: fake_model, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("go")]}, CONFIG)
+
+    tool_message = next(m for m in result["messages"] if m.type == "tool")
+    assert tool_message.status != "error", tool_message.content
+    assert tool_message.content == "No matching skill or tool found."
+
+
+async def test_a_raising_tool_degrades_to_an_error_message(monkeypatch):
+    """A LiteLLM outage inside a specialist, an embedding failure inside
+    `search_skills`, a Postgres failure inside `search_memory`: `ToolNode`'s
+    default handler re-raises all of them, which ends the turn as a 500
+    rather than as a sentence. The graph passes its own handler instead."""
+    from langchain_core.tools import tool
+
+    @tool
+    async def explode(reason: str) -> str:
+        """Fail."""
+        raise RuntimeError(f"upstream is down: {reason}")
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [explode])
+
+    call = {
+        "name": "explode", "args": {"reason": "timeout"},
+        "id": "call-1", "type": "tool_call",
+    }
+    fake_model = FakeToolCallingModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[call]),
+                AIMessage(content="Sorry, I couldn't reach that."),
+            ]
+        )
+    )
+
+    app = build_graph(
+        model_factory=lambda _t: fake_model, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("do it")]}, CONFIG)
+
+    tool_message = next(m for m in result["messages"] if m.type == "tool")
+    assert tool_message.status == "error"
+    assert "RuntimeError" in tool_message.content
+    assert "upstream is down: timeout" in tool_message.content
+    assert result["messages"][-1].content == "Sorry, I couldn't reach that."
+
+
+async def test_the_tool_loop_is_bounded_when_the_model_never_answers(monkeypatch):
+    """LangGraph's own recursion_limit defaults to 10007 and `.compile()`
+    takes no override, so a model stuck emitting tool calls would burn
+    thousands of paid calls. `eve` counts its own steps instead."""
+    from langchain_core.tools import tool
+
+    from eve.graph import _LOOP_EXHAUSTED
+    from eve.settings import get_settings
+
+    @tool
+    async def noop() -> str:
+        """Do nothing."""
+        return "nothing happened"
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [noop])
+
+    visits = []
+
+    class NeverAnswers(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            visits.append(1)
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "noop", "args": {}, "id": f"call-{len(visits)}",
+                     "type": "tool_call"}
+                ],
+            )
+
+    app = build_graph(
+        model_factory=lambda _t: NeverAnswers(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("loop forever")]}, CONFIG)
+
+    limit = get_settings().max_tool_loop_iterations
+    assert len(visits) == limit
+    assert result["messages"][-1].content == _LOOP_EXHAUSTED
+
+
+async def test_the_loop_budget_resets_on_the_next_turn(monkeypatch):
+    """The bound is per turn, not per thread: Aegra checkpoints `messages`
+    across turns, so a member whose previous turn exhausted the budget must
+    still get tools on the next one."""
+    from langchain_core.tools import tool
+
+    from eve.graph import _LOOP_EXHAUSTED
+
+    @tool
+    async def noop() -> str:
+        """Do nothing."""
+        return "nothing happened"
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [noop])
+
+    visits = []
+
+    class NeverAnswers(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            visits.append(1)
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "noop", "args": {}, "id": f"call-{len(visits)}",
+                     "type": "tool_call"}
+                ],
+            )
+
+    app = build_graph(
+        model_factory=lambda _t: NeverAnswers(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+    ).compile()
+    first = await app.ainvoke({"messages": [HumanMessage("loop forever")]}, CONFIG)
+    assert first["messages"][-1].content == _LOOP_EXHAUSTED
+
+    after_first_turn = len(visits)
+    await app.ainvoke(
+        {**first, "messages": [*first["messages"], HumanMessage("try again")]}, CONFIG
+    )
+
+    assert len(visits) == after_first_turn * 2

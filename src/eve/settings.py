@@ -54,8 +54,12 @@ class Settings(BaseSettings):
     tools_api_key: str = ""
     skills_dir: Path = Path("skills")
     # A specialist's own model+tool loop; not the outer eve<->tools cycle,
-    # which relies on LangGraph's own recursion_limit (design doc section 3).
+    # which is bounded separately below (design doc section 3).
     specialist_max_iterations: int = 6
+    # The outer eve<->tools cycle. LangGraph's platform recursion_limit
+    # defaults to 10007 and cannot be set at `.compile()` time, so the graph
+    # counts its own steps instead - see eve/graph.py.
+    max_tool_loop_iterations: int = 6
     dynamic_tools_cap: int = 8
 
     # Memory (Phase 2). Eve keeps its own small pool rather than reaching into

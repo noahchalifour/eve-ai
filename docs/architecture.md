@@ -36,8 +36,10 @@ Five nodes, wired in `src/eve/graph.py`:
   `eve` emitted — a specialist, `search_skills`, `search_memory`, or a
   materialized dynamic tool — and routes back to `eve`. `tools_condition`
   decides per turn whether `eve` continues to `extract` or loops back
-  through `tools` again, bounded by LangGraph's own recursion limit rather
-  than a custom counter.
+  through `tools` again, bounded to `EVE_MAX_TOOL_LOOP_ITERATIONS` (6) rounds
+  per turn by `eve` itself — LangGraph's own recursion limit defaults to
+  10007, which is no bound at all on a paid model. Any tool that raises
+  degrades to an error string tool-message rather than ending the run.
 - **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
   The `REFLEX` model produces structured add, reinforce, supersede, and forget
   operations; valid writes, digest refresh, embeddings, and cap eviction are
