@@ -18,12 +18,21 @@ from __future__ import annotations
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from eve import context
 from eve.context import load_context
 from eve.memory import extract as memory_extract, recall as memory_recall
+from eve.memory.search import search_memory
 from eve.models import Tier, get_model
+from eve.skills.materialize import materialize
+from eve.skills.search import search_skills
+from eve.specialists.finances import ask_finances
+from eve.specialists.home import ask_home
+from eve.specialists.mail import ask_mail
 from eve.state import EveState
+
+_STATIC_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
 
 
 # The ChatGPT backend refuses system messages outright - verified live on
@@ -46,6 +55,8 @@ def build_graph(
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         model = model_factory(Tier.VOICE)
+        dynamic = [materialize(spec) for spec in state.get("dynamic_tools", [])]
+        bound_model = model.bind_tools([*_STATIC_TOOLS, *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
         # `from eve.context import load_persona` here would bind the real
@@ -55,17 +66,31 @@ def build_graph(
             context.load_persona(), state["member"], state.get("memory")
         )
         messages = [_persona_message(prompt), *state["messages"]]
-        return {"messages": [await model.ainvoke(messages, config)]}
+        return {"messages": [await bound_model.ainvoke(messages, config)]}
+
+    async def tools_node(state: EveState, config: RunnableConfig) -> dict:
+        dynamic = [materialize(spec) for spec in state.get("dynamic_tools", [])]
+        # Rebuilt fresh, not cached on the module: a spec discovered by
+        # search_skills two turns ago must still resolve to a live tool now,
+        # and EveState is the only thing that survives between them.
+        node = ToolNode([*_STATIC_TOOLS, *dynamic])
+        return await node.ainvoke(state, config)
 
     builder = StateGraph(EveState)
     builder.add_node("load_context", load_context)
     builder.add_node("recall", recall_fn)
     builder.add_node("eve", eve)
+    builder.add_node("tools", tools_node)
     builder.add_node("extract", extract_fn)
     builder.add_edge(START, "load_context")
     builder.add_edge("load_context", "recall")
     builder.add_edge("recall", "eve")
-    builder.add_edge("eve", "extract")
+    # Bounded by LangGraph's own recursion_limit (default 25), not a custom
+    # counter - a runaway loop still terminates instead of running forever,
+    # and this is the platform mechanism for exactly that ceiling. Raise a
+    # dedicated counter only if a real runaway is ever observed.
+    builder.add_conditional_edges("eve", tools_condition, {"tools": "tools", END: "extract"})
+    builder.add_edge("tools", "eve")
     builder.add_edge("extract", END)
     return builder
 

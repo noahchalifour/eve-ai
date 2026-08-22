@@ -1,11 +1,11 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from eve.family import Family, Member
 from eve.graph import build_graph
+from tests.conftest import FakeToolCallingModel
 
 NOAH = Member(
     sub="sub-noah",
@@ -18,7 +18,7 @@ CONFIG = {"configurable": {"langgraph_auth_user": {"identity": "sub-noah"}}}
 
 
 def _fake_factory(_tier):
-    return GenericFakeChatModel(messages=iter([AIMessage(content="Hi Noah.")]))
+    return FakeToolCallingModel(messages=iter([AIMessage(content="Hi Noah.")]))
 
 
 async def _no_recall(state, config):
@@ -90,7 +90,7 @@ async def test_system_prompt_is_sent_to_the_model_and_not_stored_in_messages(
 ):
     seen = {}
 
-    class RecordingModel(GenericFakeChatModel):
+    class RecordingModel(FakeToolCallingModel):
         async def ainvoke(self, input, config=None, **kwargs):
             seen["messages"] = input
             return AIMessage(content="ok")
@@ -123,7 +123,7 @@ async def test_persona_is_sent_as_a_developer_message_not_a_system_message(
     """
     seen = {}
 
-    class RecordingModel(GenericFakeChatModel):
+    class RecordingModel(FakeToolCallingModel):
         async def ainvoke(self, input, config=None, **kwargs):
             seen["messages"] = input
             return AIMessage(content="ok")
@@ -159,7 +159,7 @@ async def test_the_graph_runs_recall_before_eve_and_extract_after(monkeypatch):
 
     def factory(_tier):
         order.append("eve")
-        return GenericFakeChatModel(messages=iter([AIMessage(content="Hi.")]))
+        return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
 
     app = build_graph(
         model_factory=factory, recall_fn=recall, extract_fn=extract
@@ -203,7 +203,7 @@ async def test_memory_reaches_the_system_prompt(monkeypatch):
 
     seen = {}
 
-    class RecordingModel(GenericFakeChatModel):
+    class RecordingModel(FakeToolCallingModel):
         async def ainvoke(self, input, config=None, **kwargs):
             seen["messages"] = input
             return AIMessage(content="ok")
@@ -219,3 +219,118 @@ async def test_memory_reaches_the_system_prompt(monkeypatch):
     await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
     assert "Noah is vegetarian" in seen["messages"][0].content
+
+
+async def test_eve_calls_a_tool_and_returns_the_final_answer(monkeypatch):
+    from langchain_core.tools import tool
+
+    @tool
+    async def get_widget(name: str) -> str:
+        """Look up a widget."""
+        return f"widget:{name}"
+
+    tool_call = {
+        "name": "get_widget", "args": {"name": "sprocket"}, "id": "call-1", "type": "tool_call",
+    }
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [get_widget])
+
+    # `eve` calls `model_factory(Tier.VOICE)` on every node visit, including
+    # revisits within one turn's tool loop - fine in production since
+    # `get_model` is `lru_cache`d (tests/conftest.py), but a plain factory
+    # here would hand back a freshly-reset iterator each revisit and the
+    # tool-call message would repeat forever. One shared instance mirrors
+    # the real caching.
+    fake_model = FakeToolCallingModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="It's a sprocket."),
+            ]
+        )
+    )
+
+    def factory(_tier):
+        return fake_model
+
+    app = build_graph(
+        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("what's the widget?")]}, CONFIG)
+
+    assert result["messages"][-1].content == "It's a sprocket."
+    tool_message = result["messages"][-2]
+    assert tool_message.type == "tool"
+    assert tool_message.content == "widget:sprocket"
+
+
+async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(monkeypatch):
+    from typing import Annotated
+
+    from langchain_core.messages import ToolMessage
+    from langchain_core.tools import InjectedToolCallId, tool
+    from langgraph.types import Command
+
+    spec = {
+        "server_id": "mock-server", "tool_name": "roll_dice",
+        "description": "Roll a die.", "schema": {"properties": {}},
+    }
+
+    @tool
+    async def fake_search_skills(
+        query: str, tool_call_id: Annotated[str, InjectedToolCallId]
+    ) -> Command:
+        """stand-in for eve.skills.search.search_skills"""
+        return Command(
+            update={
+                "messages": [ToolMessage("Tool available: roll_dice", tool_call_id=tool_call_id)],
+                "dynamic_tools": [spec],
+            }
+        )
+
+    called_with = {}
+
+    def fake_materialize(spec_):
+        @tool
+        async def roll_dice() -> str:
+            """Roll a die."""
+            called_with["invoked"] = True
+            return "4"
+
+        return roll_dice
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [fake_search_skills])
+    monkeypatch.setattr("eve.graph.materialize", fake_materialize)
+
+    search_call = {
+        "name": "fake_search_skills", "args": {"query": "roll a die"},
+        "id": "call-1", "type": "tool_call",
+    }
+    dice_call = {"name": "roll_dice", "args": {}, "id": "call-2", "type": "tool_call"}
+
+    # See the comment in test_eve_calls_a_tool_and_returns_the_final_answer:
+    # one shared instance across revisits, mirroring `get_model`'s caching.
+    fake_model = FakeToolCallingModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[search_call]),
+                AIMessage(content="", tool_calls=[dice_call]),
+                AIMessage(content="You rolled a 4."),
+            ]
+        )
+    )
+
+    def factory(_tier):
+        return fake_model
+
+    app = build_graph(
+        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("roll a die")]}, CONFIG)
+
+    assert called_with.get("invoked") is True
+    assert result["messages"][-1].content == "You rolled a 4."
+    assert result["dynamic_tools"] == [spec]
