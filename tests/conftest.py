@@ -19,6 +19,7 @@ import time
 
 import httpx
 import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from eve.context import load_persona
 from eve.family import get_family
@@ -26,6 +27,16 @@ from eve.models import get_model
 from eve.settings import get_settings
 
 _CACHED = (get_settings, get_model, get_family, load_persona)
+
+
+class FakeToolCallingModel(GenericFakeChatModel):
+    """`GenericFakeChatModel` raises `NotImplementedError` from `bind_tools` -
+    fine before Phase 3, when nothing in the graph called it. Every model in
+    `eve`'s loop and every specialist's loop binds tools unconditionally now
+    (Task 13), so every graph-level test needs a fake that tolerates it."""
+
+    def bind_tools(self, tools, **kwargs):
+        return self
 
 
 @pytest.fixture(autouse=True)

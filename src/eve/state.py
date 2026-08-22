@@ -25,4 +25,7 @@ class EveState(TypedDict):
     system_prompt: str
     # Written by `recall`, rendered into the system prompt by `eve` after
     # recall completes, and read by `extract`. Phase 3's tools loop reads it too.
-    memory: MemoryBundle
+    # `| None` because InjectedState's pydantic schema validates this field
+    # strictly (unlike a plain TypedDict at runtime): a specialist tool invoked
+    # before `recall` populates it - or in a test - must be able to pass `None`.
+    memory: MemoryBundle | None
