@@ -1,12 +1,14 @@
 """Eve's graph.
 
-    START -> load_context -> recall -> eve -> extract -> END
+    START -> load_context -> recall -> eve <-> tools -> extract -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
 if it misses its budget. `extract` runs after the answer has streamed, so its
-latency is invisible. Phase 3 wraps `eve` in a tools loop without reshaping
-any of this.
+latency is invisible. Phase 3 (this file) adds the `eve <-> tools` cycle:
+`eve` binds the static specialist/skill tools plus any dynamically-discovered
+ones (freshly materialized from state on every call) and either answers,
+routing to `extract`, or emits tool calls, routing to `tools` and back.
 
 The system prompt is rebuilt from scratch every turn and passed to the model
 without being appended to `messages`, so persona, member-context and memory
@@ -85,10 +87,14 @@ def build_graph(
     builder.add_edge(START, "load_context")
     builder.add_edge("load_context", "recall")
     builder.add_edge("recall", "eve")
-    # Bounded by LangGraph's own recursion_limit (default 25), not a custom
-    # counter - a runaway loop still terminates instead of running forever,
-    # and this is the platform mechanism for exactly that ceiling. Raise a
-    # dedicated counter only if a real runaway is ever observed.
+    # Bounded by LangGraph's own recursion_limit (default 10007 as of the
+    # installed langgraph - langgraph/_internal/_config.py's
+    # DEFAULT_RECURSION_LIMIT, verified against this project's lockfile),
+    # not a custom counter - a runaway loop still terminates instead of
+    # running forever, and this is the platform mechanism for exactly that
+    # ceiling. Raise a dedicated counter only if a real runaway is ever
+    # observed; the default is generous enough that hitting it in practice
+    # means something is actually broken, not merely a long conversation.
     builder.add_conditional_edges("eve", tools_condition, {"tools": "tools", END: "extract"})
     builder.add_edge("tools", "eve")
     builder.add_edge("extract", END)
