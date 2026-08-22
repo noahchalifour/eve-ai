@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from eve_tools import home_assistant
+from eve_tools import gmail, home_assistant, mcp_dispatch, monarch
 from eve_tools.settings import get_tools_settings
 
 app = FastAPI()
@@ -26,6 +26,18 @@ _HANDLERS = {
     "home.get_state": lambda a: home_assistant.get_state(a["entity_id"]),
     "home.call_service": lambda a: home_assistant.call_service(
         a["domain"], a["service"], a["entity_id"], a.get("data") or {}
+    ),
+    "mail.list_messages": lambda a: gmail.list_messages(a["member_sub"], a["query"]),
+    "mail.get_thread": lambda a: gmail.get_thread(a["member_sub"], a["thread_id"]),
+    "mail.send_email": lambda a: gmail.send_email(
+        a["member_sub"], a["to"], a["subject"], a["body"]
+    ),
+    "finances.list_transactions": lambda a: monarch.list_transactions(
+        a.get("limit", 20), a.get("category")
+    ),
+    "finances.get_budgets": lambda a: monarch.get_budgets(),
+    "mcp.invoke": lambda a: mcp_dispatch.invoke(
+        a["server_id"], a["tool_name"], a["arguments"]
     ),
 }
 
