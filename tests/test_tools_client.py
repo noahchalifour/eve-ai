@@ -48,3 +48,25 @@ async def test_invoke_degrades_to_an_error_string_on_transport_failure():
     respx.post("http://eve-tools.test/invoke").mock(side_effect=httpx.ConnectError)
     result = await invoke("home.get_state", {"entity_id": "light.kitchen"})
     assert result.startswith("error:")
+
+
+@respx.mock
+async def test_invoke_degrades_to_error_on_malformed_json():
+    """Malformed or non-JSON responses (proxy errors, truncated) must not
+    raise json.JSONDecodeError."""
+    respx.post("http://eve-tools.test/invoke").mock(
+        return_value=httpx.Response(200, text="<html>Gateway Error</html>")
+    )
+    result = await invoke("home.get_state", {"entity_id": "light.kitchen"})
+    assert result.startswith("error:") and "JSONDecodeError" in result
+
+
+@respx.mock
+async def test_invoke_degrades_to_error_on_missing_result_and_error_keys():
+    """A response with neither 'result' nor 'error' keys must not raise
+    KeyError."""
+    respx.post("http://eve-tools.test/invoke").mock(
+        return_value=httpx.Response(200, json={"data": "something"})
+    )
+    result = await invoke("home.get_state", {"entity_id": "light.kitchen"})
+    assert result.startswith("error:") and "KeyError" in result

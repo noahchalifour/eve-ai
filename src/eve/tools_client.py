@@ -30,10 +30,10 @@ async def invoke(tool: str, arguments: dict, timeout: float = 15.0) -> str:
             )
             response.raise_for_status()
             body = response.json()
-    except httpx.HTTPError as exc:
+
+        if "error" in body:
+            return f"error: {body['error']}"
+        return json.dumps(body["result"])
+    except Exception as exc:
         logger.warning("eve-tools call to %r failed", tool, exc_info=True)
         return f"error: eve-tools unavailable ({exc.__class__.__name__})"
-
-    if "error" in body:
-        return f"error: {body['error']}"
-    return json.dumps(body["result"])
