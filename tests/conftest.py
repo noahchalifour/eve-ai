@@ -25,6 +25,7 @@ from eve.context import load_persona
 from eve.family import get_family
 from eve.models import get_model
 from eve.settings import get_settings
+from eve.skills import mcp_registry
 
 _CACHED = (get_settings, get_model, get_family, load_persona)
 
@@ -43,9 +44,15 @@ class FakeToolCallingModel(GenericFakeChatModel):
 def _clear_caches():
     for cached in _CACHED:
         cached.cache_clear()
+    # `mcp_registry._REGISTERED` is process-lifetime mutable state, same
+    # leak shape as the lru_caches above: a test that registers a spec
+    # (test_skills_registry.py's round-trip test) would otherwise leave it
+    # for every later test that calls the real `registered_mcp_tools()`.
+    mcp_registry._REGISTERED.clear()
     yield
     for cached in _CACHED:
         cached.cache_clear()
+    mcp_registry._REGISTERED.clear()
 
 
 SERVER_URL = "http://127.0.0.1:2026"
