@@ -59,6 +59,37 @@ MIGRATIONS: list[tuple[str, str]] = [
           ON eve_memory (subject) WHERE superseded_why IS NULL;
         """,
     ),
+    (
+        "0002_ambient",
+        """
+        -- Dedup and cooldown for ambient signals (Phase 4, design section
+        -- 4.5). There is deliberately no cursor table: every source is
+        -- time-windowed or content-keyed, so this table alone gives
+        -- exactly-once delivery.
+        CREATE TABLE IF NOT EXISTS eve_ambient_seen (
+          source        text        NOT NULL,
+          key           text        NOT NULL,
+          first_seen_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (source, key)
+        );
+
+        -- Every notification actually sent. This IS the daily-cap counter
+        -- (counted per member per local day) and the record of what Eve
+        -- chose to interrupt, which is Phase 5's training signal.
+        CREATE TABLE IF NOT EXISTS eve_ambient_notice (
+          id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          member_sub text        NOT NULL,
+          source     text        NOT NULL,
+          key        text        NOT NULL,
+          urgent     boolean     NOT NULL DEFAULT false,
+          thread_id  text,
+          sent_at    timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS eve_ambient_notice_member_sent
+          ON eve_ambient_notice (member_sub, sent_at DESC);
+        """,
+    ),
 ]
 
 _pool: AsyncConnectionPool | None = None
