@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from email.mime.text import MIMEText
 
 from google.auth.transport.requests import Request
@@ -21,7 +22,10 @@ from googleapiclient.discovery import build
 
 from eve_tools.settings import get_tools_settings
 
+logger = logging.getLogger(__name__)
+
 _SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+_METADATA_HEADERS = ["From", "Subject", "Date"]
 
 
 def _credentials_for(member_sub: str) -> Credentials:
@@ -36,10 +40,57 @@ def _service(member_sub: str):
     return build("gmail", "v1", credentials=_credentials_for(member_sub))
 
 
+def _flatten(raw: dict) -> dict:
+    """`messages().list()` returns only `id` and `threadId`; every field the
+    ambient mail source (and any future summarizer) reads by name has to be
+    hydrated from a per-message `get`. Header names are case-insensitive on
+    the wire, so match them that way rather than trusting Gmail's casing."""
+    headers = {}
+    for header in (raw.get("payload") or {}).get("headers") or []:
+        name = str(header.get("name", "")).lower()
+        if name in ("from", "subject", "date"):
+            headers[name] = header.get("value", "")
+    return {
+        "id": raw.get("id"),
+        "threadId": raw.get("threadId"),
+        "snippet": raw.get("snippet", ""),
+        "internalDate": raw.get("internalDate"),
+        "from": headers.get("from", ""),
+        "subject": headers.get("subject", ""),
+        "date": headers.get("date", ""),
+    }
+
+
 async def list_messages(member_sub: str, query: str) -> dict:
     def _run():
         service = _service(member_sub)
-        return service.users().messages().list(userId="me", q=query, maxResults=10).execute()
+        listing = (
+            service.users().messages().list(userId="me", q=query, maxResults=10).execute()
+        )
+        messages = []
+        for stub in listing.get("messages") or []:
+            try:
+                full = (
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=stub["id"],
+                        format="metadata",
+                        metadataHeaders=_METADATA_HEADERS,
+                    )
+                    .execute()
+                )
+            except Exception:
+                # A message deleted between list and get, or a transient API
+                # error, should drop that one message rather than the batch.
+                logger.warning(
+                    "gmail metadata fetch failed for message %s", stub.get("id"),
+                    exc_info=True,
+                )
+                continue
+            messages.append(_flatten(full))
+        return {**listing, "messages": messages}
 
     return await asyncio.to_thread(_run)
 
