@@ -149,7 +149,8 @@ a separate code path.
 Reuses the existing `mail.list_messages(member_sub, query)` with
 `is:unread newer_than:1d`. Keyed on message id. Polled only for members
 holding `mail.read`, so a member without the permission costs no API call
-rather than being filtered later.
+rather than being filtered later. The calendar source polls only members
+holding `calendar.read`, for the same reason.
 
 ### 4.3 Finances
 
@@ -214,11 +215,14 @@ member the filter names, because a family calendar, a household budget, and an
 open garage door are shared logistics by nature. The filter chooses *whether*
 in the first case and *who* in the others.
 
-**2. The permission gate.** `source -> permission` (`calendar.read`,
-`mail.read`, `finances.read`, `home.read`), each candidate member checked
-through the existing `specialists/permissions.py` helpers. A member the filter
-named who lacks the permission is dropped and logged. This gate — not the
-filter's judgment — is what keeps finance notifications away from kids.
+**2. The permission gate.** Each candidate member is checked through the
+existing `specialists/permissions.py` helper against the string the roster
+actually uses today — `mail.read` for mail, `finances` for finances,
+`home.control` for home — plus one new string, `calendar.read`, granted to both
+adults in `family.yaml`, because the calendar source is new and no existing
+permission covers it. A member the filter named who lacks the permission is
+dropped and logged. This gate — not the filter's judgment — is what keeps
+finance notifications away from a member who should not see them.
 
 **3. The daily cap.** `EVE_AMBIENT_DAILY_CAP` (6) notifications per member per
 member-local day, counted from `eve_ambient_notice` rows using the member's
@@ -414,7 +418,7 @@ real REFLEX verdict, a real `eve` turn, and a real push to a test ntfy topic.
 | 3 | A signal the filter rejects, and a signal Eve vetoes with `NOTHING`, both produce no push and leave no thread behind. |
 | 4 | Quiet hours suppress a normal signal and pass an urgent one; the bypass is visible in the logs and in the notification title. |
 | 5 | The daily cap holds per member, evaluated in that member's own timezone. |
-| 6 | A member without `finances.read` never receives a finances notification, even when the filter names them. |
+| 6 | A member without the `finances` permission never receives a finances notification, even when the filter names them. |
 | 7 | A family member's own token cannot impersonate another member. |
 | 8 | `eve-tools`, Aegra, or ntfy being unreachable loses no signal permanently and never kills the poll loop. |
 | 9 | With `EVE_AMBIENT_ENABLED=false`, the deployment starts, serves `/healthz`, and sends nothing. |
