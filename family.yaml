@@ -20,6 +20,9 @@ members:
     role: adult
     timezone: "America/Vancouver"
     permissions:
+      # Phase 4: receiving proactive calendar notifications. No existing
+      # grant covered the calendar, because until now nothing read it.
+      - calendar.read
       - home.control
       - mail.read
       - mail.send
@@ -31,6 +34,7 @@ members:
     role: adult
     timezone: "America/Vancouver"
     permissions:
+      - calendar.read
       - home.control
       - mail.read
       - mail.send

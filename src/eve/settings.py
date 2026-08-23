@@ -78,6 +78,28 @@ class Settings(BaseSettings):
     memory_household_cap: int = 60
     memory_digest_every_n_turns: int = 6
 
+    # Phase 4 (Ambient). See docs/superpowers/specs/
+    # 2026-08-23-eve-ambient-design.md sections 5 and 8.2.
+    #
+    # Off by default: this is the one subsystem that speaks without being
+    # spoken to, so a deployment that has not deliberately enabled it must
+    # send nothing.
+    ambient_enabled: bool = False
+    ambient_poll_interval_seconds: int = 300
+    ambient_daily_cap: int = 6
+    ambient_quiet_hours: str = "21:00-07:00"
+    ambient_cooldown_hours: int = 6
+    ambient_calendar_lookahead_minutes: int = 90
+    # The impersonation credential (design section 6.1). Held by eve-ambient,
+    # which presents it, and by eve, which verifies it.
+    ambient_token: str = ""
+    ambient_ha_webhook_secret: str = ""
+    ambient_ntfy_base_url: str = ""
+    ambient_ntfy_topic: str = ""
+    ambient_ntfy_token: str = ""
+    ambient_thread_url_template: str = ""
+    ambient_aegra_base_url: str = "http://eve:2026"
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
@@ -101,6 +123,12 @@ class Settings(BaseSettings):
                     "EVE_AUTH_MODE=oidc requires "
                     + ", ".join(f"EVE_{name.upper()}" for name in missing)
                 )
+        if self.ambient_token and len(self.ambient_token) < 32:
+            raise ValueError(
+                "EVE_AMBIENT_TOKEN must be at least 32 characters: it "
+                "authenticates as any family member, so a guessable value "
+                "fails open"
+            )
 
 
 @lru_cache(maxsize=1)

@@ -44,3 +44,9 @@ def test_unknown_subject_raises(roster):
 def test_member_is_immutable(roster):
     with pytest.raises(Exception):
         roster.get("sub-noah").name = "Someone Else"
+
+
+def test_members_are_iterable_in_roster_order(roster):
+    """The poll loop walks the roster per member; without this it would have
+    to reach into Family's private dict."""
+    assert [m.name for m in roster.members()] == ["Noah", "Kid"]

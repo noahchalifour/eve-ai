@@ -89,3 +89,32 @@ def test_phase_3_settings_have_sane_defaults():
     assert s.skills_dir == Path("skills")
     assert s.specialist_max_iterations == 6
     assert s.dynamic_tools_cap == 8
+
+
+def test_phase_4_ambient_defaults():
+    s = Settings()
+    assert s.ambient_enabled is False
+    assert s.ambient_poll_interval_seconds == 300
+    assert s.ambient_daily_cap == 6
+    assert s.ambient_quiet_hours == "21:00-07:00"
+    assert s.ambient_cooldown_hours == 6
+    assert s.ambient_calendar_lookahead_minutes == 90
+    assert s.ambient_aegra_base_url == "http://eve:2026"
+    assert s.ambient_token == ""
+
+
+def test_a_short_ambient_token_is_refused_at_startup():
+    """An impersonation secret is the one credential in this deployment that
+    can speak as any family member. A guessable one is worse than none,
+    because it fails open rather than closed."""
+    with pytest.raises(ValueError, match="EVE_AMBIENT_TOKEN"):
+        Settings(ambient_token="short")
+
+
+def test_an_empty_ambient_token_is_allowed():
+    """Ambient off is the default; an unset token must not stop Eve booting."""
+    assert Settings(ambient_token="").ambient_token == ""
+
+
+def test_a_long_ambient_token_is_accepted():
+    assert Settings(ambient_token="a" * 32).ambient_token == "a" * 32
