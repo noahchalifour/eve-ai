@@ -121,14 +121,22 @@ class Signal:
     member_sub: str | None  # whose account it came from; None = household
     summary: str            # one plain line, for the filter and the prompt
     payload: dict           # detail Eve may want to reason over
+    cooldown_hours: int | None = None   # None = the global default
 
-async def poll(cursor: str | None) -> tuple[list[Signal], str | None]
+async def poll(member_sub: str) -> list[Signal]
 ```
 
 `summary` exists so the REFLEX filter reads one line rather than a raw API
 payload; `payload` exists so the compose turn has the detail the summary
-dropped. Cursors are opaque strings owned by each source and persisted per
-`(source, member_sub)`.
+dropped.
+
+**No cursors.** Every source is either time-windowed (mail asks for the last
+day) or content-keyed (a transaction id, an event `uid + etag`), so
+`eve_ambient_seen` already provides exactly-once delivery and a cursor table
+would be a second mechanism doing the same job less well — one that also goes
+wrong differently on a clock skew or a restart. What varies per signal is not
+position but *how long* a repeat should stay suppressed, which is why the
+window lives on the `Signal` itself.
 
 ### 4.1 Calendar
 
@@ -154,9 +162,10 @@ holding `calendar.read`, for the same reason.
 
 ### 4.3 Finances
 
-Reuses `finances.list_transactions` every poll, keyed on transaction id, and
-`finances.get_budgets` once per day, keyed on `budget id + period + state`, so
-an overrun notifies once for the month rather than once per poll. Household
+Reuses `finances.list_transactions` every poll, keyed on transaction id with
+the default cooldown, and `finances.get_budgets` every poll, keyed on
+`budget id + period + state` with a **720-hour cooldown**, so a budget that
+stays over notifies once for the month rather than every six hours. Household
 scope: `member_sub` is `None` and the audience comes entirely from §5.
 
 ### 4.4 Home Assistant — push only
@@ -343,13 +352,13 @@ the message she sends.
 
 ### 8.1 Tables
 
-Three, appended to the ordered-DDL migration in `memory/db.py` so `eve-migrate`
-stays the single schema entrypoint:
+Two, appended to the ordered-DDL migration in `memory/db.py` so `eve-migrate`
+stays the single schema entrypoint (its own `ponytail:` note says move to
+Alembic past roughly five entries; this is the second):
 
 | Table | Purpose |
 |---|---|
-| `eve_ambient_seen(source, key, first_seen_at)` | Dedup and cooldown. `ON CONFLICT DO NOTHING`; rows pruned past 30 days. |
-| `eve_ambient_cursor(source, member_sub, cursor, updated_at)` | Poll position. `member_sub` is `''` for household sources so the primary key needs no nullable column. |
+| `eve_ambient_seen(source, key, first_seen_at)` | Dedup and cooldown. `ON CONFLICT DO UPDATE SET first_seen_at = now()`, so a repeat after the window may fire again; rows pruned past 30 days. |
 | `eve_ambient_notice(id, member_sub, source, key, urgent, thread_id, sent_at)` | Every notification actually sent. |
 
 `eve_ambient_notice` *is* the budget counter — the cap counts its rows for the
@@ -410,7 +419,7 @@ the new auth mode — valid token, wrong token, under-length token refused at
 startup, unknown subject, and `x-eve-on-behalf-of` ignored when the caller
 authenticated as an ordinary member.
 
-**Integration** (real Postgres, live `aegra serve`): the three tables migrate
+**Integration** (real Postgres, live `aegra serve`): both tables migrate
 cleanly; `eve-ambient` creates a thread as a member using the service token;
 that member can read it; another member still gets 404.
 
