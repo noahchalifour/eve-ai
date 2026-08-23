@@ -274,10 +274,20 @@ secret in a four-person family.
 ### 6.2 The compose turn
 
 Create the thread, then run the `eve` graph and wait, with input of one
-synthetic **developer** message — the phase-3 lesson that a non-human
-instruction must be a developer message, not a system or user one. It states
-the signal, the member, and one instruction: if nothing here is worth saying,
-reply with exactly `NOTHING`.
+synthetic **human** message, clearly marked as a signal rather than speech —
+`[ambient signal — not from Noah] ...`. It states the signal, the member, and
+one instruction: if nothing here is worth saying, reply with exactly
+`NOTHING`.
+
+A human message, not a developer one, and the reason is mechanical rather than
+stylistic: `recall` derives its search query from the last `HumanMessage`
+(`memory/recall.py:40`) and `extract` derives its exchange the same way
+(`memory/extract.py:129`). A developer message would leave ambient turns with
+no episodic recall and half-blind extraction — silently, since both degrade
+rather than fail — and fixing that in the graph would break this phase's
+promise to leave the graph alone. The marker earns its keep twice: the model
+reads that it was not spoken to, and the thread keeps a visible record of what
+prompted Eve.
 
 The turn is an ordinary turn. Eve gets recall, specialists, skills, the tools
 loop, and post-turn extraction. That is what lets her enrich a bare signal
