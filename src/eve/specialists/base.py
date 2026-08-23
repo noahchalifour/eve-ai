@@ -13,7 +13,7 @@ from time import perf_counter
 from typing import Annotated
 
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
@@ -23,6 +23,16 @@ from eve.models import Tier, get_model
 from eve.settings import get_settings
 from eve.specialists.permissions import permission_denial
 from eve.state import EveState
+
+# The ChatGPT backend refuses plain system messages outright - live-verified
+# in graph.py's identical marker, whose comment has the full story: the
+# Responses API's replacement is the `developer` role, which langchain-openai
+# emits when a SystemMessage carries this marker. Every specialist runs on a
+# chatgpt/*-backed tier (MECHANICAL), so `create_agent`'s system_prompt has
+# to carry it too, or every real specialist call 400s with "System messages
+# are not allowed" - caught live against the real proxy, not by any of this
+# module's tests, all of which fake the model.
+_OPENAI_DEVELOPER_ROLE = {"__openai_role__": "developer"}
 
 
 def build_specialist(
@@ -55,7 +65,11 @@ def build_specialist(
             return denial
         if "agent" not in agent_holder:
             agent_holder["agent"] = create_agent(
-                model_factory(Tier.MECHANICAL), tools, system_prompt=system_prompt
+                model_factory(Tier.MECHANICAL),
+                tools,
+                system_prompt=SystemMessage(
+                    system_prompt, additional_kwargs=_OPENAI_DEVELOPER_ROLE
+                ),
             )
         agent = agent_holder["agent"]
         started = perf_counter()
