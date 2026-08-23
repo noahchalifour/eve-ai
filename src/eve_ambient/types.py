@@ -19,7 +19,10 @@ class Signal:
     occurred_at: datetime
     member_sub: str | None
     summary: str
-    payload: dict = field(default_factory=dict)
+    # compare=False: a dict is unhashable, and the frozen dataclass's
+    # generated __hash__ would otherwise include this field and raise the
+    # first time anything puts a Signal in a set (design 4.5 dedups there).
+    payload: dict = field(default_factory=dict, compare=False)
     # None means "the configured default". A source that knows its signal
     # should stay quiet longer than six hours says so here (design 4.3).
     cooldown_hours: int | None = None
@@ -52,9 +55,4 @@ def tool_result(raw: str) -> dict | None:
     except (TypeError, ValueError):
         logger.warning("eve-tools returned unparseable JSON: %.80s", raw)
         return None
-    if not isinstance(parsed, dict):
-        return None
-    # `invoke` already unwraps eve-tools' {"result": ...} envelope. The
-    # fallback covers a caller that hands over a raw eve-tools body instead.
-    inner = parsed.get("result", parsed)
-    return inner if isinstance(inner, dict) else None
+    return parsed if isinstance(parsed, dict) else None
