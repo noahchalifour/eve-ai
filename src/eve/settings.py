@@ -129,6 +129,14 @@ class Settings(BaseSettings):
                 "authenticates as any family member, so a guessable value "
                 "fails open"
             )
+        if self.ambient_enabled and not self.ambient_token:
+            # Enabled-without-a-token still polls, filters, and spends a
+            # model call per signal, then fails every delivery on a 401
+            # while retrying forever - the least diagnosable failure this
+            # subsystem can have. Refuse at startup instead.
+            raise ValueError(
+                "EVE_AMBIENT_TOKEN is required when EVE_AMBIENT_ENABLED=true"
+            )
 
 
 @lru_cache(maxsize=1)

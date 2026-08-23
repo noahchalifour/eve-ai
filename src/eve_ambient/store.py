@@ -37,7 +37,7 @@ async def is_fresh(source: str, key: str, cooldown_hours: int) -> bool:
     than its cooldown window."""
     row = await _fetchone(
         """
-        SELECT first_seen_at < now() - make_interval(hours => %(hours)s)
+        SELECT last_seen_at < now() - make_interval(hours => %(hours)s)
                  AS expired
         FROM eve_ambient_seen
         WHERE source = %(source)s AND key = %(key)s
@@ -54,7 +54,7 @@ async def mark_seen(source: str, key: str) -> None:
     await _execute(
         """
         INSERT INTO eve_ambient_seen (source, key) VALUES (%(source)s, %(key)s)
-        ON CONFLICT (source, key) DO UPDATE SET first_seen_at = now()
+        ON CONFLICT (source, key) DO UPDATE SET last_seen_at = now()
         """,
         {"source": source, "key": key},
     )
@@ -65,7 +65,7 @@ async def prune_seen(days: int = 30) -> int:
         """
         WITH gone AS (
           DELETE FROM eve_ambient_seen
-          WHERE first_seen_at < now() - make_interval(days => %(days)s)
+          WHERE last_seen_at < now() - make_interval(days => %(days)s)
           RETURNING 1
         )
         SELECT count(*) AS n FROM gone

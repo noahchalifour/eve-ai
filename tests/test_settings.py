@@ -118,3 +118,16 @@ def test_an_empty_ambient_token_is_allowed():
 
 def test_a_long_ambient_token_is_accepted():
     assert Settings(ambient_token="a" * 32).ambient_token == "a" * 32
+
+
+def test_enabling_ambient_without_a_token_is_refused_at_startup():
+    """Enabled-without-a-token would poll, filter, and spend a model call per
+    signal, then fail every delivery on a 401 forever - the least
+    diagnosable failure this subsystem can have."""
+    with pytest.raises(ValueError, match="EVE_AMBIENT_TOKEN"):
+        Settings(ambient_enabled=True, ambient_token="")
+
+
+def test_enabling_ambient_with_a_token_is_accepted():
+    s = Settings(ambient_enabled=True, ambient_token="a" * 32)
+    assert s.ambient_enabled is True

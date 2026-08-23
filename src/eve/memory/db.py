@@ -2,9 +2,9 @@
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there is exactly one table here.
+them, and there are only three tables here, across two migration entries.
 
-    ponytail: hand-rolled because there is one table. Move to Alembic if
+    ponytail: hand-rolled because there are so few tables. Move to Alembic if
     MIGRATIONS exceeds ~5 entries.
 """
 
@@ -69,7 +69,7 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE TABLE IF NOT EXISTS eve_ambient_seen (
           source        text        NOT NULL,
           key           text        NOT NULL,
-          first_seen_at timestamptz NOT NULL DEFAULT now(),
+          last_seen_at  timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (source, key)
         );
 
