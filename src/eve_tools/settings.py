@@ -21,6 +21,7 @@ class ToolsSettings(BaseSettings):
     home_assistant_url: str = ""
     home_assistant_token: str = ""
     gmail_credentials_json: str = ""
+    caldav_credentials_json: str = ""
     monarch_email: str = ""
     monarch_password: str = ""
 

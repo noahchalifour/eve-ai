@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from eve_tools import gmail, home_assistant, mcp_dispatch, monarch
+from eve_tools import caldav_client, gmail, home_assistant, mcp_dispatch, monarch
 from eve_tools.settings import get_tools_settings
 
 app = FastAPI()
@@ -26,6 +26,9 @@ _HANDLERS = {
     "home.get_state": lambda a: home_assistant.get_state(a["entity_id"]),
     "home.call_service": lambda a: home_assistant.call_service(
         a["domain"], a["service"], a["entity_id"], a.get("data") or {}
+    ),
+    "calendar.list_events": lambda a: caldav_client.list_events(
+        a["member_sub"], a.get("lookahead_minutes", 90)
     ),
     "mail.list_messages": lambda a: gmail.list_messages(a["member_sub"], a["query"]),
     "mail.get_thread": lambda a: gmail.get_thread(a["member_sub"], a["thread_id"]),
