@@ -20,6 +20,13 @@ NOAH = Member(
     timezone="America/Toronto",
     permissions=frozenset({"spend"}),
 )
+KID = Member(
+    sub="sub-kid",
+    name="Kid",
+    role="child",
+    timezone="America/Toronto",
+    permissions=frozenset({"home.control"}),
+)
 PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
@@ -217,3 +224,85 @@ async def test_deny_by_default_denies_runs_too():
 
 async def test_deny_by_default_still_denies_everything_else():
     assert await deny_by_default(_ctx(resource="crons"), {}) is False
+
+
+AMBIENT_TOKEN = "a" * 40
+
+
+def _ambient_settings(monkeypatch):
+    monkeypatch.setenv("EVE_AUTH_MODE", "dev")
+    monkeypatch.setenv("EVE_DEV_TOKENS", '{"tok-noah": "sub-noah"}')
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", AMBIENT_TOKEN)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+
+async def test_the_ambient_token_authenticates_as_the_named_member(monkeypatch):
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    user = await authenticate(
+        {
+            "Authorization": f"Bearer {AMBIENT_TOKEN}",
+            "x-eve-on-behalf-of": "sub-noah",
+        }
+    )
+    assert user["identity"] == "sub-noah"
+    assert user["is_authenticated"] is True
+
+
+async def test_a_member_token_cannot_impersonate(monkeypatch):
+    """The header is only meaningful alongside the ambient token. If an
+    ordinary member could set it, every member could read every thread."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH, KID]))
+    _ambient_settings(monkeypatch)
+    user = await authenticate(
+        {"Authorization": "Bearer tok-noah", "x-eve-on-behalf-of": "sub-kid"}
+    )
+    assert user["identity"] == "sub-noah"
+
+
+async def test_the_ambient_token_without_the_header_is_refused(monkeypatch):
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    with pytest.raises(AuthError, match="on-behalf-of"):
+        await authenticate({"Authorization": f"Bearer {AMBIENT_TOKEN}"})
+
+
+async def test_an_unknown_subject_is_refused(monkeypatch):
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    with pytest.raises(AuthError, match="sub-stranger"):
+        await authenticate(
+            {
+                "Authorization": f"Bearer {AMBIENT_TOKEN}",
+                "x-eve-on-behalf-of": "sub-stranger",
+            }
+        )
+
+
+async def test_the_ambient_path_is_inert_when_no_token_is_configured(monkeypatch):
+    """An empty configured token must never match an empty presented one."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    monkeypatch.setenv("EVE_AUTH_MODE", "dev")
+    monkeypatch.setenv("EVE_DEV_TOKENS", '{"tok-noah": "sub-noah"}')
+    monkeypatch.delenv("EVE_AMBIENT_TOKEN", raising=False)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    with pytest.raises(AuthError):
+        await authenticate({"Authorization": "Bearer ", "x-eve-on-behalf-of": "sub-noah"})
+
+
+async def test_bytes_headers_are_handled_on_the_ambient_path(monkeypatch):
+    """Aegra hands headers through as bytes in some paths; extract_bearer
+    already copes and the new header must too."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    user = await authenticate(
+        {
+            b"authorization": f"Bearer {AMBIENT_TOKEN}".encode(),
+            b"x-eve-on-behalf-of": b"sub-noah",
+        }
+    )
+    assert user["identity"] == "sub-noah"
