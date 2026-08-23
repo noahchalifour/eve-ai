@@ -98,3 +98,129 @@ async def test_one_failing_call_does_not_lose_the_other(monkeypatch):
 
     monkeypatch.setattr(finances, "invoke", AsyncMock(side_effect=_invoke))
     assert [s.key for s in await finances.poll("")] == ["t1", "t2"]
+
+
+async def test_a_non_dict_transaction_is_skipped_not_raised(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": ["t1", "t2"]},
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_non_dict_budget_is_skipped_not_raised(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": []},
+            "finances.get_budgets": {"budgets": ["b1", "b2"]},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_non_numeric_spent_or_limit_is_skipped(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": []},
+            "finances.get_budgets": {
+                "budgets": [
+                    {"id": "b3", "category": "Rent", "period": "2026-08",
+                     "spent": "a lot", "limit": 800.0},
+                ]
+            },
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_null_transaction_id_does_not_collide_with_a_missing_id(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {
+                "transactions": [
+                    {"id": None, "amount": -5.0, "merchant": "Coffee", "date": "2026-08-23"},
+                    {"amount": -6.0, "merchant": "Coffee", "date": "2026-08-23"},
+                ]
+            },
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_missing_or_unparseable_date_falls_back_to_now_without_raising(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {
+                "transactions": [
+                    {"id": "t1", "amount": -5.0, "merchant": "Coffee"},
+                    {"id": "t2", "amount": -6.0, "merchant": "Coffee", "date": "not-a-date"},
+                ]
+            },
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    keys = [s.key for s in await finances.poll("")]
+    assert keys == ["t1", "t2"]
+
+
+async def test_an_offset_date_is_converted_to_utc_not_relabelled(monkeypatch):
+    """.replace(tzinfo=UTC) on an offset-bearing timestamp would silently
+    shift the instant; astimezone(UTC) converts it."""
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {
+                "transactions": [
+                    {
+                        "id": "t1",
+                        "amount": -5.0,
+                        "merchant": "Coffee",
+                        "date": "2026-08-23T12:00:00-07:00",
+                    }
+                ]
+            },
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    [signal] = await finances.poll("")
+    assert signal.occurred_at.hour == 19
+    assert signal.occurred_at.utcoffset().total_seconds() == 0
+
+
+async def test_a_nested_merchant_object_is_flattened_to_its_name(monkeypatch):
+    """The real Monarch payload nests merchant as {"name", "id", ...}, not a
+    flat string."""
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {
+                "transactions": [
+                    {
+                        "id": "t1",
+                        "amount": -5.0,
+                        "merchant": {"name": "Coffee Shop", "id": "merch-1"},
+                        "date": "2026-08-23",
+                    }
+                ]
+            },
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    [signal] = await finances.poll("")
+    assert "Coffee Shop" in signal.summary
+    assert "{" not in signal.summary
