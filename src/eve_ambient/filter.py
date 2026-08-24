@@ -1,8 +1,13 @@
 """The REFLEX-tier relevance gate: is this worth interrupting anyone over?
 
-Structured output through the same mechanism memory/extract.py uses. Every
-failure here resolves to "do not notify" — a filter that cannot decide must
-not decide yes.
+Structured output through the same mechanism memory/extract.py uses. A
+genuine verdict — "not worth interrupting anyone over" — and an infrastructure
+failure are not the same thing, and must not collapse into one: the pipeline
+marks a genuine verdict seen, but a failure means the filter could not decide
+at all, so `judge` raises `FilterError` instead. The caller must leave the
+signal unseen so the next poll retries it, exactly as it does for a
+`notify.DeliveryError` (fix round 1, item 2 — a model-provider outage must
+cost every signal in its window a retry, not the signal itself).
 """
 
 from __future__ import annotations
@@ -22,6 +27,13 @@ from eve_ambient.types import FilterVerdict, Signal
 logger = logging.getLogger(__name__)
 
 _PAYLOAD_CHARS = 800
+
+
+class FilterError(Exception):
+    """The REFLEX call could not be completed — a couldn't-decide, not a
+    decided-no. Distinguishable from a genuine `FilterVerdict(notify=False)`
+    so the pipeline can treat it like a `notify.DeliveryError`: leave the
+    signal unseen and let the next poll retry."""
 
 
 @lru_cache(maxsize=1)
@@ -69,9 +81,9 @@ async def judge(signal: Signal) -> FilterVerdict:
         prompt = _render(signal, await _household_context())
         model = get_model(Tier.REFLEX).with_structured_output(FilterVerdict)
         verdict = await model.ainvoke([HumanMessage(prompt)])
-    except Exception:
+    except Exception as exc:
         logger.warning("ambient filter failed for %s", signal.key, exc_info=True)
-        return FilterVerdict(notify=False, why="filter unavailable")
+        raise FilterError(f"the filter could not judge {signal.key}: {exc}") from exc
     logger.info(
         "ambient filter verdict source=%s key=%s notify=%s urgent=%s why=%s",
         signal.source, signal.key, verdict.notify, verdict.urgent, verdict.why,

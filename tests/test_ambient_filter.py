@@ -45,17 +45,21 @@ async def test_the_verdict_is_returned_as_given(monkeypatch, no_household_memory
     assert await ambient_filter.judge(SIGNAL) == verdict
 
 
-async def test_a_failing_model_call_means_do_not_notify(monkeypatch, no_household_memory):
-    """Silence is the safe default: a filter outage must not become a
-    notification storm, and it must not raise into the poll loop either."""
+async def test_a_failing_model_call_raises_rather_than_deciding_no(
+    monkeypatch, no_household_memory
+):
+    """A REFLEX outage is a couldn't-decide, not a decided-no: collapsing the
+    two would mark every signal in the outage window seen and drop it
+    forever, the same mistake as treating notify.DeliveryError as a veto
+    (fix round 1, item 2). The caller — the pipeline — is the one that
+    leaves the signal unseen so the next poll retries."""
     monkeypatch.setattr(
         ambient_filter,
         "get_model",
         lambda tier: FakeStructuredModel(error=RuntimeError("litellm down")),
     )
-    verdict = await ambient_filter.judge(SIGNAL)
-    assert verdict.notify is False
-    assert "unavailable" in verdict.why
+    with pytest.raises(ambient_filter.FilterError):
+        await ambient_filter.judge(SIGNAL)
 
 
 async def test_the_prompt_carries_the_summary_the_roster_and_the_time(
