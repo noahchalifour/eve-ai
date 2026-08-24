@@ -1,3 +1,5 @@
+import asyncio
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -5,6 +7,12 @@ from fastapi.testclient import TestClient
 
 from eve_ambient import app as app_module
 from eve_ambient.types import Signal
+
+
+class _StopLoop(Exception):
+    """Raised by a patched `asyncio.sleep` to end an otherwise-infinite
+    `_poll_forever` loop after a fixed number of iterations, without ever
+    sleeping for real."""
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +28,13 @@ def settings(monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(app_module.app)
+    # Entered as a context manager so the app's `lifespan` actually runs
+    # (startup and shutdown) - a bare `TestClient(app)` never triggers it,
+    # which is why `ENABLED=false` starting no task, and the shutdown-cancel
+    # path, both need their own lifespan-driving tests below rather than
+    # relying on this fixture's absence of a task as evidence of anything.
+    with TestClient(app_module.app) as test_client:
+        yield test_client
 
 
 def test_healthz_reports_whether_ambient_is_enabled(client):
@@ -52,6 +66,11 @@ def test_the_webhook_accepts_and_queues(monkeypatch, client):
     handled = []
 
     async def _handle(signal, **kwargs):
+        # A real suspension point: without it this test would pass even if
+        # `_handle_in_background`'s task reference were dropped entirely,
+        # because a coroutine with no `await` runs to completion the moment
+        # it's scheduled and never actually exercises retention.
+        await asyncio.sleep(0)
         handled.append(signal)
         return "sent"
 
@@ -66,6 +85,15 @@ def test_the_webhook_accepts_and_queues(monkeypatch, client):
         },
     )
     assert response.status_code == 202
+    # `client` runs its ASGI app on a persistent background thread with its
+    # own event loop; the `await asyncio.sleep(0)` above means the task
+    # finishes on that loop's own schedule, not necessarily by the instant
+    # this (synchronous, main-thread) response comes back. Poll briefly
+    # rather than asserting immediately or sleeping a fixed guessed amount.
+    for _ in range(200):
+        if handled:
+            break
+        time.sleep(0.005)
     assert handled[0].source == "home"
     assert handled[0].key == "binary_sensor.garage:open"
     assert "Garage door" in handled[0].summary
@@ -76,6 +104,18 @@ def test_the_webhook_rejects_a_payload_without_an_entity(client):
         "/signals/home-assistant",
         headers={"x-eve-ambient-secret": "ha-secret"},
         json={"state": "open"},
+    )
+    assert response.status_code == 422
+
+
+def test_the_webhook_rejects_a_malformed_json_body(client):
+    response = client.post(
+        "/signals/home-assistant",
+        headers={
+            "x-eve-ambient-secret": "ha-secret",
+            "content-type": "application/json",
+        },
+        content=b"{not valid json",
     )
     assert response.status_code == 422
 
@@ -110,8 +150,61 @@ async def test_the_first_poll_of_a_source_primes_without_notifying(monkeypatch):
 
     counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
     assert handled == []
-    assert seen == ["k1", "k2"]
+    # The two real keys plus the per-source sentinel that makes priming an
+    # explicit fact rather than an inference from "any row exists".
+    assert seen == ["k1", "k2", "__primed__"]
     assert counts["primed"] == 2
+
+
+async def test_an_empty_first_poll_still_primes_so_the_next_real_signal_notifies(
+    monkeypatch,
+):
+    """An empty inbox, no transactions yet, nothing in the calendar window:
+    the first poll finding nothing must still count as primed, or the next
+    tick - the first one with a real signal - gets silently swallowed as
+    "still priming" instead of notified."""
+    primed_sources: set[str] = set()
+    handled = []
+    calls = {"n": 0}
+
+    async def _has_any(source):
+        return source in primed_sources
+
+    async def _mark_seen(source, key):
+        if key == "__primed__":
+            primed_sources.add(source)
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return []
+        return [
+            Signal(
+                source="fake", key="k1", occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub=None, summary="summary k1", payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", False, "finances", _poll),))
+
+    first = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert handled == []
+    assert first.get("primed", 0) == 0
+    assert "fake" in primed_sources
+
+    second = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert [s.key for s in handled] == ["k1"]
+    assert second.get("sent") == 1
+    assert "primed" not in second
 
 
 async def test_a_later_poll_runs_the_pipeline(monkeypatch):
@@ -160,6 +253,44 @@ async def test_one_failing_source_does_not_stop_the_others(monkeypatch):
     assert counts["errors"] == 1
 
 
+async def test_a_failing_members_poll_does_not_discard_a_sibling_members_signals(
+    monkeypatch,
+):
+    """An expired token for one member must not throw away the signals
+    already collected for everyone else polled under the same source."""
+    handled = []
+
+    async def _has_any(source):
+        return True
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        if member_sub == "sub-a":
+            raise RuntimeError("expired token")
+        return [
+            Signal(
+                source="fake", key=f"{member_sub}:k1",
+                occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub=member_sub, summary="summary", payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", True, "mail.read", _poll),))
+    monkeypatch.setattr(app_module, "_audience_for", lambda source: ["sub-a", "sub-b"])
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert [s.key for s in handled] == ["sub-b:k1"]
+    assert counts["errors"] == 1
+    assert counts["sent"] == 1
+
+
 async def test_a_failing_signal_does_not_stop_its_siblings(monkeypatch):
     async def _has_any(source):
         return True
@@ -178,6 +309,130 @@ async def test_a_failing_signal_does_not_stop_its_siblings(monkeypatch):
     counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
     assert calls["n"] == 2
     assert counts["errors"] == 1
+
+
+def test_ambient_disabled_starts_no_polling_task(monkeypatch):
+    """The headline claim for `EVE_AMBIENT_ENABLED=false`: not just "no
+    signals sent" but no polling task exists at all. `TestClient` must be
+    entered as a context manager for `lifespan` to run at all."""
+    calls = {"n": 0}
+
+    async def _poll_forever():
+        calls["n"] += 1
+
+    monkeypatch.setattr(app_module, "_poll_forever", _poll_forever)
+    with TestClient(app_module.app):
+        pass
+    assert calls["n"] == 0
+
+
+def test_ambient_enabled_starts_polling_and_cancels_it_cleanly_at_shutdown(monkeypatch):
+    monkeypatch.setenv("EVE_AMBIENT_ENABLED", "true")
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", "a" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    started = {"n": 0}
+    cancelled = {"n": 0}
+
+    async def _poll_forever():
+        started["n"] += 1
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled["n"] += 1
+            raise
+
+    monkeypatch.setattr(app_module, "_poll_forever", _poll_forever)
+    with TestClient(app_module.app):
+        pass
+    assert started["n"] == 1
+    assert cancelled["n"] == 1
+
+
+async def test_the_poll_loop_survives_a_raising_poll_once(monkeypatch):
+    """The headline claim of this service: a tick that fails outright does
+    not stop the next one."""
+    calls = {"n": 0}
+
+    async def _poll_once(now=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return {}
+
+    async def _prune_seen():
+        return 0
+
+    sleeps = {"n": 0}
+
+    async def _fake_sleep(_seconds):
+        sleeps["n"] += 1
+        if sleeps["n"] >= 2:
+            raise _StopLoop()
+
+    monkeypatch.setattr(app_module, "poll_once", _poll_once)
+    monkeypatch.setattr(app_module.store, "prune_seen", _prune_seen)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _fake_sleep)
+
+    with pytest.raises(_StopLoop):
+        await app_module._poll_forever()
+
+    assert calls["n"] == 2
+
+
+async def test_the_poll_loop_survives_a_raising_prune_seen(monkeypatch):
+    async def _poll_once(now=None):
+        return {}
+
+    prune_calls = {"n": 0}
+
+    async def _prune_seen():
+        prune_calls["n"] += 1
+        if prune_calls["n"] == 1:
+            raise RuntimeError("prune boom")
+        return 0
+
+    sleeps = {"n": 0}
+
+    async def _fake_sleep(_seconds):
+        sleeps["n"] += 1
+        if sleeps["n"] >= 2:
+            raise _StopLoop()
+
+    monkeypatch.setattr(app_module, "poll_once", _poll_once)
+    monkeypatch.setattr(app_module.store, "prune_seen", _prune_seen)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _fake_sleep)
+
+    with pytest.raises(_StopLoop):
+        await app_module._poll_forever()
+
+    assert prune_calls["n"] == 2
+
+
+async def test_lifespan_drains_in_flight_background_tasks_at_shutdown(monkeypatch):
+    """A compose turn already running when the process stops gets a chance
+    to finish rather than being destroyed mid-way (design 6.4)."""
+    finished = {"n": 0}
+
+    async def _slow_handle(signal, **kwargs):
+        await asyncio.sleep(0.01)
+        finished["n"] += 1
+        return "sent"
+
+    monkeypatch.setattr(app_module, "handle_signal", _slow_handle)
+
+    async with app_module.lifespan(app_module.app):
+        signal = Signal(
+            source="home", key="k", occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+            member_sub=None, summary="s", payload={},
+        )
+        task = asyncio.create_task(app_module._handle_in_background(signal))
+        app_module._background.add(task)
+        task.add_done_callback(app_module._background.discard)
+
+    assert finished["n"] == 1
 
 
 def _fake_source():
