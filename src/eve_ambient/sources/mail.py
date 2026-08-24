@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, tool_result
+from eve_ambient.types import Signal, list_field, tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ async def poll(member_sub: str) -> list[Signal]:
     if result is None:
         return []
     signals = []
-    for message in result.get("messages") or []:
+    for message in list_field(result, "messages"):
         if not isinstance(message, dict):
             logger.warning("mail.list_messages returned a non-dict message: %r", message)
             continue

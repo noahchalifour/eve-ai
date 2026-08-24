@@ -56,3 +56,25 @@ def tool_result(raw: str) -> dict | None:
         logger.warning("eve-tools returned unparseable JSON: %.80s", raw)
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def list_field(container: dict, key: str) -> list:
+    """Read a list-shaped field out of a `tool_result` dict.
+
+    `container.get(key) or []` - the pattern every source loop used before
+    this helper existed - guards a missing key or an explicit falsy value,
+    but not a truthy non-list. `{"messages": 5}` would make the `for`
+    statement itself raise `TypeError: 'int' object is not iterable`,
+    straight out of a source that a bad upstream payload must not be able
+    to kill. A wrong container type is exactly the kind of upstream shape
+    change worth seeing in the logs rather than inferring from silence.
+    """
+    value = container.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        logger.warning(
+            "expected a list at %r, got %s instead: %r", key, type(value).__name__, value
+        )
+        return []
+    return value

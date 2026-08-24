@@ -201,6 +201,33 @@ async def test_an_offset_date_is_converted_to_utc_not_relabelled(monkeypatch):
     assert signal.occurred_at.utcoffset().total_seconds() == 0
 
 
+async def test_a_non_list_transactions_container_yields_no_signals(monkeypatch):
+    """`{"transactions": 5}` is truthy, so `or []` never fires; the `for`
+    statement itself would raise TypeError without a type check on the
+    container, not just on its members."""
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": 5},
+            "finances.get_budgets": {"budgets": []},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_non_list_budgets_container_yields_no_signals(monkeypatch):
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": []},
+            "finances.get_budgets": {"budgets": "not-a-list"},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
 async def test_a_nested_merchant_object_is_flattened_to_its_name(monkeypatch):
     """The real Monarch payload nests merchant as {"name", "id", ...}, not a
     flat string."""

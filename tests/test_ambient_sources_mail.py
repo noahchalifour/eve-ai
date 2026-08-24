@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from eve_ambient.sources import mail
-from eve_ambient.types import tool_result
+from eve_ambient.types import list_field, tool_result
 
 MESSAGES = {
     "messages": [
@@ -180,5 +180,29 @@ async def test_a_null_id_does_not_collide_with_a_missing_id(monkeypatch):
         mail,
         "invoke",
         AsyncMock(return_value=json.dumps({"messages": [{"id": None}, {}]})),
+    )
+    assert await mail.poll("sub-noah") == []
+
+
+def test_list_field_returns_the_list_when_the_shape_is_right():
+    assert list_field({"messages": ["m1"]}, "messages") == ["m1"]
+
+
+def test_list_field_returns_empty_for_a_missing_key():
+    assert list_field({}, "messages") == []
+
+
+def test_list_field_returns_empty_for_a_truthy_non_list():
+    """The exact defect this closes: a truthy non-list value passes
+    `or []` unscathed and would otherwise blow up the caller's `for`."""
+    assert list_field({"messages": 5}, "messages") == []
+
+
+async def test_a_non_list_messages_container_yields_no_signals(monkeypatch):
+    """`{"messages": 5}` is truthy, so `or []` never fires; the `for`
+    statement itself would raise TypeError out of the source without a
+    type check on the container, not just on its members."""
+    monkeypatch.setattr(
+        mail, "invoke", AsyncMock(return_value=json.dumps({"messages": 5}))
     )
     assert await mail.poll("sub-noah") == []

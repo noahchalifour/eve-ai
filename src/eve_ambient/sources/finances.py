@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime
 
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, tool_result
+from eve_ambient.types import Signal, list_field, tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ async def _transactions() -> list[Signal]:
     if result is None:
         return []
     signals = []
-    for txn in result.get("transactions") or []:
+    for txn in list_field(result, "transactions"):
         if not isinstance(txn, dict):
             logger.warning("finances.list_transactions returned a non-dict item: %r", txn)
             continue
@@ -78,7 +78,7 @@ async def _budget_overruns() -> list[Signal]:
     if result is None:
         return []
     signals = []
-    for budget in result.get("budgets") or []:
+    for budget in list_field(result, "budgets"):
         if not isinstance(budget, dict):
             logger.warning("finances.get_budgets returned a non-dict item: %r", budget)
             continue
