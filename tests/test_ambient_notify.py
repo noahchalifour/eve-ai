@@ -186,6 +186,34 @@ async def test_an_empty_answer_is_treated_as_a_veto(monkeypatch):
     assert client.threads.deleted == ["thread-1"]
 
 
+@pytest.mark.parametrize(
+    "answer",
+    ["NOTHING", "nothing", "Nothing", "Nothing.", "nothing!", "NOTHING?", "  nothing  "],
+)
+async def test_veto_variants_are_all_treated_as_silence(monkeypatch, answer):
+    """The prompt asks Eve to reply with exactly NOTHING, but instruction-
+    following on casing is not something to bet a user-visible push on, and
+    a bare "nothing" -- with or without a trailing full stop -- is never a
+    message worth interrupting someone with."""
+    client = _with_client(monkeypatch, FakeClient(runs=FakeRuns(final_text=answer)))
+    notifier = RecordingNotifier()
+    assert await notify.deliver(SIGNAL, MEMBER, VERDICT, notifier) is None
+    assert client.threads.deleted == ["thread-1"]
+    assert notifier.calls == []
+
+
+async def test_a_sentence_that_merely_contains_the_word_is_still_delivered(monkeypatch):
+    """The failure mode an over-eager veto match would introduce is worse
+    than the case-sensitivity bug it fixes: a real answer that happens to
+    start with the word "nothing" must still reach the family."""
+    text = "Nothing on the calendar until Thursday, but the garage is open."
+    client = _with_client(monkeypatch, FakeClient(runs=FakeRuns(final_text=text)))
+    notifier = RecordingNotifier()
+    thread_id = await notify.deliver(SIGNAL, MEMBER, VERDICT, notifier)
+    assert thread_id == "thread-1"
+    assert notifier.calls[0]["body"] == text
+
+
 async def test_a_failing_discard_does_not_prevent_the_veto_result(monkeypatch):
     """`_discard`'s except is the module's safety net for an unreachable
     Aegra on cleanup; it must swallow, not propagate, or a delete failure

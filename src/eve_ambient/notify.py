@@ -99,6 +99,19 @@ def _tools_called(state: dict) -> list[str]:
     return names
 
 
+def _is_veto(text: str) -> bool:
+    """Case-insensitive, and tolerant of a trailing full stop/exclamation/
+    question mark (`Nothing.`, `NOTHING!`): instruction-following on exact
+    casing is not something to bet a user-visible push on, and a bare
+    "nothing" is never worth interrupting someone with regardless of case or
+    a trailing period. Only *trailing* punctuation is stripped and this
+    remains an equality check, not substring matching, so a real sentence
+    that merely contains the word ("Nothing on the calendar until
+    Thursday...") still fails the match and gets delivered.
+    """
+    return not text or text.rstrip(".!?").upper() == VETO
+
+
 def _click_url(thread_id: str) -> str | None:
     template = get_settings().ambient_thread_url_template
     if not template:
@@ -174,7 +187,7 @@ async def deliver(
             await _discard(client, thread_id)
             raise DeliveryError("the compose turn produced no final answer")
 
-        if not text or text == VETO:
+        if _is_veto(text):
             logger.info("Eve declined to speak about %s; discarding the thread", signal.key)
             await _discard(client, thread_id)
             return None
