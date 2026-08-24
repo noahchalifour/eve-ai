@@ -50,6 +50,12 @@ def wiring(tmp_path, monkeypatch):
         "verdict": FilterVerdict(notify=True, audience=["sub-noah"], urgent=False, why="w"),
         "delivered": [], "deliver_result": "thread-1", "deliver_error": None,
         "judge_error": None,
+        # Simulates every existing notice row having aged out of whatever
+        # cooldown window is passed to already_notified — i.e. "time has
+        # passed beyond the cooldown" (fix round 2, item 1). A real signal
+        # source can't fast-forward a Postgres clock in a unit test, so this
+        # is the fake's stand-in for that.
+        "notices_expired": False,
     }
 
     async def _is_fresh(source, key, cooldown_hours):
@@ -65,10 +71,16 @@ def wiring(tmp_path, monkeypatch):
     async def _notices_since(member_sub, since):
         return state["counts"].get(member_sub, 0)
 
-    async def _already_notified(member_sub, source, key):
+    async def _already_notified(member_sub, source, key, cooldown_hours):
         # Backed by the same notices the fake record_notice writes to, so a
         # retry within a test sees exactly what an earlier pass recorded —
-        # the real idempotency contract (fix round 1, item 1).
+        # the real idempotency contract (fix round 1, item 1). The pipeline
+        # must thread the same cooldown it computed for is_fresh through to
+        # this call (fix round 2, item 1); assert on it rather than silently
+        # accepting whatever arrives.
+        state["already_notified_cooldown_seen"] = cooldown_hours
+        if state["notices_expired"]:
+            return False
         return any(
             n[0] == member_sub and n[1] == source and n[2] == key
             for n in state["notices"]
@@ -340,4 +352,80 @@ async def test_a_filter_infrastructure_failure_defers_rather_than_dropping(
 
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "deferred"
     assert wiring["seen"] == []
+    assert wiring["delivered"] == []
+
+
+async def test_already_notified_is_bounded_by_the_same_cooldown_as_is_fresh(wiring):
+    """fix round 2, item 1: the idempotency check must be bounded by the
+    signal's own cooldown, the same one `is_fresh` uses — not open-ended —
+    or every recurrence of a key like home.py's `door:open` -> `door:closed`
+    -> `door:open` would be silently dropped forever. This asserts the
+    pipeline actually threads that value through rather than a hardcoded or
+    missing one."""
+    signal = Signal(
+        source="finances", key="b1", occurred_at=MIDDAY, member_sub=None,
+        summary="over", payload={}, cooldown_hours=720,
+    )
+    await pipeline.handle_signal(signal, now=MIDDAY)
+    assert wiring["already_notified_cooldown_seen"] == 720
+
+
+async def test_a_recurrence_after_the_cooldown_expires_is_delivered_again(wiring):
+    """The case none of the fix-round-1 tests covered (fix round 2, item 1):
+    a member who was notified in an earlier cooldown window must be
+    delivered to again once that window has passed, rather than the notice
+    row suppressing them forever. `notices_expired` stands in for "enough
+    wall-clock time has passed that the bounded lookup no longer matches"."""
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah"]
+
+    wiring["notices_expired"] = True
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah", "sub-noah"]
+
+
+async def test_a_defer_that_outlives_the_cooldown_notifies_again_on_retry(wiring):
+    """The accepted trade-off from fix round 2, item 1: if a defer persists
+    longer than the cooldown, the eventual retry notifies the member again
+    rather than silently treating them as already handled — correct at that
+    distance in time, and bounded rather than the unbounded bug this
+    replaces."""
+    from eve_ambient.notify import DeliveryError
+
+    wiring["deliver_error"] = DeliveryError("aegra down")
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "deferred"
+    assert wiring["delivered"] == []
+
+    # The cooldown elapses while the outage is ongoing; on retry the outage
+    # has since cleared.
+    wiring["deliver_error"] = None
+    wiring["notices_expired"] = True
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_an_audience_fully_already_notified_resolves_as_known_not_filtered(
+    wiring,
+):
+    """fix round 2, item 3: once the idempotence skip can fire for every
+    member in the audience, the `"filtered"` fallthrough becomes ambiguous
+    between "the filter said no" and "everyone already knew." They get
+    distinct outcomes so the resolution line still means one thing."""
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah"]
+
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "known"
+    assert wiring["delivered"] == ["sub-noah"]
+    # Still resolved — marked seen so this pass does not spin forever.
+    assert wiring["seen"] == [("finances", "k1"), ("finances", "k1")]
+
+
+async def test_a_malformed_filter_response_is_marked_seen_not_retried(wiring):
+    """fix round 2, item 2: a deterministic dead end (a malformed structured
+    output the filter could never fix by retrying) must resolve like a
+    genuine not-notify verdict — marked seen — not defer forever like a
+    transient outage would."""
+    wiring["verdict"] = FilterVerdict(notify=False, why="filter response malformed")
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "filtered"
+    assert wiring["seen"] == [("finances", "k1")]
     assert wiring["delivered"] == []

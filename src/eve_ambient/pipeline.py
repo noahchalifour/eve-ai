@@ -65,6 +65,7 @@ async def handle_signal(
     family = get_family()
     outcomes: list[str] = []
     deferred = False
+    already_known = False
 
     for sub in audience:
         try:
@@ -72,12 +73,16 @@ async def handle_signal(
         except UnknownMemberError:
             continue
 
-        if await store.already_notified(sub, signal.source, signal.key):
+        if await store.already_notified(sub, signal.source, signal.key, cooldown):
             # A previous pass already delivered to this member — the usual
             # cause is the survivor of an earlier partial defer (fix round 1,
             # item 1). Retrying must not re-run a paid compose turn, re-push,
             # or re-spend the daily cap for someone who already has it.
+            # Bounded by the same cooldown window as the freshness check
+            # (fix round 2, item 1), so a recurrence past that window is not
+            # this: it is a fresh delivery.
             logger.info("skipping %s for %s: already notified", sub, signal.key)
+            already_known = True
             continue
 
         if not verdict.urgent:
@@ -124,6 +129,13 @@ async def handle_signal(
     for candidate in ("sent", "vetoed", "capped", "quiet"):
         if candidate in outcomes:
             return _resolved(signal, verdict, audience, candidate)
+    if already_known:
+        # Every member in the audience already had a notice for this signal
+        # within its cooldown window (fix round 2, item 3): distinct from
+        # "filtered", which means the filter itself said no. Collapsing the
+        # two would make the one designed trace line ambiguous between "the
+        # filter said no" and "everyone already knew."
+        return _resolved(signal, verdict, audience, "known")
     return _resolved(signal, verdict, audience, "filtered")
 
 
