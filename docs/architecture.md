@@ -333,8 +333,10 @@ and `specialists.permissions` modules plus its own package, and holds no
 Gmail, CalDAV, Home Assistant, or Monarch credential of its own — every
 third-party read goes through `eve.tools_client.invoke` to `eve-tools`, the
 same isolated credential-holding service specialists call (ADR 0006). The
-only credentials `eve-ambient` itself holds are the impersonation token
-(below), the Home Assistant webhook secret, and the ntfy push token.
+only third-party credentials `eve-ambient` itself holds are the
+impersonation token (below), the Home Assistant webhook secret, and the ntfy
+push token — it also holds `EVE_TOOLS_API_KEY` (to call `eve-tools`) and the
+database URL (for the two tables below), neither of which is third-party.
 
 **Sources.** Four exist, registered in `sources/__init__.py`'s `SOURCES`
 tuple: `calendar` and `mail` are polled once per family member holding the
@@ -342,7 +344,12 @@ source's permission; `finances` is polled once for the household. `home` is
 deliberately absent from that tuple — it is pushed, not polled: Home
 Assistant's own automations decide what is worth Eve's attention and POST it
 to `/signals/home-assistant`, authenticated by a shared secret compared with
-`compare_digest` (`app.py`). The polled sources run every
+`compare_digest` (`app.py`). The webhook contract (needed by whoever authors
+that Home Assistant automation, prerequisite P3): the secret travels in an
+`x-eve-ambient-secret` header, matching `EVE_AMBIENT_HA_WEBHOOK_SECRET`, and
+the JSON body is `{entity_id, state, friendly_name, occurred_at}` — only
+`entity_id` is required; the rest fall back to sane defaults
+(`sources/home.py:from_webhook`). The polled sources run every
 `EVE_AMBIENT_POLL_INTERVAL_SECONDS` (default 300s); the calendar source asks
 `eve-tools`' CalDAV client for everything inside a horizon,
 `EVE_AMBIENT_CALENDAR_HORIZON_DAYS` (default 14 days), but only treats an
@@ -427,6 +434,18 @@ rather than inferred from "has any seen row": an empty first poll (nothing
 unread, nothing over budget) would otherwise leave no row behind at all, so
 the next tick — the first one to actually find something — would still read
 as unprimed and get silently primed away instead of notified.
+
+**Pruning.** `_poll_forever` calls `store.prune_seen()` after every tick,
+which deletes `eve_ambient_seen` rows older than its 30-day default horizon
+so the table does not grow forever. The `__primed__` sentinel is explicitly
+excluded from that delete: without the exclusion, a source that produces
+nothing for 30 days would have its priming row pruned right along with
+everything else, `has_any` would go back to reporting false, and that
+source's next real signal would be silently primed away instead of notified
+— the very failure priming exists to prevent, just delayed a month. The
+30-day default is deliberately equal to `BUDGET_COOLDOWN_HOURS` (720 hours,
+`sources/finances.py`) — see the comment there for why moving one without
+the other makes every budget overrun re-fire.
 
 **One replica only.** Nothing in `eve-ambient` elects a leader or coordinates
 across instances; the poll loop and the webhook handler both run in one

@@ -20,8 +20,7 @@ COPY prompts ./prompts
 COPY family.yaml ./family.yaml
 
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app/src" \
-    PORT=8091
+    PYTHONPATH="/app/src"
 
 EXPOSE 8091
 

@@ -45,6 +45,13 @@ It also means ambient turns carry the member's own permissions, which is what
 bounds Phase 4's "ambient turns may act" decision — ambient adds initiative,
 not capability.
 
+`EVE_AMBIENT_AEGRA_BASE_URL` defaults to plain `http://` (the in-cluster
+service name), so this bearer travels in cleartext between the two pods by
+default. That is an accepted homelab trade-off, not an oversight: both pods
+are in the same cluster network, behind the same perimeter, and the
+alternative (in-cluster TLS) is ceremony this lab does not otherwise pay for
+anywhere else.
+
 ## Alternatives considered
 
 - **Per-member Authentik service accounts.** Four OAuth clients, four
