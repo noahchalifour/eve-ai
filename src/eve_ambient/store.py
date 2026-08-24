@@ -103,6 +103,24 @@ async def has_any(source: str) -> bool:
     return row is not None
 
 
+async def already_notified(member_sub: str, source: str, key: str) -> bool:
+    """True when a notice row already exists for this member and signal.
+
+    Makes a retry after a partial defer idempotent per member: a signal that
+    reached two of three members before `deliver` raised must not re-deliver,
+    re-push and re-spend the daily cap for the two who already have it on the
+    next poll (fix round 1, item 1)."""
+    row = await _fetchone(
+        """
+        SELECT 1 AS found FROM eve_ambient_notice
+        WHERE member_sub = %(sub)s AND source = %(source)s AND key = %(key)s
+        LIMIT 1
+        """,
+        {"sub": member_sub, "source": source, "key": key},
+    )
+    return row is not None
+
+
 async def notices_since(member_sub: str, since: datetime) -> int:
     row = await _fetchone(
         """

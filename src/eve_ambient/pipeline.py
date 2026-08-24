@@ -15,10 +15,10 @@ from datetime import UTC, datetime
 from eve.family import UnknownMemberError, get_family
 from eve.settings import get_settings
 from eve_ambient import gates, store
-from eve_ambient.filter import judge
+from eve_ambient.filter import FilterError, judge
 from eve_ambient.notify import DeliveryError, deliver
 from eve_ambient.ntfy import Notifier, NtfyNotifier
-from eve_ambient.types import Signal
+from eve_ambient.types import FilterVerdict, Signal
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +36,31 @@ async def handle_signal(
         else settings.ambient_cooldown_hours
     )
     if not await store.is_fresh(signal.source, signal.key, cooldown):
-        return "stale"
+        return _resolved(signal, None, [], "stale")
 
-    verdict = await judge(signal)
-    audience = gates.permitted(signal, gates.scoped_audience(signal, verdict.audience))
+    try:
+        verdict = await judge(signal)
+    except FilterError:
+        # A couldn't-decide, not a decided-no (fix round 1, item 2): treat it
+        # exactly like a notify.DeliveryError and leave the signal unseen so
+        # the next poll retries it. A persistent outage retrying every poll
+        # is correct and cheap — the filter call fails fast.
+        logger.warning(
+            "deferring %s: the filter could not judge it", signal.key, exc_info=True
+        )
+        return _resolved(signal, None, [], "deferred")
+
+    # The roster is only worth reading once we know somebody might be told
+    # something (fix round 1, item 5): `gates.permitted` calls `get_family`,
+    # and a non-event should never pay for it, cached or not.
     if not verdict.notify or not verdict.audience:
         await store.mark_seen(signal.source, signal.key)
-        return _resolved(signal, verdict, audience, "filtered")
+        return _resolved(signal, verdict, [], "filtered")
+
+    audience = gates.permitted(signal, gates.scoped_audience(signal, verdict.audience))
     if not audience:
         await store.mark_seen(signal.source, signal.key)
-        return _resolved(signal, verdict, audience, "unpermitted")
+        return _resolved(signal, verdict, [], "unpermitted")
 
     family = get_family()
     outcomes: list[str] = []
@@ -55,6 +70,14 @@ async def handle_signal(
         try:
             member = family.get(sub)
         except UnknownMemberError:
+            continue
+
+        if await store.already_notified(sub, signal.source, signal.key):
+            # A previous pass already delivered to this member — the usual
+            # cause is the survivor of an earlier partial defer (fix round 1,
+            # item 1). Retrying must not re-run a paid compose turn, re-push,
+            # or re-spend the daily cap for someone who already has it.
+            logger.info("skipping %s for %s: already notified", sub, signal.key)
             continue
 
         if not verdict.urgent:
@@ -92,6 +115,9 @@ async def handle_signal(
 
     if deferred:
         # Left unseen deliberately: the next poll retries it (design 6.4).
+        # store.already_notified above is what makes that retry idempotent
+        # per member rather than a duplicate notification to whoever already
+        # got it on this pass.
         return _resolved(signal, verdict, audience, "deferred")
 
     await store.mark_seen(signal.source, signal.key)
@@ -101,17 +127,29 @@ async def handle_signal(
     return _resolved(signal, verdict, audience, "filtered")
 
 
-def _resolved(signal, verdict, audience, outcome: str) -> str:
+def _resolved(
+    signal: Signal, verdict: FilterVerdict | None, audience: list[str], outcome: str
+) -> str:
     """One line per signal, whatever happened to it (design section 9). The
     Langfuse trace only starts at the compose turn, so everything before it —
     the verdict, the reasoning, who survived the permission gate, and which
     gate stopped it — exists here or nowhere. It is the difference between
     "Eve is too noisy" being diagnosable and being an argument.
+
+    `verdict` is `None` for the two paths that resolve before a verdict
+    exists at all — `stale` (the filter never ran) and `deferred` by a
+    `FilterError` (the filter ran but could not answer) — so this still
+    emits a line for the cooldown path, which is both the most frequently
+    taken one and, without this, the one that left no trace (fix round 1,
+    item 4).
     """
+    notify = verdict.notify if verdict is not None else False
+    urgent = verdict.urgent if verdict is not None else False
+    why = verdict.why if verdict is not None else "n/a"
     logger.info(
         "ambient resolved source=%s key=%s outcome=%s notify=%s urgent=%s "
         "audience=%s why=%s",
-        signal.source, signal.key, outcome, verdict.notify, verdict.urgent,
-        ",".join(audience) or "none", verdict.why,
+        signal.source, signal.key, outcome, notify, urgent,
+        ",".join(audience) or "none", why,
     )
     return outcome

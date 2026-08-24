@@ -49,6 +49,7 @@ def wiring(tmp_path, monkeypatch):
         "fresh": True, "seen": [], "notices": [], "counts": {},
         "verdict": FilterVerdict(notify=True, audience=["sub-noah"], urgent=False, why="w"),
         "delivered": [], "deliver_result": "thread-1", "deliver_error": None,
+        "judge_error": None,
     }
 
     async def _is_fresh(source, key, cooldown_hours):
@@ -64,7 +65,18 @@ def wiring(tmp_path, monkeypatch):
     async def _notices_since(member_sub, since):
         return state["counts"].get(member_sub, 0)
 
+    async def _already_notified(member_sub, source, key):
+        # Backed by the same notices the fake record_notice writes to, so a
+        # retry within a test sees exactly what an earlier pass recorded —
+        # the real idempotency contract (fix round 1, item 1).
+        return any(
+            n[0] == member_sub and n[1] == source and n[2] == key
+            for n in state["notices"]
+        )
+
     async def _judge(signal):
+        if state.get("judge_error"):
+            raise state["judge_error"]
         return state["verdict"]
 
     async def _deliver(signal, member, verdict, notifier):
@@ -77,6 +89,7 @@ def wiring(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline.store, "mark_seen", _mark_seen)
     monkeypatch.setattr(pipeline.store, "record_notice", _record_notice)
     monkeypatch.setattr(pipeline.store, "notices_since", _notices_since)
+    monkeypatch.setattr(pipeline.store, "already_notified", _already_notified)
     monkeypatch.setattr(pipeline, "judge", _judge)
     monkeypatch.setattr(pipeline, "deliver", _deliver)
     yield state
@@ -133,6 +146,10 @@ async def test_a_member_without_the_permission_is_dropped(wiring):
 async def test_quiet_hours_suppress_a_normal_signal(wiring):
     assert await pipeline.handle_signal(_signal(), now=NIGHT) == "quiet"
     assert wiring["delivered"] == []
+    # Dropped, not queued (fix round 1, item 6): a held signal is still
+    # resolved, or the next poll would deliver yesterday's door-open at
+    # breakfast.
+    assert wiring["seen"] == [("finances", "k1")]
 
 
 async def test_quiet_hours_do_not_suppress_an_urgent_signal(wiring):
@@ -144,12 +161,43 @@ async def test_quiet_hours_do_not_suppress_an_urgent_signal(wiring):
 async def test_the_cap_suppresses_once_it_is_reached(wiring):
     wiring["counts"]["sub-noah"] = 2
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "capped"
+    assert wiring["delivered"] == []
+    # Dropped, not queued (fix round 1, item 6).
+    assert wiring["seen"] == [("finances", "k1")]
 
 
 async def test_an_urgent_signal_bypasses_the_cap(wiring):
     wiring["counts"]["sub-noah"] = 99
     wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-noah"], urgent=True, why="fire")
     assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
+
+
+async def test_urgent_cannot_bypass_the_permission_gate(wiring):
+    """`urgent` bypasses the cap and quiet hours, never the permission gate
+    (fix round 1, item 6): sub-kid holds no `finances` permission, urgent or
+    not, so the signal never reaches the per-member loop where the bypass
+    would apply."""
+    wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-kid"], urgent=True, why="fire")
+    assert await pipeline.handle_signal(_signal(source="finances"), now=MIDDAY) == "unpermitted"
+    assert wiring["delivered"] == []
+
+
+async def test_an_urgent_bypass_is_logged_at_warning_level(wiring, caplog):
+    """A 3am false alarm is only fixable if it is visible (fix round 1, item
+    6): every urgent bypass of the cap/quiet-hours gate must log a warning
+    naming the source, key, member and the filter's reasoning."""
+    wiring["counts"]["sub-noah"] = 99
+    wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-noah"], urgent=True, why="fire")
+    with caplog.at_level("WARNING"):
+        assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
+    line = next(
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING" and "URGENT bypass" in r.getMessage()
+    )
+    assert "source=home" in line
+    assert "sub-noah" in line
+    assert "fire" in line
 
 
 async def test_a_veto_is_recorded_as_seen_but_not_as_a_notice(wiring):
@@ -191,9 +239,105 @@ async def test_every_signal_leaves_one_resolution_line(wiring, caplog):
     assert "routine and expected" in line
 
 
+async def test_a_stale_signal_also_leaves_one_resolution_line(wiring, caplog):
+    """The cooldown is both the most frequently taken path and, before this
+    fix, the one that left no trace: "why didn't Eve tell me about X" was
+    unanswerable for exactly the case where the suppression was deliberate
+    (fix round 1, item 4)."""
+    wiring["fresh"] = False
+    with caplog.at_level("INFO"):
+        assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "stale"
+    line = next(
+        r.getMessage() for r in caplog.records if "ambient resolved" in r.getMessage()
+    )
+    assert "outcome=stale" in line
+    assert "key=k1" in line
+
+
 async def test_two_members_each_get_their_own_notice(wiring):
     wiring["verdict"] = FilterVerdict(
         notify=True, audience=["sub-noah", "sub-kid"], why="w"
     )
     assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
     assert sorted(wiring["delivered"]) == ["sub-kid", "sub-noah"]
+    # Not just delivered but each recorded as their own notice against their
+    # own daily cap (fix round 1, item 6) — this would still pass if
+    # record_notice were called once instead of twice.
+    assert sorted(n[0] for n in wiring["notices"]) == ["sub-kid", "sub-noah"]
+
+
+async def test_a_partial_defer_leaves_the_signal_unseen(wiring, monkeypatch):
+    """Two members, one delivery raises: the whole signal is deferred, not
+    just the failing member — `mark_seen` must not run so the next poll
+    retries the entire audience (fix round 1, item 1, first half)."""
+    from eve_ambient.notify import DeliveryError
+
+    wiring["verdict"] = FilterVerdict(
+        notify=True, audience=["sub-noah", "sub-kid"], why="w"
+    )
+
+    async def _deliver(signal, member, verdict, notifier):
+        if member.sub == "sub-kid":
+            raise DeliveryError("aegra down")
+        wiring["delivered"].append(member.sub)
+        return "thread-1"
+
+    monkeypatch.setattr(pipeline, "deliver", _deliver)
+
+    assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "deferred"
+    assert wiring["seen"] == []
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_a_retry_after_a_partial_defer_only_reaches_the_missed_member(
+    wiring, monkeypatch
+):
+    """The other half of item 1: a retry must not re-deliver, re-push, or
+    re-spend the daily cap for the member who already has the message — only
+    the member the first pass missed should see a new delivery attempt."""
+    from eve_ambient.notify import DeliveryError
+
+    wiring["verdict"] = FilterVerdict(
+        notify=True, audience=["sub-noah", "sub-kid"], why="w"
+    )
+    attempts = {"sub-kid": 0}
+
+    async def _deliver(signal, member, verdict, notifier):
+        if member.sub == "sub-kid":
+            attempts["sub-kid"] += 1
+            if attempts["sub-kid"] == 1:
+                raise DeliveryError("aegra down")
+        wiring["delivered"].append(member.sub)
+        return "thread-1"
+
+    monkeypatch.setattr(pipeline, "deliver", _deliver)
+
+    # First pass: sub-noah is delivered and recorded; sub-kid fails.
+    assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "deferred"
+    assert wiring["delivered"] == ["sub-noah"]
+    assert wiring["seen"] == []
+
+    # Second pass over the same signal: sub-noah already has a notice row
+    # and must not be re-delivered to; only sub-kid gets a new attempt.
+    assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah", "sub-kid"]
+    assert wiring["seen"] == [("home", "k1")]
+
+
+async def test_a_filter_infrastructure_failure_defers_rather_than_dropping(
+    wiring, monkeypatch
+):
+    """A REFLEX outage is a couldn't-decide, not a decided-no (fix round 1,
+    item 2): the signal must be left unseen, exactly like a
+    notify.DeliveryError, so the next poll retries it instead of the outage
+    silently and permanently discarding every signal in its window."""
+    from eve_ambient.filter import FilterError
+
+    async def _judge(signal):
+        raise FilterError("litellm down")
+
+    monkeypatch.setattr(pipeline, "judge", _judge)
+
+    assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "deferred"
+    assert wiring["seen"] == []
+    assert wiring["delivered"] == []
