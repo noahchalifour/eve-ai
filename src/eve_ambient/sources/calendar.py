@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 
 from eve.settings import get_settings
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, tool_result
+from eve_ambient.types import Signal, SourceUnavailable, list_field, tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,13 @@ def _starts_soon(start: str, lookahead_minutes: int) -> bool:
         return False
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
-    return when <= datetime.now(UTC) + timedelta(minutes=lookahead_minutes)
+    now = datetime.now(UTC)
+    # Bounded below by now (fix round 4, item 6): without a lower bound this
+    # answered true for any event already in the past, so an all-day event -
+    # which renders as midnight UTC - announced itself as "Upcoming" at
+    # whatever hour the poll first saw it, and kept doing so on every later
+    # tick the search's overlapping-window match still returned it in.
+    return now <= when <= now + timedelta(minutes=lookahead_minutes)
 
 
 async def poll(member_sub: str) -> list[Signal]:
@@ -49,10 +55,13 @@ async def poll(member_sub: str) -> list[Signal]:
         )
     )
     if result is None:
-        return []
+        # Not "no events" - eve-tools' call failed or returned garbage, and
+        # priming must be able to tell the two apart (fix round 4, item 2).
+        # `poll_once` already isolates and counts a raising member.
+        raise SourceUnavailable("calendar.list_events did not return usable JSON")
 
     signals: list[Signal] = []
-    for event in result.get("events") or []:
+    for event in list_field(result, "events"):
         if not isinstance(event, dict):
             logger.warning(
                 "calendar.list_events returned a non-dict event for %s: %.80s",
@@ -86,20 +95,31 @@ async def poll(member_sub: str) -> list[Signal]:
         # a lie (fix round 1 item E).
         occurred = datetime.now(UTC)
 
+        revision = event.get("revision")
+        # A revision that changes while the event is already imminent used
+        # to fire both the `:start:` and the `:rev:` key for the same
+        # event - a dentist appointment created 30 minutes before it starts
+        # produced two filter calls, two compose turns, two threads and two
+        # pushes (fix round 4, item 7). Folding the revision into the start
+        # key rather than suppressing `rev` outright inside the lookahead
+        # keeps a cancellation of an imminent event notifying: the key still
+        # changes when the revision does, and the CANCELLED note is already
+        # part of this same summary. The bare `:rev:` signal is reserved for
+        # events not yet imminent, where it is the only way a change reaches
+        # Eve before the event's own start window does.
         if _starts_soon(start, lookahead):
+            key = f"{uid}:start:{start}:{revision}" if revision else f"{uid}:start:{start}"
             signals.append(
                 Signal(
                     source="calendar",
-                    key=f"{uid}:start:{start}",
+                    key=key,
                     occurred_at=occurred,
                     member_sub=member_sub,
                     summary=f"Upcoming: {title}{where}, starting {start}.{note}",
                     payload=event,
                 )
             )
-
-        revision = event.get("revision")
-        if revision:
+        elif revision:
             signals.append(
                 Signal(
                     source="calendar",

@@ -2,7 +2,10 @@ import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import pytest
+
 from eve_ambient.sources import calendar
+from eve_ambient.types import SourceUnavailable
 
 _NOW = datetime.now(UTC)
 _SOON = (_NOW + timedelta(minutes=30)).isoformat()
@@ -31,15 +34,47 @@ def _invoke_returning(payload):
 async def test_an_upcoming_event_produces_a_start_signal(monkeypatch):
     monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
     keys = [s.key for s in await calendar.poll("sub-noah")]
-    assert f"uid-1:start:{_SOON}" in keys
+    assert f"uid-1:start:{_SOON}:abc123" in keys
 
 
-async def test_an_upcoming_event_also_produces_a_revision_signal(monkeypatch):
-    """A reschedule changes the revision, so a fresh revision key is how a
-    moved or cancelled event reaches Eve before its start window."""
+async def test_an_imminent_event_folds_its_revision_into_the_start_key_not_a_second_signal(
+    monkeypatch,
+):
+    """(fix round 4, item 7) Before this fix, both the `:start:` and the
+    `:rev:` key fired for the same imminent event with a revision - a dentist
+    appointment created 30 minutes before it starts produced two filter
+    calls, two compose turns, two threads and two pushes. Folding the
+    revision into the start key (rather than suppressing `rev` outright
+    inside the lookahead) still produces exactly one signal, and that
+    signal's key still changes if the event is revised again - which is what
+    keeps a cancellation of an imminent event notifying."""
     monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
     keys = [s.key for s in await calendar.poll("sub-noah")]
-    assert "uid-1:rev:abc123" in keys
+    assert keys == [f"uid-1:start:{_SOON}:abc123"]
+
+
+async def test_a_revision_beyond_the_lookahead_still_gets_its_own_bare_rev_signal(
+    monkeypatch,
+):
+    """The bare `:rev:` key is reserved for events not yet imminent (fix
+    round 4, item 7) - the only way a change reaches Eve before the event's
+    own start window does. `test_an_event_beyond_the_lookahead_gets_no_start_signal`
+    already pins this; this test names the reason directly."""
+    payload = {
+        "events": [
+            {
+                "uid": "uid-2",
+                "revision": "def456",
+                "summary": "Reunion",
+                "location": "Grandma's",
+                "start": _LATER,
+                "end": _LATER,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    keys = [s.key for s in await calendar.poll("sub-noah")]
+    assert keys == ["uid-2:rev:def456"]
 
 
 async def test_an_event_beyond_the_lookahead_gets_no_start_signal(monkeypatch):
@@ -76,8 +111,22 @@ async def test_the_summary_carries_the_time_and_place(monkeypatch):
 async def test_the_revision_summary_never_claims_a_change(monkeypatch):
     """The filter reads only the one-line summary, so a `:rev:` summary
     asserting an unestablished change is the defect this fix round exists to
-    close (fix round 1 item C)."""
-    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    close (fix round 1 item C). Uses an event beyond the lookahead: since fix
+    round 4 item 7, an imminent event folds its revision into the `:start:`
+    key instead of producing a separate `:rev:` signal at all."""
+    payload = {
+        "events": [
+            {
+                "uid": "uid-2",
+                "revision": "def456",
+                "summary": "Reunion",
+                "location": "Grandma's",
+                "start": _LATER,
+                "end": _LATER,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
     rev_signal = next(s for s in await calendar.poll("sub-noah") if ":rev:" in s.key)
     assert "changed" not in rev_signal.summary.lower()
 
@@ -142,8 +191,42 @@ async def test_an_event_without_a_start_is_skipped(monkeypatch):
     assert await calendar.poll("sub-noah") == []
 
 
-async def test_an_eve_tools_error_yields_no_signals(monkeypatch):
+async def test_an_eve_tools_error_raises_rather_than_reporting_nothing(monkeypatch):
+    """(fix round 4, item 2) `caldav_client.list_events` already swallows a
+    credential failure into `{"events": []}` one layer down; if this source
+    also swallowed eve-tools' `error:` string into `[]`, "the calendar has
+    nothing to report" and "eve-tools cannot reach the calendar" would be
+    indistinguishable - which is exactly what defeats first-poll priming."""
     monkeypatch.setattr(
         calendar, "invoke", AsyncMock(return_value="error: caldav unavailable")
+    )
+    with pytest.raises(SourceUnavailable):
+        await calendar.poll("sub-noah")
+
+
+async def test_an_event_already_past_gets_no_start_signal(monkeypatch):
+    """(fix round 4, item 6) `_starts_soon` had no lower bound, so it
+    answered true for an event already in the past too. Combined with an
+    all-day event rendering as midnight UTC, and a search that returns
+    anything overlapping the window, that made every all-day entry announce
+    itself as "Upcoming" at whatever hour the poll first saw it."""
+    past = (_NOW - timedelta(hours=2)).isoformat()
+    payload = {
+        "events": [
+            {"uid": "uid-6", "summary": "All-day thing", "start": past, "end": past}
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    assert await calendar.poll("sub-noah") == []
+
+
+async def test_a_non_list_events_container_yields_no_signals(monkeypatch):
+    """(fix round 4, item 9) `list_field` was never applied to the calendar
+    source - it still used `result.get("events") or []`, the exact pattern
+    that helper exists to replace, so `{"events": 5}` raised
+    `TypeError: 'int' object is not iterable` straight out of the source
+    instead of logging a shape change and returning `[]`."""
+    monkeypatch.setattr(
+        calendar, "invoke", _invoke_returning({"events": 5})
     )
     assert await calendar.poll("sub-noah") == []
