@@ -56,6 +56,7 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
     for source in SOURCES:
         try:
             signals: list[Signal] = []
+            member_failed = False
             for sub in _audience_for(source):
                 try:
                     signals.extend(await source.poll(sub))
@@ -68,11 +69,28 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
                         exc_info=True,
                     )
                     counts["errors"] += 1
+                    member_failed = True
 
             # `has_any` and the priming `mark_seen` live inside this same
             # try/except: a transient database error here must not escape
             # `poll_once` and skip every source after this one for the tick.
             if not await store.has_any(source.name):
+                if member_failed:
+                    # Priming only happens once every member has actually
+                    # been polled successfully. `signals` here can't be
+                    # told apart from "nothing to prime" - priming on a
+                    # partial (or total) failure would mark seen a backlog
+                    # nobody has actually seen, so the eventual real
+                    # backlog would surface all at once as live
+                    # notifications the moment the credential is fixed:
+                    # precisely what priming exists to prevent. Leave the
+                    # source unprimed; the next tick is soon and tries
+                    # again.
+                    logger.info(
+                        "not priming %s this tick: at least one member's poll failed",
+                        source.name,
+                    )
+                    continue
                 primed = 0
                 for signal in signals:
                     await store.mark_seen(signal.source, signal.key)

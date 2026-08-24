@@ -26,6 +26,20 @@ def settings(monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_background_tasks():
+    # The module-level `_background` set is never reset by app.py itself
+    # (there's no reason to, in production - the process just runs). Left
+    # alone between tests, a task from one test's `client` (created on that
+    # `TestClient`'s own background-thread event loop) could still be sitting
+    # in the set when a later test's `lifespan` shutdown - or a direct
+    # `asyncio.wait(_background, ...)` call - tries to await it on a
+    # different event loop entirely.
+    app_module._background.clear()
+    yield
+    app_module._background.clear()
+
+
 @pytest.fixture
 def client():
     # Entered as a context manager so the app's `lifespan` actually runs
@@ -289,6 +303,118 @@ async def test_a_failing_members_poll_does_not_discard_a_sibling_members_signals
     assert [s.key for s in handled] == ["sub-b:k1"]
     assert counts["errors"] == 1
     assert counts["sent"] == 1
+
+
+async def test_a_source_where_every_members_poll_fails_stays_unprimed(monkeypatch):
+    """A source's credential can be broken on its very first tick. That must
+    not get it marked primed having seen nothing at all - the old single
+    `try` around the whole per-member loop used to make this impossible by
+    aborting the source before priming was ever reached, but the per-member
+    guard (round 1) makes `signals == []` indistinguishable from "every
+    member's poll failed" unless priming checks for that explicitly. If it
+    didn't, fixing the credential later would surface the entire genuine
+    backlog as live notifications all at once - exactly what priming exists
+    to prevent."""
+    primed_sources: set[str] = set()
+    marked = []
+    handled = []
+
+    async def _has_any(source):
+        return source in primed_sources
+
+    async def _mark_seen(source, key):
+        marked.append((source, key))
+        if key == "__primed__":
+            primed_sources.add(source)
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    tick = {"n": 1}
+
+    async def _poll(member_sub):
+        if tick["n"] == 1:
+            raise RuntimeError("credential expired")
+        return [
+            Signal(
+                source="fake", key=f"{member_sub}:k1",
+                occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub=member_sub, summary="summary", payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", True, "mail.read", _poll),))
+    monkeypatch.setattr(app_module, "_audience_for", lambda source: ["sub-a", "sub-b"])
+
+    first = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert marked == []
+    assert "fake" not in primed_sources
+    assert first.get("errors") == 2
+    assert first.get("primed", 0) == 0
+    assert handled == []
+
+    # The credential is fixed; the next tick succeeds for every member.
+    tick["n"] = 2
+    second = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert handled == []
+    assert "fake" in primed_sources
+    assert second.get("primed", 0) == 2
+    assert {key for _, key in marked} == {"sub-a:k1", "sub-b:k1", "__primed__"}
+
+
+async def test_a_partial_member_failure_on_an_unprimed_source_does_not_prime_either(
+    monkeypatch,
+):
+    """Not just total failure: if one of two members failed, that member's
+    backlog has not actually been seen, so priming now would lose it just
+    the same. Leave the source unprimed; the next tick is soon."""
+    primed_sources: set[str] = set()
+    marked = []
+    handled = []
+
+    async def _has_any(source):
+        return source in primed_sources
+
+    async def _mark_seen(source, key):
+        marked.append((source, key))
+        if key == "__primed__":
+            primed_sources.add(source)
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        if member_sub == "sub-a":
+            raise RuntimeError("expired token")
+        return [
+            Signal(
+                source="fake", key=f"{member_sub}:k1",
+                occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub=member_sub, summary="summary", payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", True, "mail.read", _poll),))
+    monkeypatch.setattr(app_module, "_audience_for", lambda source: ["sub-a", "sub-b"])
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert marked == []
+    assert "fake" not in primed_sources
+    assert counts.get("errors") == 1
+    assert counts.get("primed", 0) == 0
+    assert handled == []
 
 
 async def test_a_failing_signal_does_not_stop_its_siblings(monkeypatch):
