@@ -97,7 +97,13 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
                     primed += 1
                 await store.mark_seen(source.name, _PRIMED_SENTINEL)
                 counts["primed"] += primed
-                logger.info(
+                # WARNING, not INFO, specifically when primed against
+                # nothing (fix round 4, item 2, unattended-operation note):
+                # this is the one line recording that a source's next real
+                # signal will be judged against an assumed-empty backlog,
+                # and it needs to still be there on Friday.
+                logger.log(
+                    logging.WARNING if primed == 0 else logging.INFO,
                     "primed %s with %d existing signals; notifying on none of them",
                     source.name, primed,
                 )

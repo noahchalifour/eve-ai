@@ -39,6 +39,23 @@ class FilterVerdict(BaseModel):
     why: str = Field(default="", description="One sentence of reasoning.")
 
 
+class SourceUnavailable(Exception):
+    """Raised by a source's `poll` when `tool_result` returned `None` - the
+    eve-tools call failed (an `error:` string) or answered with something
+    that wasn't parseable JSON.
+
+    Before this fix (round 4, item 2), every source call site treated that
+    `None` the same way it treats a genuinely empty result: `return []`. No
+    real source raises on an upstream failure, so "eve-tools cannot reach the
+    calendar" and "the calendar has nothing to report" were indistinguishable
+    to `app.poll_once` - which means the expected state of a deployment's
+    very first enabled tick (every Phase-4 credential still a placeholder)
+    primed every source against a poll that never actually ran. `poll_once`
+    already isolates and counts a raising member per member (design and fix
+    round 1), so raising here changes nothing about steady state - only
+    priming, which needs to be able to tell the two states apart."""
+
+
 def tool_result(raw: str) -> dict | None:
     """Unwrap what `eve.tools_client.invoke` returns.
 

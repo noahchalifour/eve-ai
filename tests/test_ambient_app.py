@@ -221,6 +221,76 @@ async def test_an_empty_first_poll_still_primes_so_the_next_real_signal_notifies
     assert "primed" not in second
 
 
+async def test_an_unprimed_source_whose_poll_fails_the_way_real_sources_fail_stays_unprimed(
+    monkeypatch,
+):
+    """(fix round 4, item 2) `test_a_source_where_every_members_poll_fails_stays_unprimed`
+    above injects a synthetic `RuntimeError`, which no real source can
+    produce - eve-tools reports an upstream failure as an `error:` string,
+    not a raised exception, and every source used to turn that into `[]`
+    (`sources/mail.py`, `sources/calendar.py`, `sources/finances.py` in two
+    places), which made this exact regression invisible to that test. This
+    drives a real source (`mail.poll`) through a real `error:` string from
+    `invoke`, so it actually exercises the fix: the source raises
+    `SourceUnavailable` instead of returning `[]`, `poll_once`'s existing
+    per-member isolation counts it as an error, and the source stays
+    unprimed rather than being primed against a poll that never actually
+    ran."""
+    from unittest.mock import AsyncMock
+
+    from eve_ambient.sources import Source, mail
+
+    marked = []
+
+    async def _has_any(source):
+        return False
+
+    async def _mark_seen(source, key):
+        marked.append((source, key))
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(mail, "invoke", AsyncMock(return_value="error: gmail unavailable"))
+    monkeypatch.setattr(app_module, "SOURCES", (Source("mail", True, "mail.read", mail.poll),))
+    monkeypatch.setattr(app_module, "_audience_for", lambda source: ["sub-noah"])
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert marked == []
+    assert counts.get("primed", 0) == 0
+    assert counts.get("errors") == 1
+
+
+async def test_priming_against_an_empty_poll_logs_at_warning(monkeypatch, caplog):
+    """(fix round 4, item 2, unattended-operation note) An empty first poll
+    still primes, but the one line recording that decision must survive at
+    WARNING - the level an unattended deployment's default log configuration
+    is far less likely to drop than INFO - so it is still there on Friday."""
+    async def _has_any(source):
+        return False
+
+    async def _mark_seen(source, key):
+        return None
+
+    async def _poll(member_sub):
+        return []
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", False, "finances", _poll),))
+
+    with caplog.at_level("WARNING"):
+        counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+
+    assert counts.get("primed", 0) == 0
+    line = next(
+        r.getMessage() for r in caplog.records
+        if r.levelname == "WARNING" and "primed fake with 0" in r.getMessage()
+    )
+    assert line
+
+
 async def test_a_later_poll_runs_the_pipeline(monkeypatch):
     handled = []
 

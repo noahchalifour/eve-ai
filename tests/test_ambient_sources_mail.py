@@ -2,8 +2,10 @@ import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+import pytest
+
 from eve_ambient.sources import mail
-from eve_ambient.types import list_field, tool_result
+from eve_ambient.types import SourceUnavailable, list_field, tool_result
 
 MESSAGES = {
     "messages": [
@@ -52,18 +54,24 @@ async def test_the_query_asks_only_for_recent_unread_mail(monkeypatch):
     assert "newer_than:1d" in args["query"]
 
 
-async def test_an_eve_tools_error_yields_no_signals(monkeypatch):
-    """eve-tools returns error strings rather than raising. A source that let
-    that through would report a signal whose summary was an error message."""
+async def test_an_eve_tools_error_raises_rather_than_reporting_nothing(monkeypatch):
+    """(fix round 4, item 2) eve-tools returns error strings rather than
+    raising, and `tool_result` turns those into `None`. Returning `[]` here
+    made "the API is broken" indistinguishable from "no unread mail" -
+    exactly the ambiguity that defeated first-poll priming. `poll_once`
+    already isolates and counts a raising member per member, so this source
+    raises instead."""
     monkeypatch.setattr(
         mail, "invoke", AsyncMock(return_value="error: eve-tools unavailable")
     )
-    assert await mail.poll("sub-noah") == []
+    with pytest.raises(SourceUnavailable):
+        await mail.poll("sub-noah")
 
 
-async def test_malformed_json_yields_no_signals(monkeypatch):
+async def test_malformed_json_raises_rather_than_reporting_nothing(monkeypatch):
     monkeypatch.setattr(mail, "invoke", AsyncMock(return_value="{not json"))
-    assert await mail.poll("sub-noah") == []
+    with pytest.raises(SourceUnavailable):
+        await mail.poll("sub-noah")
 
 
 def test_tool_result_parses_what_tools_client_returns():

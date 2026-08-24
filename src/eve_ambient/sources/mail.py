@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, list_field, tool_result
+from eve_ambient.types import Signal, SourceUnavailable, list_field, tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,10 @@ async def poll(member_sub: str) -> list[Signal]:
         await invoke("mail.list_messages", {"member_sub": member_sub, "query": _QUERY})
     )
     if result is None:
-        return []
+        # Not "nothing unread" - eve-tools' call failed or returned garbage,
+        # and priming must be able to tell the two apart (fix round 4, item
+        # 2). `poll_once` already isolates and counts a raising member.
+        raise SourceUnavailable("mail.list_messages did not return usable JSON")
     signals = []
     for message in list_field(result, "messages"):
         if not isinstance(message, dict):

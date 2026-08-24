@@ -10,12 +10,21 @@ import logging
 from datetime import UTC, datetime
 
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, list_field, tool_result
+from eve_ambient.types import Signal, SourceUnavailable, list_field, tool_result
 
 logger = logging.getLogger(__name__)
 
 # A budget that is over stays over for the rest of the month. Six hours would
 # mean four notifications a day about one fact.
+#
+# 720 hours is 30 days - deliberately equal to store.prune_seen's default
+# horizon (fix round 4, item 15). `is_fresh` and `already_notified` are both
+# windowed by this value, and `prune_seen` deletes the `eve_ambient_seen` row
+# once it turns 30 days old; if the prune horizon were ever shortened (or
+# this cooldown lengthened) without moving the other in lockstep, a budget
+# that has been over for longer than the shorter of the two would have its
+# seen-row pruned while still inside its own cooldown, and the very next
+# poll would treat it as a fresh signal and re-fire it.
 BUDGET_COOLDOWN_HOURS = 720
 
 _TRANSACTION_LIMIT = 50
@@ -43,7 +52,10 @@ async def _transactions() -> list[Signal]:
         await invoke("finances.list_transactions", {"limit": _TRANSACTION_LIMIT})
     )
     if result is None:
-        return []
+        # Not "no transactions" - eve-tools' call failed or returned garbage,
+        # and priming must be able to tell the two apart (fix round 4, item
+        # 2). `poll_once` already isolates and counts a raising member.
+        raise SourceUnavailable("finances.list_transactions did not return usable JSON")
     signals = []
     for txn in list_field(result, "transactions"):
         if not isinstance(txn, dict):
@@ -76,7 +88,8 @@ async def _transactions() -> list[Signal]:
 async def _budget_overruns() -> list[Signal]:
     result = tool_result(await invoke("finances.get_budgets", {}))
     if result is None:
-        return []
+        # Not "nothing over budget" - same reasoning as _transactions above.
+        raise SourceUnavailable("finances.get_budgets did not return usable JSON")
     signals = []
     for budget in list_field(result, "budgets"):
         if not isinstance(budget, dict):

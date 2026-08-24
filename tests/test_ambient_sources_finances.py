@@ -1,7 +1,10 @@
 import json
 from unittest.mock import AsyncMock
 
+import pytest
+
 from eve_ambient.sources import finances
+from eve_ambient.types import SourceUnavailable
 
 TRANSACTIONS = {
     "transactions": [
@@ -90,14 +93,26 @@ async def test_signals_are_household_scoped(monkeypatch):
     assert all(s.member_sub is None for s in await finances.poll(""))
 
 
-async def test_one_failing_call_does_not_lose_the_other(monkeypatch):
+async def test_a_failing_budgets_call_now_propagates_instead_of_silently_losing_it(
+    monkeypatch,
+):
+    """(fix round 4, item 2) This test used to assert that a failing
+    `finances.get_budgets` call left the transactions half of `poll`
+    untouched - which only held because `_budget_overruns` swallowed
+    eve-tools' `error:` string into `[]`, indistinguishable from "nothing is
+    over budget." `poll_once` already isolates and counts a raising member
+    per source per tick, so `finances.poll` now raises instead, and the
+    whole household-scoped poll for this tick counts as failed rather than
+    quietly reporting a partial result that looks identical to a healthy
+    one."""
     async def _invoke(tool, args, **kwargs):
         if tool == "finances.get_budgets":
             return "error: monarch unavailable"
         return json.dumps(TRANSACTIONS)
 
     monkeypatch.setattr(finances, "invoke", AsyncMock(side_effect=_invoke))
-    assert [s.key for s in await finances.poll("")] == ["t1", "t2"]
+    with pytest.raises(SourceUnavailable):
+        await finances.poll("")
 
 
 async def test_a_non_dict_transaction_is_skipped_not_raised(monkeypatch):

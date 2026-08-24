@@ -61,11 +61,25 @@ async def mark_seen(source: str, key: str) -> None:
 
 
 async def prune_seen(days: int = 30) -> int:
+    """The default of 30 days is deliberately equal to
+    `sources.finances.BUDGET_COOLDOWN_HOURS` (720 hours) - see the comment
+    there for why moving one without the other makes every budget overrun
+    re-fire.
+
+    The `__primed__` sentinel (`app._PRIMED_SENTINEL`) is excluded on
+    purpose (fix round 4, item 8): without this, a source that produces
+    nothing for 30 days has its priming row deleted right alongside
+    everything else, `has_any` goes back to reporting false, and the next
+    real signal that source produces gets silently primed away instead of
+    notified - exactly the failure priming exists to prevent, just delayed a
+    month.
+    """
     row = await _fetchone(
         """
         WITH gone AS (
           DELETE FROM eve_ambient_seen
           WHERE last_seen_at < now() - make_interval(days => %(days)s)
+            AND key <> '__primed__'
           RETURNING 1
         )
         SELECT count(*) AS n FROM gone
