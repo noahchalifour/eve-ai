@@ -160,3 +160,105 @@ async def test_a_missing_category_name_falls_back_to_the_id():
         result = await monarch.get_budgets()
     [budget] = result["budgets"]
     assert budget["category"] == "cat-unknown"
+
+
+async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id():
+    """Distinct from the case above: here the category id *is* in the
+    lookup, just without a "name" field - the exact shape that raised
+    KeyError before _category_names guarded it."""
+    month = _current_month()
+    fake_client = _fake_client(
+        [
+            {
+                "category": {"id": "cat-weird"},
+                "monthlyAmounts": [
+                    {
+                        "month": f"{month}-01",
+                        "plannedCashFlowAmount": -800.0,
+                        "actualAmount": -910.0,
+                    }
+                ],
+            }
+        ],
+        categories=[{"id": "cat-weird"}],
+    )
+    with patch("eve_tools.monarch._client", return_value=fake_client):
+        result = await monarch.get_budgets()
+    [budget] = result["budgets"]
+    assert budget["category"] == "cat-weird"
+
+
+async def test_a_non_dict_category_does_not_raise():
+    month = _current_month()
+    fake_client = _fake_client(
+        [
+            {
+                "category": ["not", "a", "dict"],
+                "monthlyAmounts": [
+                    {
+                        "month": f"{month}-01",
+                        "plannedCashFlowAmount": -800.0,
+                        "actualAmount": -910.0,
+                    }
+                ],
+            }
+        ]
+    )
+    with patch("eve_tools.monarch._client", return_value=fake_client):
+        result = await monarch.get_budgets()
+    assert result == {"budgets": []}
+
+
+async def test_an_explicit_month_pins_which_row_matches():
+    """Deriving the expected month through the same datetime.now() call the
+    normalizer uses would never catch a month-boundary bug; an explicit
+    month makes the assertion independent of when the test runs."""
+    fake_client = _fake_client(
+        [
+            {
+                "category": {"id": "cat-groceries"},
+                "monthlyAmounts": [
+                    {
+                        "month": "2020-05-01",
+                        "plannedCashFlowAmount": -800.0,
+                        "actualAmount": -910.0,
+                    }
+                ],
+            }
+        ],
+        categories=[{"id": "cat-groceries", "name": "Groceries"}],
+    )
+    with patch("eve_tools.monarch._client", return_value=fake_client):
+        result = await monarch.get_budgets(month="2020-05")
+    assert result == {
+        "budgets": [
+            {
+                "id": "cat-groceries:2020-05",
+                "category": "Groceries",
+                "period": "2020-05",
+                "spent": 910.0,
+                "limit": 800.0,
+            }
+        ]
+    }
+
+
+async def test_an_explicit_month_that_does_not_match_is_skipped():
+    fake_client = _fake_client(
+        [
+            {
+                "category": {"id": "cat-groceries"},
+                "monthlyAmounts": [
+                    {
+                        "month": "2020-05-01",
+                        "plannedCashFlowAmount": -800.0,
+                        "actualAmount": -910.0,
+                    }
+                ],
+            }
+        ],
+        categories=[{"id": "cat-groceries", "name": "Groceries"}],
+    )
+    with patch("eve_tools.monarch._client", return_value=fake_client):
+        result = await monarch.get_budgets(month="2020-06")
+    assert result == {"budgets": []}

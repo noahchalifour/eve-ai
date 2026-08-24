@@ -57,23 +57,36 @@ async def _category_names(client: MonarchMoney) -> dict[str, str]:
     """The budget query selects only `category { id }` - no name - so a
     signal built straight from it would read "Budget over: 1a2b3c". Look
     names up separately and let a missing one fall back to the id rather
-    than raising."""
+    than raising.
+
+    The category fragment always requests `name`, so a real response
+    should never omit it - possibly null, never absent - but A2 is the one
+    shape in this phase unverified against a live account, so a category
+    record missing "name" entirely is excluded here (falling back to the
+    id in get_budgets) instead of raising KeyError.
+    """
     categories = await client.get_transaction_categories()
     return {
         category["id"]: category["name"]
         for category in categories.get("categories") or []
-        if isinstance(category, dict) and category.get("id")
+        if isinstance(category, dict) and category.get("id") and category.get("name")
     }
 
 
-async def get_budgets() -> dict:
+async def get_budgets(month: str | None = None) -> dict:
     """Monarch's raw shape is `budgetData.monthlyAmountsByCategory[]`, each
     entry a category id paired with one `monthlyAmounts` row per month in
     the (default) last-month-to-next-month range - no flat `spent`/`limit`/
     `period`, no top-level `budgets` list. Normalize to exactly what
-    `eve_ambient.sources.finances` expects, and narrow to the current
-    calendar month: a signal about last month's budget, or a preview of next
+    `eve_ambient.sources.finances` expects, and narrow to one calendar
+    month: a signal about last month's budget, or a preview of next
     month's, is not a signal about anything that happened.
+
+    `month` (`YYYY-MM`) defaults to the current calendar month and exists
+    as an injection point for tests to pin month-boundary behaviour rather
+    than deriving the expected value through the same `datetime.now()`
+    call. The tool table calls this with no argument, so every real caller
+    still gets the current month.
 
     Sign convention is unverified against a live Monarch account: expense
     transactions are negative, and `plannedCashFlowAmount` for an expense
@@ -86,20 +99,24 @@ async def get_budgets() -> dict:
     raw = await client.get_budgets()
     names = await _category_names(client)
 
-    current_month = datetime.now(UTC).strftime("%Y-%m")
+    target_month = month or datetime.now(UTC).strftime("%Y-%m")
     budget_data = raw.get("budgetData") or {}
     budgets = []
     for entry in budget_data.get("monthlyAmountsByCategory") or []:
         if not isinstance(entry, dict):
             continue
-        category_id = (entry.get("category") or {}).get("id")
+        # The category fragment always requests `id`, but A2 is unverified
+        # against a live account - a truthy non-dict `category` (a list, a
+        # string) must not raise out of a plain `.get`.
+        category = entry.get("category")
+        category_id = category.get("id") if isinstance(category, dict) else None
         if not category_id:
             continue
         for monthly in entry.get("monthlyAmounts") or []:
             if not isinstance(monthly, dict):
                 continue
-            month = str(monthly.get("month") or "")
-            if not month.startswith(current_month):
+            entry_month = str(monthly.get("month") or "")
+            if not entry_month.startswith(target_month):
                 continue
             planned = monthly.get("plannedCashFlowAmount")
             actual = monthly.get("actualAmount")
@@ -110,9 +127,9 @@ async def get_budgets() -> dict:
                 continue
             budgets.append(
                 {
-                    "id": f"{category_id}:{current_month}",
+                    "id": f"{category_id}:{target_month}",
                     "category": names.get(category_id, category_id),
-                    "period": current_month,
+                    "period": target_month,
                     "spent": spent,
                     "limit": limit,
                 }
