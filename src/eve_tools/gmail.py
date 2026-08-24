@@ -69,6 +69,13 @@ async def list_messages(member_sub: str, query: str) -> dict:
         )
         messages = []
         for stub in listing.get("messages") or []:
+            if not isinstance(stub, dict):
+                # Guard the read here too, not just in the happy path: the
+                # except below reads stub.get("id") for its log line, and a
+                # non-dict stub would make the *handler* the thing that
+                # raises and takes the whole call down.
+                logger.warning("gmail message stub was not a dict, skipping: %r", stub)
+                continue
             try:
                 full = (
                     service.users()

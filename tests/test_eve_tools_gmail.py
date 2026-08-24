@@ -97,6 +97,25 @@ async def test_a_failed_metadata_fetch_skips_only_that_message():
     assert message["id"] == "m2"
 
 
+async def test_a_non_dict_stub_is_skipped_without_raising():
+    """A non-dict stub read in the except handler's own `stub.get("id")`
+    log line would make the *handler* the thing that raises. Guarding the
+    stub's type up front means a malformed stub is skipped before either
+    the happy path or the handler ever reads from it."""
+    fake_service = MagicMock()
+    fake_service.users().messages().list().execute.return_value = {
+        "messages": ["not-a-dict", {"id": "m2"}]
+    }
+    fake_service.users().messages().get().execute.return_value = _full_message(
+        "m2", {"From": "shop@example.com", "Subject": "Shipped"}
+    )
+    with patch("eve_tools.gmail._service", return_value=fake_service), \
+         patch("eve_tools.gmail._credentials_for", return_value=MagicMock(expired=False)):
+        result = await gmail.list_messages("sub-noah", "is:unread")
+    [message] = result["messages"]
+    assert message["id"] == "m2"
+
+
 async def test_send_email_builds_a_base64_raw_message():
     fake_service = MagicMock()
     fake_service.users().messages().send().execute.return_value = {"id": "sent-1"}
