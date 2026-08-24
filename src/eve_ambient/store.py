@@ -103,20 +103,42 @@ async def has_any(source: str) -> bool:
     return row is not None
 
 
-async def already_notified(member_sub: str, source: str, key: str) -> bool:
-    """True when a notice row already exists for this member and signal.
+async def already_notified(
+    member_sub: str, source: str, key: str, cooldown_hours: int
+) -> bool:
+    """True when a notice row already exists for this member and signal
+    *within the current cooldown window*.
 
     Makes a retry after a partial defer idempotent per member: a signal that
     reached two of three members before `deliver` raised must not re-deliver,
     re-push and re-spend the daily cap for the two who already have it on the
-    next poll (fix round 1, item 1)."""
+    next poll (fix round 1, item 1).
+
+    Bounded by the same window `is_fresh` uses, not open-ended (fix round 2,
+    item 1): `sources/home.py` and `sources/finances.py` both put state in
+    the key — open -> closed -> open, or a budget crossing back under and
+    over — so the *same* `(source, key)` legitimately recurs once its
+    cooldown has passed. An unbounded lookup would find that first notice
+    row forever and drop every recurrence permanently — worse once
+    `prune_seen` expires the `eve_ambient_seen` row while this row survives
+    and keeps suppressing. A member is owed at most one notice per cooldown
+    window for a given signal; `is_fresh` already guarantees a genuine
+    recurrence is only reachable after that window elapses, so the same
+    window bounds both checks.
+
+    One consequence accepted deliberately: a defer that outlives the
+    cooldown (Aegra down for seven hours against a six-hour cooldown) makes
+    the retry notify the member again rather than treating them as already
+    done. That is the right trade at that distance in time, and — unlike
+    the bug this replaces — it is bounded."""
     row = await _fetchone(
         """
         SELECT 1 AS found FROM eve_ambient_notice
         WHERE member_sub = %(sub)s AND source = %(source)s AND key = %(key)s
+          AND sent_at >= now() - make_interval(hours => %(hours)s)
         LIMIT 1
         """,
-        {"sub": member_sub, "source": source, "key": key},
+        {"sub": member_sub, "source": source, "key": key, "hours": cooldown_hours},
     )
     return row is not None
 

@@ -77,6 +77,30 @@ async def test_notices_before_the_instant_are_not_counted(pool):
     assert await store.notices_since("sub-noah", since) == 0
 
 
+async def test_already_notified_is_true_inside_the_cooldown_window(pool):
+    await store.record_notice("sub-noah", "home", "door:open", False, "t1")
+    assert await store.already_notified("sub-noah", "home", "door:open", 6) is True
+
+
+async def test_already_notified_is_false_once_the_cooldown_has_elapsed(pool):
+    """Bounded, not open-ended (fix round 2, item 1): sources like home.py
+    and finances.py put state in the key, so the same (source, key) is a
+    legitimate recurrence once its cooldown has passed. An unbounded lookup
+    would find this same notice row forever and drop every recurrence
+    permanently."""
+    await store.record_notice("sub-noah", "home", "door:open", False, "t1")
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_ambient_notice SET sent_at = now() - interval '7 hours'"
+        )
+    assert await store.already_notified("sub-noah", "home", "door:open", 6) is False
+
+
+async def test_already_notified_is_independent_per_member(pool):
+    await store.record_notice("sub-noah", "home", "door:open", False, "t1")
+    assert await store.already_notified("sub-kid", "home", "door:open", 6) is False
+
+
 async def test_pruning_removes_only_rows_past_the_horizon(pool):
     await store.mark_seen("home", "old")
     await store.mark_seen("home", "new")

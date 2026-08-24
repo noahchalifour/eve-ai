@@ -90,6 +90,18 @@ MIGRATIONS: list[tuple[str, str]] = [
           ON eve_ambient_notice (member_sub, sent_at DESC);
         """,
     ),
+    (
+        "0003_ambient_notice_window",
+        """
+        -- Supports store.already_notified's cooldown-bounded lookup (fix
+        -- round 2 on the ambient pipeline task): "has this member already
+        -- been told about this (source, key) within its cooldown window",
+        -- run once per member per signal. Without this the query would
+        -- fall back to a sequential scan of eve_ambient_notice.
+        CREATE INDEX IF NOT EXISTS eve_ambient_notice_member_source_key_sent
+          ON eve_ambient_notice (member_sub, source, key, sent_at DESC);
+        """,
+    ),
 ]
 
 _pool: AsyncConnectionPool | None = None
