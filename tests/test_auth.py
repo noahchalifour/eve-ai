@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from types import SimpleNamespace
 
@@ -238,17 +239,23 @@ def _ambient_settings(monkeypatch):
     get_settings.cache_clear()
 
 
-async def test_the_ambient_token_authenticates_as_the_named_member(monkeypatch):
+async def test_the_ambient_token_authenticates_as_the_named_member(monkeypatch, caplog):
     monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
     _ambient_settings(monkeypatch)
-    user = await authenticate(
-        {
-            "Authorization": f"Bearer {AMBIENT_TOKEN}",
-            "x-eve-on-behalf-of": "sub-noah",
-        }
-    )
+    with caplog.at_level(logging.INFO, logger="eve.auth"):
+        user = await authenticate(
+            {
+                "Authorization": f"Bearer {AMBIENT_TOKEN}",
+                "x-eve-on-behalf-of": "sub-noah",
+            }
+        )
     assert user["identity"] == "sub-noah"
     assert user["is_authenticated"] is True
+    assert user["permissions"] == ["spend"]
+    assert any(
+        "sub-noah" in record.message and "impersonat" in record.message
+        for record in caplog.records
+    )
 
 
 async def test_a_member_token_cannot_impersonate(monkeypatch):
@@ -260,6 +267,7 @@ async def test_a_member_token_cannot_impersonate(monkeypatch):
         {"Authorization": "Bearer tok-noah", "x-eve-on-behalf-of": "sub-kid"}
     )
     assert user["identity"] == "sub-noah"
+    assert user["permissions"] == ["spend"]
 
 
 async def test_the_ambient_token_without_the_header_is_refused(monkeypatch):
@@ -290,7 +298,7 @@ async def test_the_ambient_path_is_inert_when_no_token_is_configured(monkeypatch
     from eve.settings import get_settings
 
     get_settings.cache_clear()
-    with pytest.raises(AuthError):
+    with pytest.raises(AuthError, match="unrecognised development token"):
         await authenticate({"Authorization": "Bearer ", "x-eve-on-behalf-of": "sub-noah"})
 
 
@@ -303,6 +311,73 @@ async def test_bytes_headers_are_handled_on_the_ambient_path(monkeypatch):
         {
             b"authorization": f"Bearer {AMBIENT_TOKEN}".encode(),
             b"x-eve-on-behalf-of": b"sub-noah",
+        }
+    )
+    assert user["identity"] == "sub-noah"
+
+
+async def test_a_non_ascii_bearer_is_refused_not_a_typeerror(monkeypatch):
+    """`compare_digest` raises TypeError on a `str` operand containing
+    non-ASCII. A client can put arbitrary bytes in the Authorization header,
+    so the comparison must not blow up the auth handler - it must fail
+    closed with a 401 like every other bad credential."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    with pytest.raises(AuthError):
+        await authenticate(
+            {
+                "Authorization": "Bearer " + "é" + "a" * 39,
+                "x-eve-on-behalf-of": "sub-noah",
+            }
+        )
+
+
+async def test_a_non_ascii_bearer_as_bytes_is_also_refused_not_a_typeerror(monkeypatch):
+    """Same defect, arriving through the bytes-header path the way Aegra
+    actually delivers it in some request shapes."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    with pytest.raises(AuthError):
+        await authenticate(
+            {
+                b"authorization": ("Bearer " + "é" + "a" * 39).encode(),
+                b"x-eve-on-behalf-of": b"sub-noah",
+            }
+        )
+
+
+async def test_a_trailing_newline_on_the_configured_token_is_still_stripped(monkeypatch):
+    """EVE_AMBIENT_TOKEN with a trailing newline is the classic .env
+    copy-paste. The presented token is always stripped by extract_bearer; the
+    configured one must be too, or the credential silently never matches."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    monkeypatch.setenv("EVE_AUTH_MODE", "dev")
+    monkeypatch.setenv("EVE_DEV_TOKENS", '{"tok-noah": "sub-noah"}')
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", AMBIENT_TOKEN + "\n")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    user = await authenticate(
+        {
+            "Authorization": f"Bearer {AMBIENT_TOKEN}",
+            "x-eve-on-behalf-of": "sub-noah",
+        }
+    )
+    assert user["identity"] == "sub-noah"
+
+
+async def test_the_ambient_token_authenticates_under_oidc_mode(oidc, monkeypatch):
+    """The ambient credential is not gated on auth_mode: production runs
+    oidc and this must still work there, without ever touching the JWKS
+    lookup or JWT decode path that the `oidc` fixture wires up."""
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", AMBIENT_TOKEN)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    user = await authenticate(
+        {
+            "Authorization": f"Bearer {AMBIENT_TOKEN}",
+            "x-eve-on-behalf-of": "sub-noah",
         }
     )
     assert user["identity"] == "sub-noah"

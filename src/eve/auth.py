@@ -91,12 +91,24 @@ def _subject_from_token(token: str) -> str:
 
 
 def _header(headers: dict, name: str) -> str | None:
-    """Same bytes-tolerance as extract_bearer, for one named header."""
+    """Same bytes-tolerance as extract_bearer, for one named header.
+
+    `name` is lower-cased here too, so a caller that passes a mixed-case
+    header name still matches instead of silently never firing. A resolved
+    value that is neither `str` nor `bytes` is treated as absent rather than
+    returned verbatim - it would otherwise reach `Family.get` and raise an
+    unhandled `TypeError` instead of the intended 401.
+    """
+    target = name.lower()
     for key, value in headers.items():
         candidate = key.decode() if isinstance(key, bytes) else key
-        if candidate.lower() != name:
+        if candidate.lower() != target:
             continue
-        return value.decode() if isinstance(value, bytes) else value
+        if isinstance(value, bytes):
+            return value.decode()
+        if isinstance(value, str):
+            return value
+        return None
     return None
 
 
@@ -109,26 +121,44 @@ def _ambient_subject(headers: dict, token: str) -> str | None:
     credential has to work there too, so it is an additional accepted
     credential rather than an alternative mode. `compare_digest` because a
     timing-distinguishable comparison of an impersonation secret is worth
-    avoiding for the cost of one import.
+    avoiding for the cost of one import - and it runs on the `.encode()`d
+    bytes rather than the `str` operands, because `compare_digest` raises
+    `TypeError` on a `str` operand containing non-ASCII, which a hostile or
+    merely malformed bearer can trigger; the bytes form never raises for this
+    input class and is equivalent for the legitimate token. The configured
+    value is also stripped, matching `extract_bearer`'s stripping of the
+    presented token, so a trailing newline from an `.env` copy-paste doesn't
+    silently make the credential impossible to present.
+
+    Logging the impersonation is the caller's job, once the subject has
+    actually resolved to a real member - this function only decides whether
+    the ambient credential was presented, not whether it identifies anyone.
     """
-    configured = get_settings().ambient_token
-    if not configured or not compare_digest(token, configured):
+    configured = get_settings().ambient_token.strip()
+    if not configured or not compare_digest(token.encode(), configured.encode()):
         return None
     subject = _header(headers, _ON_BEHALF_OF)
     if not subject:
         raise AuthError(f"the ambient token requires an {_ON_BEHALF_OF} header")
-    logger.info("ambient impersonation authenticated as %s", subject)
     return subject
 
 
 @auth.authenticate
 async def authenticate(headers: dict) -> dict:
     token = extract_bearer(headers)
-    subject = _ambient_subject(headers, token) or _subject_from_token(token)
+    subject = _ambient_subject(headers, token)
+    impersonated = subject is not None
+    if subject is None:
+        subject = _subject_from_token(token)
     try:
         member = get_family().get(subject)
     except UnknownMemberError as exc:
         raise AuthError(str(exc)) from exc
+    if impersonated:
+        # Logged only after the roster lookup above succeeds, so the audit
+        # trail never claims an impersonation happened for a subject that
+        # was in fact refused.
+        logger.info("ambient impersonation authenticated as %s", subject)
     return {
         "identity": member.sub,
         "display_name": member.name,
