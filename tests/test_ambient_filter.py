@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from eve_ambient import filter as ambient_filter
 from eve_ambient.types import FilterVerdict, Signal
@@ -60,6 +61,48 @@ async def test_a_failing_model_call_raises_rather_than_deciding_no(
     )
     with pytest.raises(ambient_filter.FilterError):
         await ambient_filter.judge(SIGNAL)
+
+
+async def test_a_malformed_response_resolves_to_not_notify_rather_than_deferring(
+    monkeypatch, no_household_memory
+):
+    """A response that arrives but does not fit FilterVerdict is a
+    deterministic dead end, not a retry candidate (fix round 2, item 2):
+    raising FilterError here would defer this signal forever, since a
+    malformed response does not spontaneously become a well-formed one on
+    the next poll. It must resolve — as a genuine not-notify verdict — so
+    the signal is marked seen exactly once."""
+    try:
+        FilterVerdict.model_validate({"audience": 123})
+    except ValidationError as exc:
+        malformed = exc
+    else:
+        raise AssertionError("expected model_validate to raise ValidationError")
+
+    monkeypatch.setattr(
+        ambient_filter, "get_model", lambda tier: FakeStructuredModel(error=malformed)
+    )
+    verdict = await ambient_filter.judge(SIGNAL)
+    assert verdict.notify is False
+    assert "malformed" in verdict.why
+
+
+async def test_a_non_filterverdict_response_resolves_to_not_notify(
+    monkeypatch, no_household_memory
+):
+    """Belt-and-braces (fix round 2, item 2, the related gap): if
+    `with_structured_output` ever returns something other than a
+    FilterVerdict — a dict, say — accessing `.notify` on it would raise an
+    AttributeError past the pipeline's `except FilterError` and into the
+    poll loop. It must be handled explicitly instead."""
+    monkeypatch.setattr(
+        ambient_filter,
+        "get_model",
+        lambda tier: FakeStructuredModel(verdict={"notify": True}),
+    )
+    verdict = await ambient_filter.judge(SIGNAL)
+    assert verdict.notify is False
+    assert "malformed" in verdict.why
 
 
 async def test_the_prompt_carries_the_summary_the_roster_and_the_time(
