@@ -81,7 +81,16 @@ async def test_get_budgets_normalizes_an_overrun_category_for_the_current_month(
     }
 
 
-async def test_a_category_within_its_budget_is_not_normalized_into_a_budget():
+async def test_a_category_within_its_budget_is_still_normalized_into_a_budget():
+    """(fix round 4, item 3) This test used to assert the opposite: that a
+    category under its limit was dropped entirely. `get_budgets` is still
+    exposed conversationally as "Read current budget and cash-flow summary,"
+    so asking Eve "how are we doing on groceries?" must not answer
+    `{"budgets": []}` just because nobody is over. Filtering to only
+    overruns is `eve_ambient.sources.finances._budget_overruns`'s job, not
+    this normalizer's - the `limit > 0` guard here is normalization (a
+    category with no real budget isn't one at all); comparing `spent` to
+    `limit` is not."""
     month = _current_month()
     fake_client = _fake_client(
         [
@@ -99,7 +108,17 @@ async def test_a_category_within_its_budget_is_not_normalized_into_a_budget():
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets()
-    assert result == {"budgets": []}
+    assert result == {
+        "budgets": [
+            {
+                "id": f"cat-fuel:{month}",
+                "category": "cat-fuel",
+                "period": month,
+                "spent": 120.0,
+                "limit": 300.0,
+            }
+        ]
+    }
 
 
 async def test_a_category_with_no_planned_amount_is_skipped():

@@ -142,7 +142,16 @@ async def get_budgets(month: str | None = None) -> dict:
             if not _is_number(planned) or not _is_number(actual):
                 continue
             spent, limit = abs(actual), abs(planned)
-            if not (limit > 0 and spent > limit):
+            # `limit > 0` is normalization - a zero or negative planned
+            # amount isn't a budget at all. Filtering to only *overrun*
+            # categories is not: `get_budgets` is still exposed
+            # conversationally as "Read current budget and cash-flow
+            # summary" (fix round 4, item 3), so dropping every
+            # within-budget category here made "how are we doing on
+            # groceries?" answer `{"budgets": []}` unless the family was over.
+            # That filter belongs to, and already lives in,
+            # `eve_ambient.sources.finances._budget_overruns`.
+            if not limit > 0:
                 continue
             budgets.append(
                 {
