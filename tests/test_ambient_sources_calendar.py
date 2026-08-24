@@ -77,6 +77,64 @@ async def test_a_revision_beyond_the_lookahead_still_gets_its_own_bare_rev_signa
     assert keys == ["uid-2:rev:def456"]
 
 
+async def test_an_event_crossing_its_start_boundary_produces_exactly_one_signal_across_both_polls(
+    monkeypatch,
+):
+    """(rereview fix, item 1) Before this fix, `elif revision:` fired
+    whenever `_starts_soon` was false - which included an event that had
+    already begun. `_starts_soon`'s lower bound (item 6) only stops the
+    *start* key from re-firing once an event starts; nothing stopped the
+    *bare rev* key from firing instead, as a brand-new signal, the moment
+    the event crossed that same boundary - the CalDAV search keeps
+    returning an event that still overlaps the horizon window after it
+    starts, and `_to_dict` always sets a revision. Reproduced against the
+    real source: an event that started twenty minutes earlier produced
+    `uid-1:rev:abc123` with a summary announcing an event already in
+    progress as something newly changed - a second filter call, compose
+    turn, thread and push per event, exactly the "exactly one notification"
+    violation item 7 existed to fix, displaced by however long the poll took
+    to notice. No existing test polled the same event across that boundary,
+    which is why the suite stayed green.
+
+    This polls the identical event twice - once while it is imminent, once
+    after a frozen clock has moved 30 minutes past its start - and asserts
+    exactly one signal key fires across the pair, not two.
+    """
+    event_start = (_NOW + timedelta(minutes=10)).isoformat()
+    payload = {
+        "events": [
+            {
+                "uid": "uid-7",
+                "revision": "rev-a",
+                "summary": "Dentist",
+                "location": "Main St",
+                "start": event_start,
+                "end": event_start,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+
+    class _FrozenDatetime(datetime):
+        _now = _NOW
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls._now
+
+    monkeypatch.setattr(calendar, "datetime", _FrozenDatetime)
+
+    _FrozenDatetime._now = _NOW
+    first = [s.key for s in await calendar.poll("sub-noah")]
+
+    _FrozenDatetime._now = _NOW + timedelta(minutes=30)
+    second = [s.key for s in await calendar.poll("sub-noah")]
+
+    assert first == [f"uid-7:start:{event_start}:rev-a"]
+    assert second == []
+    assert len(first) + len(second) == 1
+
+
 async def test_an_event_beyond_the_lookahead_gets_no_start_signal(monkeypatch):
     """The horizon is wider than the lookahead precisely so a change to a
     far-off event is seen before it becomes imminent - but `:start:` still

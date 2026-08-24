@@ -40,6 +40,31 @@ def _starts_soon(start: str, lookahead_minutes: int) -> bool:
     return now <= when <= now + timedelta(minutes=lookahead_minutes)
 
 
+def _starts_later(start: str, lookahead_minutes: int) -> bool:
+    """True only when the event's start is beyond the lookahead - not yet
+    imminent, and not already past either (rereview fix, item 1).
+
+    Before this, the bare `:rev:` branch fired whenever `_starts_soon` was
+    false, which included an event that had already begun: `_starts_soon`'s
+    lower bound (item 6) stops the *start* key from re-firing once an event
+    starts, but nothing stopped the *bare rev* key from firing instead, as a
+    brand-new signal, the moment the event crossed that same boundary - the
+    CalDAV search keeps returning an event that still overlaps the horizon
+    window after it starts, and `_to_dict` always sets a revision. That was
+    a second filter call, compose turn, thread and push per event, displaced
+    by however long the poll took to notice the event had started, and its
+    summary announced an event already in progress as something newly
+    changed.
+    """
+    try:
+        when = datetime.fromisoformat(start)
+    except (TypeError, ValueError):
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when > datetime.now(UTC) + timedelta(minutes=lookahead_minutes)
+
+
 async def poll(member_sub: str) -> list[Signal]:
     settings = get_settings()
     lookahead = settings.ambient_calendar_lookahead_minutes
@@ -119,7 +144,7 @@ async def poll(member_sub: str) -> list[Signal]:
                     payload=event,
                 )
             )
-        elif revision:
+        elif revision and _starts_later(start, lookahead):
             signals.append(
                 Signal(
                     source="calendar",
