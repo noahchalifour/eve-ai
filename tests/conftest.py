@@ -88,6 +88,9 @@ def aegra_server():
         "REDIS_BROKER_ENABLED": "true",
         "REDIS_URL": "redis://127.0.0.1:16379/0",
         "AUTH_TYPE": "custom",
+        # Phase 4: the impersonation credential the ambient integration tests
+        # present. Length matters — Settings refuses anything under 32.
+        "EVE_AMBIENT_TOKEN": "ambient-integration-token-0123456789abcdef",
     }
     # `start_new_session=True` puts `uv` and everything it execs/spawns (the
     # `aegra` CLI, and the uvicorn worker it in turn launches) into their own
