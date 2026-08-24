@@ -10,7 +10,13 @@ import logging
 from datetime import UTC, datetime
 
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, SourceUnavailable, list_field, tool_result
+from eve_ambient.types import (
+    Signal,
+    SourcePollError,
+    SourceUnavailable,
+    list_field,
+    tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,5 +129,28 @@ async def _budget_overruns() -> list[Signal]:
 
 async def poll(member_sub: str) -> list[Signal]:
     """`member_sub` is unused: finances are household-scoped. The parameter
-    exists so every source in the registry has one shape."""
-    return [*await _transactions(), *await _budget_overruns()]
+    exists so every source in the registry has one shape.
+
+    Transactions and budget overruns come from two independent eve-tools
+    calls, and a persistent failure of one must not silently discard the
+    other's signals for as long as the outage lasts (fix round 4, item 2
+    follow-up). If exactly one half fails, the other's signals are carried
+    on a raised `SourcePollError` rather than lost; if both fail, there is
+    nothing to carry and this raises the plain `SourceUnavailable` from
+    whichever failed first, the same as a single-call source's total
+    failure."""
+    try:
+        transactions = await _transactions()
+    except SourceUnavailable as exc:
+        try:
+            overruns = await _budget_overruns()
+        except SourceUnavailable:
+            raise exc from None
+        raise SourcePollError(str(exc), partial=overruns) from exc
+
+    try:
+        overruns = await _budget_overruns()
+    except SourceUnavailable as exc:
+        raise SourcePollError(str(exc), partial=transactions) from exc
+
+    return [*transactions, *overruns]

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from eve_ambient.sources import finances
-from eve_ambient.types import SourceUnavailable
+from eve_ambient.types import SourcePollError, SourceUnavailable
 
 TRANSACTIONS = {
     "transactions": [
@@ -93,26 +93,61 @@ async def test_signals_are_household_scoped(monkeypatch):
     assert all(s.member_sub is None for s in await finances.poll(""))
 
 
-async def test_a_failing_budgets_call_now_propagates_instead_of_silently_losing_it(
+async def test_a_failing_budgets_call_raises_carrying_the_transactions_as_partial(
     monkeypatch,
 ):
-    """(fix round 4, item 2) This test used to assert that a failing
-    `finances.get_budgets` call left the transactions half of `poll`
-    untouched - which only held because `_budget_overruns` swallowed
+    """(fix round 4, item 2 follow-up) This test used to assert that a
+    failing `finances.get_budgets` call left the transactions half of
+    `poll` untouched - which only held because `_budget_overruns` swallowed
     eve-tools' `error:` string into `[]`, indistinguishable from "nothing is
-    over budget." `poll_once` already isolates and counts a raising member
-    per source per tick, so `finances.poll` now raises instead, and the
-    whole household-scoped poll for this tick counts as failed rather than
-    quietly reporting a partial result that looks identical to a healthy
-    one."""
+    over budget." Raising unconditionally (plain `SourceUnavailable`, no
+    partial) instead would mean a persistent Monarch budgets outage silently
+    stops transaction signals too, for as long as it lasts - they are not
+    lost permanently (nothing marks them seen), but they age out of
+    `limit=50`'s window eventually, with nothing in the logs saying why
+    beyond a recurring warning. `poll` now raises `SourcePollError` carrying
+    the transactions it did manage to fetch, so `poll_once` can still
+    deliver them once this source is already primed."""
     async def _invoke(tool, args, **kwargs):
         if tool == "finances.get_budgets":
             return "error: monarch unavailable"
         return json.dumps(TRANSACTIONS)
 
     monkeypatch.setattr(finances, "invoke", AsyncMock(side_effect=_invoke))
-    with pytest.raises(SourceUnavailable):
+    with pytest.raises(SourcePollError) as exc_info:
         await finances.poll("")
+    assert [s.key for s in exc_info.value.partial] == ["t1", "t2"]
+
+
+async def test_a_failing_transactions_call_raises_carrying_the_overruns_as_partial(
+    monkeypatch,
+):
+    """The other direction: transactions fail, budgets succeed. Symmetric
+    with the test above - whichever half worked must not be lost to the
+    other's outage."""
+    async def _invoke(tool, args, **kwargs):
+        if tool == "finances.list_transactions":
+            return "error: monarch unavailable"
+        return json.dumps(BUDGETS)
+
+    monkeypatch.setattr(finances, "invoke", AsyncMock(side_effect=_invoke))
+    with pytest.raises(SourcePollError) as exc_info:
+        await finances.poll("")
+    assert [s.key for s in exc_info.value.partial] == ["budget:b1:2026-08:over"]
+
+
+async def test_both_calls_failing_raises_the_plain_error_with_nothing_to_carry(
+    monkeypatch,
+):
+    """When both halves fail there is nothing partial to keep, so this
+    behaves exactly like a single-call source's total failure: the plain
+    SourceUnavailable, not SourcePollError."""
+    monkeypatch.setattr(
+        finances, "invoke", AsyncMock(return_value="error: monarch unavailable")
+    )
+    with pytest.raises(SourceUnavailable) as exc_info:
+        await finances.poll("")
+    assert not isinstance(exc_info.value, SourcePollError)
 
 
 async def test_a_non_dict_transaction_is_skipped_not_raised(monkeypatch):

@@ -21,7 +21,7 @@ from eve_ambient import store
 from eve_ambient.pipeline import handle_signal
 from eve_ambient.sources import SOURCES, Source
 from eve_ambient.sources.home import from_webhook
-from eve_ambient.types import Signal
+from eve_ambient.types import Signal, SourcePollError
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,24 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
             for sub in _audience_for(source):
                 try:
                     signals.extend(await source.poll(sub))
+                except SourcePollError as exc:
+                    # Part of this source's work succeeded and part failed
+                    # (finances.py's two independent eve-tools calls) - the
+                    # successful half's signals ride along on the exception
+                    # rather than being discarded for as long as the failing
+                    # half's outage lasts. Still counts as a failure for
+                    # priming purposes below: `signals` gains `exc.partial`,
+                    # but the priming branch ignores `signals` entirely on a
+                    # `member_failed` tick, the same as it always has.
+                    logger.warning(
+                        "source %s poll failed for member %r; keeping %d partial "
+                        "signal(s)",
+                        source.name, sub, len(exc.partial),
+                        exc_info=True,
+                    )
+                    counts["errors"] += 1
+                    member_failed = True
+                    signals.extend(exc.partial)
                 except Exception:
                     # One member's failure (an expired token, a rate limit)
                     # must not discard the signals already collected for

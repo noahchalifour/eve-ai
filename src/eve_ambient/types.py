@@ -56,6 +56,38 @@ class SourceUnavailable(Exception):
     priming, which needs to be able to tell the two states apart."""
 
 
+class SourcePollError(Exception):
+    """Raised by a source's `poll` when part of its work succeeded and part
+    failed - `finances.poll` gathers transactions and budget overruns via
+    two independent eve-tools calls, and one persistently failing must not
+    silently discard the other's signals for as long as the outage lasts
+    (fix round 4, item 2 follow-up: Monarch down for the budgets call would
+    otherwise mean transaction signals are never emitted at all; they are
+    not lost permanently, since nothing marks them seen, but they age out of
+    the `limit=50` transaction window eventually, and a family stops hearing
+    about large transactions with nothing in the logs saying why beyond a
+    recurring warning).
+
+    Carries whatever signals were gathered before the failure, in `partial`,
+    so `app.poll_once` can still act on them: an *unprimed* source must not
+    prime on any upstream failure, partial or total - `partial` here is no
+    more trustworthy as "everything there is to prime" than an empty list
+    would be - but an *already-primed* source should still receive whatever
+    it did manage to fetch, rather than losing it to the other half's
+    outage. `poll_once`'s priming branch already `continue`s without
+    touching `signals` when a member fails, so it ignores `partial` the same
+    way it ignores everything else on an unprimed tick; only the normal
+    (already-primed) branch processes it.
+
+    A source with a single upstream call has no partial result to carry and
+    keeps raising the plain `SourceUnavailable` - this exception exists only
+    for the two-calls-in-one-poll case."""
+
+    def __init__(self, message: str, partial: list) -> None:
+        super().__init__(message)
+        self.partial = partial
+
+
 def tool_result(raw: str) -> dict | None:
     """Unwrap what `eve.tools_client.invoke` returns.
 

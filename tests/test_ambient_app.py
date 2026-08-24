@@ -454,6 +454,98 @@ async def test_an_unprimed_source_whose_poll_fails_the_way_real_sources_fail_sta
     assert counts.get("errors") == 1
 
 
+async def test_a_partial_source_failure_on_an_unprimed_source_does_not_prime_or_notify(
+    monkeypatch,
+):
+    """(fix round 4, item 2 follow-up) A source that raises `SourcePollError`
+    carrying partial results must still not prime while unprimed: an
+    unprimed source cannot tell "this partial list is everything there is"
+    from "this partial list is missing whatever the failed half would have
+    found", so priming on it would lose that unseen backlog exactly the way
+    a total failure would. The priming branch never even looks at `signals`
+    when a member failed, partial or not."""
+    from eve_ambient.sources import Source
+    from eve_ambient.types import SourcePollError
+
+    marked = []
+    handled = []
+
+    async def _has_any(source):
+        return False
+
+    async def _mark_seen(source, key):
+        marked.append((source, key))
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        raise SourcePollError(
+            "budgets failed",
+            partial=[
+                Signal(
+                    source="fake", key="t1",
+                    occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                    member_sub=None, summary="txn", payload={},
+                )
+            ],
+        )
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", False, "finances", _poll),))
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert marked == []
+    assert counts.get("primed", 0) == 0
+    assert counts.get("errors") == 1
+    assert handled == []
+
+
+async def test_a_partial_source_failure_on_a_primed_source_still_delivers_the_partial_signals(
+    monkeypatch,
+):
+    """(fix round 4, item 2 follow-up) Once a source is already primed, a
+    persistent failure of one Monarch call must not silently swallow the
+    other's signals for as long as the outage lasts - a family would
+    otherwise stop hearing about large transactions, with nothing in the
+    logs saying why beyond a recurring warning."""
+    from eve_ambient.sources import Source
+    from eve_ambient.types import SourcePollError
+
+    handled = []
+
+    async def _has_any(source):
+        return True
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        raise SourcePollError(
+            "budgets failed",
+            partial=[
+                Signal(
+                    source="fake", key="t1",
+                    occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                    member_sub=None, summary="txn", payload={},
+                )
+            ],
+        )
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(app_module, "SOURCES", (Source("fake", False, "finances", _poll),))
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert [s.key for s in handled] == ["t1"]
+    assert counts.get("errors") == 1
+    assert counts.get("sent") == 1
+
+
 async def test_priming_against_an_empty_poll_logs_at_warning(monkeypatch, caplog):
     """(fix round 4, item 2, unattended-operation note) An empty first poll
     still primes, but the one line recording that decision must survive at
