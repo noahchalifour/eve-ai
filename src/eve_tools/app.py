@@ -28,7 +28,7 @@ _HANDLERS = {
         a["domain"], a["service"], a["entity_id"], a.get("data") or {}
     ),
     "calendar.list_events": lambda a: caldav_client.list_events(
-        a["member_sub"], a.get("lookahead_minutes", 90)
+        a["member_sub"], a.get("lookahead_minutes", 90), a.get("horizon_days", 14)
     ),
     "mail.list_messages": lambda a: gmail.list_messages(a["member_sub"], a["query"]),
     "mail.get_thread": lambda a: gmail.get_thread(a["member_sub"], a["thread_id"]),
