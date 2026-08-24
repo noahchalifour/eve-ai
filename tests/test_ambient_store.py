@@ -90,3 +90,11 @@ async def test_pruning_removes_only_rows_past_the_horizon(pool):
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT count(*) FROM eve_ambient_seen")
         assert (await cur.fetchone())[0] == 1
+
+
+async def test_has_any_is_false_before_the_first_signal_and_true_after(pool):
+    """This is what makes the first poll prime rather than notify."""
+    assert await store.has_any("calendar") is False
+    await store.mark_seen("calendar", "uid-1:start:x")
+    assert await store.has_any("calendar") is True
+    assert await store.has_any("mail") is False

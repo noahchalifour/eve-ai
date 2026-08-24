@@ -93,6 +93,16 @@ async def record_notice(
     )
 
 
+async def has_any(source: str) -> bool:
+    """Whether this source has ever produced a signal. False means the next
+    poll is a first poll, which primes rather than notifies (app.py)."""
+    row = await _fetchone(
+        "SELECT 1 AS found FROM eve_ambient_seen WHERE source = %(source)s LIMIT 1",
+        {"source": source},
+    )
+    return row is not None
+
+
 async def notices_since(member_sub: str, since: datetime) -> int:
     row = await _fetchone(
         """
