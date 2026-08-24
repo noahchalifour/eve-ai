@@ -75,12 +75,18 @@ def _text_of(content) -> str:
     return ""
 
 
-def _final_text(state: dict) -> str:
+def _final_text(state: dict) -> str | None:
+    """`None` means no final assistant message was found at all — the run
+    was truncated, hit a recursion limit, or ended mid-tool-loop with no
+    later answer. That is infrastructure failing and must not be mistaken
+    for Eve's veto, which is a real (possibly empty or `NOTHING`) message
+    text. Callers distinguish the two: `None` -> `DeliveryError`, an actual
+    (even empty) string -> the veto/answer check."""
     for message in reversed(state.get("messages") or []):
         role = message.get("type") or message.get("role")
         if role in ("ai", "assistant") and not message.get("tool_calls"):
             return _text_of(message.get("content")).strip()
-    return ""
+    return None
 
 
 def _tools_called(state: dict) -> list[str]:
@@ -95,61 +101,102 @@ def _tools_called(state: dict) -> list[str]:
 
 def _click_url(thread_id: str) -> str | None:
     template = get_settings().ambient_thread_url_template
-    return template.format(thread_id=thread_id) if template else None
+    if not template:
+        return None
+    try:
+        return template.format(thread_id=thread_id)
+    except (KeyError, IndexError, ValueError):
+        # A misconfigured EVE_AMBIENT_THREAD_URL_TEMPLATE (wrong placeholder,
+        # a stray brace) must not escape deliver(): this runs after the paid
+        # turn, and an unguarded exception here would propagate as neither a
+        # thread id nor a DeliveryError, skip mark_seen entirely, and
+        # crash-loop the poller. Drop the click URL instead.
+        logger.warning(
+            "EVE_AMBIENT_THREAD_URL_TEMPLATE is malformed: %r", template, exc_info=True
+        )
+        return None
 
 
 async def deliver(
     signal: Signal, member: Member, verdict: FilterVerdict, notifier: Notifier
 ) -> str | None:
-    client = _client(member.sub)
-    try:
-        thread = await client.threads.create(
-            metadata={
-                "ambient": True,
-                "source": signal.source,
-                "signal_key": signal.key,
-            }
+    async with _client(member.sub) as client:
+        try:
+            thread = await client.threads.create(
+                metadata={
+                    "ambient": True,
+                    "source": signal.source,
+                    "signal_key": signal.key,
+                }
+            )
+            thread_id = thread["thread_id"]
+        except Exception as exc:
+            raise DeliveryError(f"could not create a thread: {exc}") from exc
+
+        try:
+            state = await client.runs.wait(
+                thread_id,
+                _ASSISTANT,
+                input={
+                    "messages": [
+                        {"role": "user", "content": compose_prompt(signal, member, verdict)}
+                    ]
+                },
+            )
+        except Exception as exc:
+            # Logged before discard: an ambient turn carries Eve's full
+            # toolset, so she may have already acted before Aegra failed,
+            # and the thread about to be deleted is the only trace of that.
+            logger.warning(
+                "ambient run failed member=%s key=%s thread=%s",
+                member.sub, signal.key, thread_id, exc_info=True,
+            )
+            await _discard(client, thread_id)
+            raise DeliveryError(f"the compose turn failed: {exc}") from exc
+
+        tools = _tools_called(state)
+        logger.info(
+            "ambient turn member=%s source=%s key=%s thread=%s tools=%s",
+            member.sub, signal.source, signal.key, thread_id, ",".join(tools) or "none",
         )
-        thread_id = thread["thread_id"]
-    except Exception as exc:
-        raise DeliveryError(f"could not create a thread: {exc}") from exc
 
-    try:
-        state = await client.runs.wait(
-            thread_id,
-            _ASSISTANT,
-            input={
-                "messages": [
-                    {"role": "user", "content": compose_prompt(signal, member, verdict)}
-                ]
-            },
-        )
-    except Exception as exc:
-        await _discard(client, thread_id)
-        raise DeliveryError(f"the compose turn failed: {exc}") from exc
+        text = _final_text(state)
+        if text is None:
+            # No final assistant message at all: truncated, recursion-limited,
+            # or interrupted mid-tool-loop. This is infrastructure failing,
+            # not Eve choosing silence, so the signal must stay unseen for
+            # the next poll to retry (design 6.4) rather than being resolved
+            # by a turn that produced nothing.
+            logger.warning(
+                "ambient run produced no final answer member=%s key=%s thread=%s",
+                member.sub, signal.key, thread_id,
+            )
+            await _discard(client, thread_id)
+            raise DeliveryError("the compose turn produced no final answer")
 
-    tools = _tools_called(state)
-    logger.info(
-        "ambient turn member=%s source=%s key=%s thread=%s tools=%s",
-        member.sub, signal.source, signal.key, thread_id, ",".join(tools) or "none",
-    )
+        if not text or text == VETO:
+            logger.info("Eve declined to speak about %s; discarding the thread", signal.key)
+            await _discard(client, thread_id)
+            return None
 
-    text = _final_text(state)
-    if not text or text == VETO:
-        logger.info("Eve declined to speak about %s; discarding the thread", signal.key)
-        await _discard(client, thread_id)
-        return None
-
-    title = "Eve — urgent" if verdict.urgent else "Eve"
-    sent = await notifier.send(
-        title=title, body=text, urgent=verdict.urgent, click_url=_click_url(thread_id)
-    )
-    if not sent:
-        # Deliberately still a success: the message is in the thread the
-        # member owns. Retrying would re-run a paid turn to re-send text
-        # they can already read.
-        logger.warning("the push failed but %s holds the message", thread_id)
-    return thread_id
+        title = "Eve - urgent" if verdict.urgent else "Eve"
+        try:
+            sent = await notifier.send(
+                title=title, body=text, urgent=verdict.urgent, click_url=_click_url(thread_id)
+            )
+        except Exception:
+            # The Notifier protocol promises not to raise; structural typing
+            # does not enforce that at runtime. A raise here has the same
+            # orphaned-thread, escape-past-Task-12 shape as a malformed
+            # click URL, so it is treated identically to `sent is False`.
+            logger.warning("the push raised for %s", thread_id, exc_info=True)
+            sent = False
+        if not sent:
+            # Deliberately still a success: the message is in the thread the
+            # member owns. Retrying would re-run a paid turn to re-send text
+            # they can already read.
+            logger.warning("the push failed but %s holds the message", thread_id)
+        return thread_id
 
 
 async def _discard(client, thread_id: str) -> None:
