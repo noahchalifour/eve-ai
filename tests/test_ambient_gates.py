@@ -80,6 +80,15 @@ def test_an_unknown_source_permits_nobody():
     assert gates.permitted(_signal("weather"), ["sub-noah"]) == []
 
 
+def test_a_duplicated_sub_is_deduped_preserving_order():
+    """The filter's audience is an unconstrained model-produced list; a
+    repeated sub must not yield two compose turns and two notice rows
+    (fix round 1, item 3)."""
+    assert gates.permitted(
+        _signal("home"), ["sub-kid", "sub-noah", "sub-kid"]
+    ) == ["sub-kid", "sub-noah"]
+
+
 def test_the_window_parses_to_two_times():
     assert gates.parse_window("21:00-07:00") == (time(21, 0), time(7, 0))
 

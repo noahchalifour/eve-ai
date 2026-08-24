@@ -50,7 +50,10 @@ def permitted(signal: Signal, subs: list[str]) -> list[str]:
         return []
     family = get_family()
     kept = []
-    for sub in subs:
+    # `dict.fromkeys` dedupes while preserving first-seen order. The filter's
+    # audience is an unconstrained model-produced list: a repeated sub must
+    # not become two compose turns, two pushes and two notice rows.
+    for sub in dict.fromkeys(subs):
         try:
             member = family.get(sub)
         except UnknownMemberError:
