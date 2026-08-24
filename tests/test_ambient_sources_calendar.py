@@ -1,0 +1,312 @@
+import json
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
+import pytest
+
+from eve_ambient.sources import calendar
+from eve_ambient.types import SourcePollError, SourceUnavailable
+
+_NOW = datetime.now(UTC)
+_SOON = (_NOW + timedelta(minutes=30)).isoformat()
+_LATER = (_NOW + timedelta(days=5)).isoformat()
+
+EVENTS = {
+    "events": [
+        {
+            "uid": "uid-1",
+            "revision": "abc123",
+            "summary": "Dentist",
+            "location": "Main St",
+            "start": _SOON,
+            "end": _SOON,
+        }
+    ]
+}
+
+
+def _invoke_returning(payload):
+    # tools_client.invoke already unwraps eve-tools' {"result": ...} envelope
+    # and returns the inner object as a JSON string.
+    return AsyncMock(return_value=json.dumps(payload))
+
+
+async def test_an_upcoming_event_produces_a_start_signal(monkeypatch):
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    keys = [s.key for s in await calendar.poll("sub-noah")]
+    assert f"uid-1:start:{_SOON}:abc123" in keys
+
+
+async def test_an_imminent_event_folds_its_revision_into_the_start_key_not_a_second_signal(
+    monkeypatch,
+):
+    """(fix round 4, item 7) Before this fix, both the `:start:` and the
+    `:rev:` key fired for the same imminent event with a revision - a dentist
+    appointment created 30 minutes before it starts produced two filter
+    calls, two compose turns, two threads and two pushes. Folding the
+    revision into the start key (rather than suppressing `rev` outright
+    inside the lookahead) still produces exactly one signal, and that
+    signal's key still changes if the event is revised again - which is what
+    keeps a cancellation of an imminent event notifying."""
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    keys = [s.key for s in await calendar.poll("sub-noah")]
+    assert keys == [f"uid-1:start:{_SOON}:abc123"]
+
+
+async def test_a_revision_beyond_the_lookahead_still_gets_its_own_bare_rev_signal(
+    monkeypatch,
+):
+    """The bare `:rev:` key is reserved for events not yet imminent (fix
+    round 4, item 7) - the only way a change reaches Eve before the event's
+    own start window does. `test_an_event_beyond_the_lookahead_gets_no_start_signal`
+    already pins this; this test names the reason directly."""
+    payload = {
+        "events": [
+            {
+                "uid": "uid-2",
+                "revision": "def456",
+                "summary": "Reunion",
+                "location": "Grandma's",
+                "start": _LATER,
+                "end": _LATER,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    keys = [s.key for s in await calendar.poll("sub-noah")]
+    assert keys == ["uid-2:rev:def456"]
+
+
+async def test_an_event_crossing_its_start_boundary_produces_exactly_one_signal_across_both_polls(
+    monkeypatch,
+):
+    """(rereview fix, item 1) Before this fix, `elif revision:` fired
+    whenever `_starts_soon` was false - which included an event that had
+    already begun. `_starts_soon`'s lower bound (item 6) only stops the
+    *start* key from re-firing once an event starts; nothing stopped the
+    *bare rev* key from firing instead, as a brand-new signal, the moment
+    the event crossed that same boundary - the CalDAV search keeps
+    returning an event that still overlaps the horizon window after it
+    starts, and `_to_dict` always sets a revision. Reproduced against the
+    real source: an event that started twenty minutes earlier produced
+    `uid-1:rev:abc123` with a summary announcing an event already in
+    progress as something newly changed - a second filter call, compose
+    turn, thread and push per event, exactly the "exactly one notification"
+    violation item 7 existed to fix, displaced by however long the poll took
+    to notice. No existing test polled the same event across that boundary,
+    which is why the suite stayed green.
+
+    This polls the identical event twice - once while it is imminent, once
+    after a frozen clock has moved 30 minutes past its start - and asserts
+    exactly one signal key fires across the pair, not two.
+    """
+    event_start = (_NOW + timedelta(minutes=10)).isoformat()
+    payload = {
+        "events": [
+            {
+                "uid": "uid-7",
+                "revision": "rev-a",
+                "summary": "Dentist",
+                "location": "Main St",
+                "start": event_start,
+                "end": event_start,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+
+    class _FrozenDatetime(datetime):
+        _now = _NOW
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls._now
+
+    monkeypatch.setattr(calendar, "datetime", _FrozenDatetime)
+
+    _FrozenDatetime._now = _NOW
+    first = [s.key for s in await calendar.poll("sub-noah")]
+
+    _FrozenDatetime._now = _NOW + timedelta(minutes=30)
+    second = [s.key for s in await calendar.poll("sub-noah")]
+
+    assert first == [f"uid-7:start:{event_start}:rev-a"]
+    assert second == []
+    assert len(first) + len(second) == 1
+
+
+async def test_an_event_beyond_the_lookahead_gets_no_start_signal(monkeypatch):
+    """The horizon is wider than the lookahead precisely so a change to a
+    far-off event is seen before it becomes imminent - but `:start:` still
+    only fires once the event is actually starting soon (fix round 1 item
+    B)."""
+    payload = {
+        "events": [
+            {
+                "uid": "uid-2",
+                "revision": "def456",
+                "summary": "Reunion",
+                "location": "Grandma's",
+                "start": _LATER,
+                "end": _LATER,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    signals = await calendar.poll("sub-noah")
+    assert [s.key for s in signals] == ["uid-2:rev:def456"]
+
+
+async def test_the_summary_carries_the_time_and_place(monkeypatch):
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    start_signal = next(
+        s for s in await calendar.poll("sub-noah") if ":start:" in s.key
+    )
+    assert "Dentist" in start_signal.summary
+    assert "Main St" in start_signal.summary
+
+
+async def test_the_revision_summary_never_claims_a_change(monkeypatch):
+    """The filter reads only the one-line summary, so a `:rev:` summary
+    asserting an unestablished change is the defect this fix round exists to
+    close (fix round 1 item C). Uses an event beyond the lookahead: since fix
+    round 4 item 7, an imminent event folds its revision into the `:start:`
+    key instead of producing a separate `:rev:` signal at all."""
+    payload = {
+        "events": [
+            {
+                "uid": "uid-2",
+                "revision": "def456",
+                "summary": "Reunion",
+                "location": "Grandma's",
+                "start": _LATER,
+                "end": _LATER,
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    rev_signal = next(s for s in await calendar.poll("sub-noah") if ":rev:" in s.key)
+    assert "changed" not in rev_signal.summary.lower()
+
+
+async def test_a_cancelled_event_says_so_in_the_summary(monkeypatch):
+    payload = {
+        "events": [
+            {
+                "uid": "uid-3",
+                "revision": "ghi789",
+                "summary": "Standup",
+                "location": "",
+                "start": _SOON,
+                "end": _SOON,
+                "status": "CANCELLED",
+            }
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    signals = await calendar.poll("sub-noah")
+    assert all("CANCELLED" in s.summary for s in signals)
+
+
+async def test_occurred_at_is_now_not_the_events_start_time(monkeypatch):
+    """The filter prompt renders `occurred_at` as "Occurred at"; a future
+    start time under that label would be a lie - the payload already carries
+    `start` and the summary says it in words (fix round 1 item E)."""
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    before = datetime.now(UTC)
+    signals = await calendar.poll("sub-noah")
+    after = datetime.now(UTC)
+    assert all(before <= s.occurred_at <= after for s in signals)
+
+
+async def test_signals_are_scoped_to_the_member_whose_calendar_it_is(monkeypatch):
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(EVENTS))
+    assert all(s.member_sub == "sub-noah" for s in await calendar.poll("sub-noah"))
+
+
+async def test_the_lookahead_and_horizon_from_settings_are_passed_through(monkeypatch):
+    invoke = _invoke_returning({"events": []})
+    monkeypatch.setattr(calendar, "invoke", invoke)
+    await calendar.poll("sub-noah")
+    _tool, args = invoke.await_args.args
+    assert args["lookahead_minutes"] == 90
+    assert args["horizon_days"] == 14
+
+
+async def test_an_event_without_a_uid_is_skipped(monkeypatch):
+    monkeypatch.setattr(
+        calendar, "invoke", _invoke_returning({"events": [{"summary": "Ghost"}]})
+    )
+    assert await calendar.poll("sub-noah") == []
+
+
+async def test_an_event_without_a_start_is_skipped(monkeypatch):
+    """A model should never be handed "…, starting None." (fix round 1 item
+    E) - dropping the event beats emitting a signal with a fabricated
+    dedup key."""
+    payload = {"events": [{"uid": "uid-4", "revision": "jkl012", "summary": "Ghost"}]}
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    assert await calendar.poll("sub-noah") == []
+
+
+async def test_an_eve_tools_error_raises_rather_than_reporting_nothing(monkeypatch):
+    """(fix round 4, item 2) If this source swallowed eve-tools' `error:`
+    string into `[]`, "the calendar has nothing to report" and "eve-tools
+    cannot reach the calendar" would be indistinguishable - which is exactly
+    what defeats first-poll priming. (`caldav_client.list_events` used to
+    swallow a total credential failure into `{"events": []}` one layer down
+    too, which made this source's own raise unreachable from that exact
+    failure - fixed separately, at the source of the swallow, in a rereview
+    follow-up.)"""
+    monkeypatch.setattr(
+        calendar, "invoke", AsyncMock(return_value="error: caldav unavailable")
+    )
+    with pytest.raises(SourceUnavailable):
+        await calendar.poll("sub-noah")
+
+
+async def test_a_partial_calendar_failure_raises_carrying_the_events_it_did_get(
+    monkeypatch,
+):
+    """(rereview fix, item 2) `caldav_client.list_events` isolates a single
+    failing calendar so the rest are not blanked (fix round 1 item A1), but
+    that makes its response partial, not complete - and priming an unprimed
+    source against a partial calendar is the same hazard priming it against
+    an empty one is. When eve-tools reports `partial: true`, this source
+    raises `SourcePollError` carrying the signals it did build, so
+    `poll_once` can still deliver them once the source is already primed
+    without ever priming on a partial result."""
+    monkeypatch.setattr(
+        calendar, "invoke", _invoke_returning({**EVENTS, "partial": True})
+    )
+    with pytest.raises(SourcePollError) as exc_info:
+        await calendar.poll("sub-noah")
+    assert [s.key for s in exc_info.value.partial] == [f"uid-1:start:{_SOON}:abc123"]
+
+
+async def test_an_event_already_past_gets_no_start_signal(monkeypatch):
+    """(fix round 4, item 6) `_starts_soon` had no lower bound, so it
+    answered true for an event already in the past too. Combined with an
+    all-day event rendering as midnight UTC, and a search that returns
+    anything overlapping the window, that made every all-day entry announce
+    itself as "Upcoming" at whatever hour the poll first saw it."""
+    past = (_NOW - timedelta(hours=2)).isoformat()
+    payload = {
+        "events": [
+            {"uid": "uid-6", "summary": "All-day thing", "start": past, "end": past}
+        ]
+    }
+    monkeypatch.setattr(calendar, "invoke", _invoke_returning(payload))
+    assert await calendar.poll("sub-noah") == []
+
+
+async def test_a_non_list_events_container_yields_no_signals(monkeypatch):
+    """(fix round 4, item 9) `list_field` was never applied to the calendar
+    source - it still used `result.get("events") or []`, the exact pattern
+    that helper exists to replace, so `{"events": 5}` raised
+    `TypeError: 'int' object is not iterable` straight out of the source
+    instead of logging a shape change and returning `[]`."""
+    monkeypatch.setattr(
+        calendar, "invoke", _invoke_returning({"events": 5})
+    )
+    assert await calendar.poll("sub-noah") == []

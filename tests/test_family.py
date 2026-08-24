@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from eve.family import Family, UnknownMemberError
@@ -44,3 +46,17 @@ def test_unknown_subject_raises(roster):
 def test_member_is_immutable(roster):
     with pytest.raises(Exception):
         roster.get("sub-noah").name = "Someone Else"
+
+
+def test_members_are_iterable_in_roster_order(roster):
+    """The poll loop walks the roster per member; without this it would have
+    to reach into Family's private dict."""
+    assert [m.name for m in roster.members()] == ["Noah", "Kid"]
+
+
+def test_the_shipped_roster_grants_calendar_read_to_someone():
+    """A guard, not a roster snapshot: if this grant were ever dropped from
+    family.yaml, nobody would receive a calendar notification and nothing
+    else would say so."""
+    family = Family.from_yaml(Path("family.yaml"))
+    assert any(m.can("calendar.read") for m in family.members())

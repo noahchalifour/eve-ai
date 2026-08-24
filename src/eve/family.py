@@ -51,6 +51,10 @@ class Family:
             ]
         )
 
+    def members(self) -> tuple[Member, ...]:
+        """Roster order, for the ambient poll loop. Insertion-ordered dict."""
+        return tuple(self._by_sub.values())
+
     def get(self, sub: str) -> Member:
         try:
             return self._by_sub[sub]

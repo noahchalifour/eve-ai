@@ -4,15 +4,23 @@ Registered with Aegra via `aegra.json` -> `auth.path`. Raising from the
 `@auth.authenticate` handler produces a 401; an authorization handler denying
 a resource produces a 403.
 
-Two modes. `oidc` validates an Authentik-issued JWT against its JWKS. `dev`
-maps an opaque static token to a roster subject for local work, and is
-unreachable in production because Settings refuses that combination at
-startup (spec section 8.1).
+Two modes, plus one additional accepted credential. `oidc` validates an
+Authentik-issued JWT against its JWKS. `dev` maps an opaque static token to a
+roster subject for local work, and is unreachable in production because
+Settings refuses that combination at startup (spec section 8.1). Independent
+of the mode, a bearer that exactly matches `Settings.ambient_token` plus an
+`x-eve-on-behalf-of: <sub>` header authenticates as that member - this is how
+the unattended ambient service creates threads as a family member (spec
+section 6.1). It is not a third `EVE_AUTH_MODE`: production runs `oidc` and
+the ambient credential has to work there too, so it is checked before the
+configured mode's own path rather than being an alternative to it.
 """
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
+from hmac import compare_digest
 
 import jwt
 from jwt import PyJWKClient
@@ -21,7 +29,11 @@ from langgraph_sdk import Auth
 from eve.family import UnknownMemberError, get_family
 from eve.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 auth = Auth()
+
+_ON_BEHALF_OF = "x-eve-on-behalf-of"
 
 
 class AuthError(Auth.exceptions.HTTPException):
@@ -78,13 +90,75 @@ def _subject_from_token(token: str) -> str:
     return claims["sub"]
 
 
+def _header(headers: dict, name: str) -> str | None:
+    """Same bytes-tolerance as extract_bearer, for one named header.
+
+    `name` is lower-cased here too, so a caller that passes a mixed-case
+    header name still matches instead of silently never firing. A resolved
+    value that is neither `str` nor `bytes` is treated as absent rather than
+    returned verbatim - it would otherwise reach `Family.get` and raise an
+    unhandled `TypeError` instead of the intended 401.
+    """
+    target = name.lower()
+    for key, value in headers.items():
+        candidate = key.decode() if isinstance(key, bytes) else key
+        if candidate.lower() != target:
+            continue
+        if isinstance(value, bytes):
+            return value.decode()
+        if isinstance(value, str):
+            return value
+        return None
+    return None
+
+
+def _ambient_subject(headers: dict, token: str) -> str | None:
+    """The impersonation path (design section 6.1). Returns None - falling
+    through to the configured auth mode - unless the presented bearer is
+    exactly the configured ambient token.
+
+    Deliberately not a third EVE_AUTH_MODE: production runs `oidc` and this
+    credential has to work there too, so it is an additional accepted
+    credential rather than an alternative mode. `compare_digest` because a
+    timing-distinguishable comparison of an impersonation secret is worth
+    avoiding for the cost of one import - and it runs on the `.encode()`d
+    bytes rather than the `str` operands, because `compare_digest` raises
+    `TypeError` on a `str` operand containing non-ASCII, which a hostile or
+    merely malformed bearer can trigger; the bytes form never raises for this
+    input class and is equivalent for the legitimate token. The configured
+    value is also stripped, matching `extract_bearer`'s stripping of the
+    presented token, so a trailing newline from an `.env` copy-paste doesn't
+    silently make the credential impossible to present.
+
+    Logging the impersonation is the caller's job, once the subject has
+    actually resolved to a real member - this function only decides whether
+    the ambient credential was presented, not whether it identifies anyone.
+    """
+    configured = get_settings().ambient_token.strip()
+    if not configured or not compare_digest(token.encode(), configured.encode()):
+        return None
+    subject = _header(headers, _ON_BEHALF_OF)
+    if not subject:
+        raise AuthError(f"the ambient token requires an {_ON_BEHALF_OF} header")
+    return subject
+
+
 @auth.authenticate
 async def authenticate(headers: dict) -> dict:
-    subject = _subject_from_token(extract_bearer(headers))
+    token = extract_bearer(headers)
+    subject = _ambient_subject(headers, token)
+    impersonated = subject is not None
+    if subject is None:
+        subject = _subject_from_token(token)
     try:
         member = get_family().get(subject)
     except UnknownMemberError as exc:
         raise AuthError(str(exc)) from exc
+    if impersonated:
+        # Logged only after the roster lookup above succeeds, so the audit
+        # trail never claims an impersonation happened for a subject that
+        # was in fact refused.
+        logger.info("ambient impersonation authenticated as %s", subject)
     return {
         "identity": member.sub,
         "display_name": member.name,

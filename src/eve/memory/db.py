@@ -2,9 +2,9 @@
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there is exactly one table here.
+them, and there are only three tables here, across three migration entries.
 
-    ponytail: hand-rolled because there is one table. Move to Alembic if
+    ponytail: hand-rolled because there are so few tables. Move to Alembic if
     MIGRATIONS exceeds ~5 entries.
 """
 
@@ -57,6 +57,49 @@ MIGRATIONS: list[tuple[str, str]] = [
           WHERE superseded_why IS NULL;
         CREATE INDEX IF NOT EXISTS eve_memory_subject
           ON eve_memory (subject) WHERE superseded_why IS NULL;
+        """,
+    ),
+    (
+        "0002_ambient",
+        """
+        -- Dedup and cooldown for ambient signals (Phase 4, design section
+        -- 4.5). There is deliberately no cursor table: every source is
+        -- time-windowed or content-keyed, so this table alone gives
+        -- exactly-once delivery.
+        CREATE TABLE IF NOT EXISTS eve_ambient_seen (
+          source        text        NOT NULL,
+          key           text        NOT NULL,
+          last_seen_at  timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (source, key)
+        );
+
+        -- Every notification actually sent. This IS the daily-cap counter
+        -- (counted per member per local day) and the record of what Eve
+        -- chose to interrupt, which is Phase 5's training signal.
+        CREATE TABLE IF NOT EXISTS eve_ambient_notice (
+          id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          member_sub text        NOT NULL,
+          source     text        NOT NULL,
+          key        text        NOT NULL,
+          urgent     boolean     NOT NULL DEFAULT false,
+          thread_id  text,
+          sent_at    timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS eve_ambient_notice_member_sent
+          ON eve_ambient_notice (member_sub, sent_at DESC);
+        """,
+    ),
+    (
+        "0003_ambient_notice_window",
+        """
+        -- Supports store.already_notified's cooldown-bounded lookup (fix
+        -- round 2 on the ambient pipeline task): "has this member already
+        -- been told about this (source, key) within its cooldown window",
+        -- run once per member per signal. Without this the query would
+        -- fall back to a sequential scan of eve_ambient_notice.
+        CREATE INDEX IF NOT EXISTS eve_ambient_notice_member_source_key_sent
+          ON eve_ambient_notice (member_sub, source, key, sent_at DESC);
         """,
     ),
 ]
