@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     ambient_quiet_hours: str = "21:00-07:00"
     ambient_cooldown_hours: int = 6
     ambient_calendar_lookahead_minutes: int = 90
+    # The client returns everything inside this horizon (not just the
+    # lookahead) so a change to an event still days away is detected as soon
+    # as it happens; only the lookahead governs which events are "starting
+    # soon" (fix round 1 item B).
+    ambient_calendar_horizon_days: int = 14
     # The impersonation credential (design section 6.1). Held by eve-ambient,
     # which presents it, and by eve, which verifies it.
     ambient_token: str = ""
