@@ -162,10 +162,13 @@ async def test_a_missing_category_name_falls_back_to_the_id():
     assert budget["category"] == "cat-unknown"
 
 
-async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id():
+async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id(caplog):
     """Distinct from the case above: here the category id *is* in the
     lookup, just without a "name" field - the exact shape that raised
-    KeyError before _category_names guarded it."""
+    KeyError before _category_names guarded it. The degradation must be
+    logged: this is the one shape in the phase unverified against a live
+    account, and a silent fallback here would look identical to a quiet
+    month with nobody over budget."""
     month = _current_month()
     fake_client = _fake_client(
         [
@@ -183,12 +186,14 @@ async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id
         categories=[{"id": "cat-weird"}],
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
-        result = await monarch.get_budgets()
+        with caplog.at_level("WARNING"):
+            result = await monarch.get_budgets()
     [budget] = result["budgets"]
     assert budget["category"] == "cat-weird"
+    assert "cat-weird" in caplog.text
 
 
-async def test_a_non_dict_category_does_not_raise():
+async def test_a_non_dict_category_does_not_raise(caplog):
     month = _current_month()
     fake_client = _fake_client(
         [
@@ -205,8 +210,10 @@ async def test_a_non_dict_category_does_not_raise():
         ]
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
-        result = await monarch.get_budgets()
+        with caplog.at_level("WARNING"):
+            result = await monarch.get_budgets()
     assert result == {"budgets": []}
+    assert "non-dict category" in caplog.text
 
 
 async def test_an_explicit_month_pins_which_row_matches():

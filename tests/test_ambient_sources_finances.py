@@ -217,6 +217,23 @@ async def test_a_non_list_transactions_container_yields_no_signals(monkeypatch):
 
 
 async def test_a_non_list_budgets_container_yields_no_signals(monkeypatch):
+    """`{"budgets": 5}` is truthy and non-iterable, so `or []` never fires
+    and the bare `for` statement itself would raise TypeError. (A string
+    would not discriminate this: it is iterable, so the unfixed code would
+    have walked its characters, each failing the per-item dict check, and
+    still returned [] - see the case below for that.)"""
+    monkeypatch.setattr(
+        finances,
+        "invoke",
+        _fake_invoke(**{
+            "finances.list_transactions": {"transactions": []},
+            "finances.get_budgets": {"budgets": 5},
+        }),
+    )
+    assert await finances.poll("") == []
+
+
+async def test_a_string_budgets_container_is_handled_sanely_rather_than_iterated(monkeypatch):
     monkeypatch.setattr(
         finances,
         "invoke",

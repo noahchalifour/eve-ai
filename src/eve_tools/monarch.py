@@ -11,12 +11,15 @@ not need an interactive MFA prompt mid-conversation.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from functools import lru_cache
 
 from monarchmoney import MonarchMoney
 
 from eve_tools.settings import get_tools_settings
+
+logger = logging.getLogger(__name__)
 
 _logged_in = False
 
@@ -66,11 +69,24 @@ async def _category_names(client: MonarchMoney) -> dict[str, str]:
     id in get_budgets) instead of raising KeyError.
     """
     categories = await client.get_transaction_categories()
-    return {
-        category["id"]: category["name"]
-        for category in categories.get("categories") or []
-        if isinstance(category, dict) and category.get("id") and category.get("name")
-    }
+    names = {}
+    for category in categories.get("categories") or []:
+        if not isinstance(category, dict) or not category.get("id"):
+            continue
+        name = category.get("name")
+        if not name:
+            # Both fields are always requested by the fragment, so this
+            # should be unreachable against a real account - which is
+            # exactly why it needs to be visible if it ever happens rather
+            # than silently degrading every budget for this category to
+            # its raw id.
+            logger.warning(
+                "category %r has no name; budgets for it will show its id instead",
+                category.get("id"),
+            )
+            continue
+        names[category["id"]] = name
+    return names
 
 
 async def get_budgets(month: str | None = None) -> dict:
@@ -109,7 +125,10 @@ async def get_budgets(month: str | None = None) -> dict:
         # against a live account - a truthy non-dict `category` (a list, a
         # string) must not raise out of a plain `.get`.
         category = entry.get("category")
-        category_id = category.get("id") if isinstance(category, dict) else None
+        if category is not None and not isinstance(category, dict):
+            logger.warning("budget entry had a non-dict category, dropping it: %r", category)
+            continue
+        category_id = (category or {}).get("id")
         if not category_id:
             continue
         for monthly in entry.get("monthlyAmounts") or []:
