@@ -1,11 +1,10 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 3,
-"Specialists + Skills." For the Phase 3 design rationale and definition of
-done, see
-[`docs/superpowers/specs/2026-08-21-eve-specialists-design.md`](superpowers/specs/2026-08-21-eve-specialists-design.md).
+This document describes what exists in this repository today: Phase 4,
+"Ambient." For the Phase 4 design rationale and definition of done, see
+[`docs/superpowers/specs/2026-08-23-eve-ambient-design.md`](superpowers/specs/2026-08-23-eve-ambient-design.md).
 For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-21-eve-specialists.md`](superpowers/plans/2026-08-21-eve-specialists.md).
+[`docs/superpowers/plans/2026-08-23-eve-ambient.md`](superpowers/plans/2026-08-23-eve-ambient.md).
 
 ## The graph
 
@@ -76,6 +75,17 @@ src/eve/
     store.py        # every eve_memory SQL read and write
     recall.py       # pre-answer hybrid retrieval node
     extract.py      # post-stream structured extraction and writes
+
+src/eve_ambient/
+  types.py      # Signal, FilterVerdict; tool_result/list_field parsing helpers
+  store.py      # every eve_ambient_seen and eve_ambient_notice SQL statement
+  gates.py      # pure functions: scoped_audience, permitted, quiet hours, daily-cap window
+  ntfy.py       # the Notifier protocol and its one ntfy implementation
+  sources/      # calendar.py, mail.py, finances.py (polled); home.py (pushed via webhook)
+  filter.py     # the REFLEX relevance gate; raises FilterError on infrastructure failure
+  notify.py     # the compose turn: creates a thread, runs eve, pushes or discards it
+  pipeline.py   # handle_signal: the one place signal-to-resolution order is decided
+  app.py        # the eve-ambient FastAPI service: webhook, poll loop, /healthz
 ```
 
 The import graph is acyclic: `settings` and `family` depend on nothing
@@ -86,6 +96,14 @@ internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 `family`, `settings`, `state`, and memory types; `models` depends on `settings`;
 `graph` depends on `context`, `memory`, `models`, and `state`; `auth` depends on
 `family` and `settings`.
+
+Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `store` and
+`ntfy` depend only on `eve`'s own modules (`eve.memory.db`, `eve.settings`
+respectively) and not on `types` at all; `filter` and `notify` depend on
+`types` plus `eve`'s own modules (`eve.family`, `eve.memory.store`,
+`eve.models`, `eve.settings`); `pipeline` depends on `types`, `store`,
+`gates`, `filter`, and `notify` (which pulls in `ntfy`); `app` depends on
+`pipeline` and `sources`.
 
 `models.py` is a deliberate chokepoint: model identifiers appear nowhere else
 in the codebase, so retiering — or falling back from the ChatGPT proxy to the
@@ -143,10 +161,19 @@ without any of them holding a third-party credential directly:
 - **`src/eve_tools/`** — a separate FastAPI service and, per
   [ADR 0006](adr/0006-eve-tools-isolation.md), the only
   third-party-credentialed HTTP surface in the deployment: `home_assistant.py`,
-  `gmail.py`, and `monarch.py` hold the Home Assistant, Gmail, and Monarch
-  Money clients, `mcp_dispatch.py` opens a fresh connection per call to a
-  dynamically-discovered MCP server (`mcp_servers.py`), and `app.py`
-  dispatches every request to one of them by a namespaced tool name.
+  `gmail.py`, `monarch.py`, and (Phase 4) `caldav_client.py` hold the Home
+  Assistant, Gmail, Monarch Money, and CalDAV clients, `mcp_dispatch.py` opens
+  a fresh connection per call to a dynamically-discovered MCP server
+  (`mcp_servers.py`), and `app.py` dispatches every request to one of them by
+  a namespaced tool name. `caldav_client.py` has no specialist calling it
+  yet — it exists to serve `eve_ambient`'s calendar source. `gmail.py`
+  additionally hydrates each message's `from`/`subject`/`date`/`snippet` with
+  a per-message fetch, because `messages().list()` returns only an id and a
+  thread id; `monarch.py` normalizes Monarch's nested
+  `monthlyAmountsByCategory` shape into the flat `spent`/`limit`/`period`
+  budgets its callers expect. Both additions exist because `eve_ambient`'s
+  mail and finances sources need those shapes, not because a specialist asked
+  for them.
 
 ## Aegra and `aegra.json`
 
@@ -191,6 +218,18 @@ concerns: authentication, and per-resource authorization.
 `dev` mode is refused outright when `EVE_ENV=production` —
 `Settings.model_post_init` (`src/eve/settings.py`) raises at startup rather
 than allowing a weaker auth path to reach the cluster.
+
+Independent of either mode, there is one additional accepted credential: a
+bearer that exactly matches `EVE_AMBIENT_TOKEN`, presented with an
+`x-eve-on-behalf-of: <sub>` header, authenticates as that roster member. This
+is not a third `EVE_AUTH_MODE` — production runs `oidc` and this credential
+has to work there too, so `_ambient_subject` (`src/eve/auth.py`) checks it
+*before* the configured mode's own path rather than replacing it. The header
+is inert on every other path: a member's own token carrying
+`x-eve-on-behalf-of` still authenticates as that member, because
+`_ambient_subject` only reads the header once the presented bearer has
+already matched the ambient token. See [ADR 0007](adr/0007-ambient-impersonation.md)
+for why this exists and what it costs.
 
 **Authorization is enforced by two mechanisms layered on top of each
 other**, and the distinction matters when reading test failures:
@@ -285,6 +324,115 @@ advisory lock. The production Dockerfile runs exactly
 Aegra from starting. Local `aegra dev` does not execute the container command,
 so run the migration explicitly after starting Postgres.
 
+## Ambient
+
+Phase 4 adds a second deployment, `eve-ambient` (`Dockerfile.eve-ambient`,
+`src/eve_ambient/`), that watches for things worth telling a member about and
+speaks first. It imports `src/eve`'s `settings`, `family`, `models`, `memory`,
+and `specialists.permissions` modules plus its own package, and holds no
+Gmail, CalDAV, Home Assistant, or Monarch credential of its own — every
+third-party read goes through `eve.tools_client.invoke` to `eve-tools`, the
+same isolated credential-holding service specialists call (ADR 0006). The
+only credentials `eve-ambient` itself holds are the impersonation token
+(below), the Home Assistant webhook secret, and the ntfy push token.
+
+**Sources.** Four exist, registered in `sources/__init__.py`'s `SOURCES`
+tuple: `calendar` and `mail` are polled once per family member holding the
+source's permission; `finances` is polled once for the household. `home` is
+deliberately absent from that tuple — it is pushed, not polled: Home
+Assistant's own automations decide what is worth Eve's attention and POST it
+to `/signals/home-assistant`, authenticated by a shared secret compared with
+`compare_digest` (`app.py`). The polled sources run every
+`EVE_AMBIENT_POLL_INTERVAL_SECONDS` (default 300s); the calendar source asks
+`eve-tools`' CalDAV client for everything inside a horizon,
+`EVE_AMBIENT_CALENDAR_HORIZON_DAYS` (default 14 days), but only treats an
+event as "starting soon" if its start falls inside the shorter
+`EVE_AMBIENT_CALENDAR_LOOKAHEAD_MINUTES` (default 90 minutes) — the wider
+horizon exists so a change to an event still days out is detected as soon as
+it happens rather than only once it becomes imminent.
+
+**The gate chain**, all in `pipeline.py`'s `handle_signal`, cheapest check
+first so nothing expensive runs until everything cheap has agreed:
+
+1. **Cooldown** (`store.is_fresh`): has this exact `(source, key)` been seen
+   inside `EVE_AMBIENT_COOLDOWN_HOURS` (default 6)? A source can override its
+   own signal's cooldown — a still-over budget uses 720 hours so it is not
+   re-announced four times a day.
+2. **Relevance filter** (`filter.judge`, `REFLEX` tier): produces a
+   `FilterVerdict` (`notify`, `audience`, `urgent`, `why`) or raises
+   `FilterError` if the model call itself failed. A `FilterError` is a
+   couldn't-decide, not a decided-no, so the pipeline leaves the signal
+   unseen for the next poll to retry rather than resolving it as filtered.
+3. **Owner-scoping and permission** (`gates.scoped_audience`,
+   `gates.permitted`): a `mail` signal is narrowed to its own owner
+   regardless of who the filter named, because mail content may not be
+   redistributed; every remaining candidate must hold the source's mapped
+   permission (`calendar.read`, `mail.read`, `finances`, `home.control`) or is
+   dropped.
+4. **Per-member idempotency** (`store.already_notified`): a member who
+   already has this signal — the survivor of an earlier partial defer — is
+   skipped rather than re-notified.
+5. **Quiet hours and the daily cap**: `EVE_AMBIENT_QUIET_HOURS` (default
+   `"21:00-07:00"`, evaluated in the member's own timezone) and
+   `EVE_AMBIENT_DAILY_CAP` (default 6, counted per member per local calendar
+   day from `eve_ambient_notice`). Both are skipped — and the bypass is
+   logged plainly — when the filter marked the signal `urgent`. Urgency never
+   bypasses the permission gate above it: a member without the permission a
+   source requires is dropped at step 3 regardless of urgency.
+6. **The compose turn** (`notify.deliver`): the only expensive step, and the
+   only one that can fail for reasons that are not a verdict at all.
+
+`deliver` creates a thread under the ambient credential (see "Auth and thread
+scoping" below) and runs the ordinary `eve` graph on it — nothing in
+`src/eve/graph.py` knows ambient exists. The input is an ordinary
+`HumanMessage`, not a developer message, because `recall.py` and `extract.py`
+both key off the last human message; a developer-role input would silently
+cost the turn its episodic recall and half its extraction. The message is
+marked (`"[ambient signal — not spoken by {member}]"`) so the thread shows
+what prompted Eve, and its instructions ask her to reply with exactly
+`NOTHING` if the signal is not worth interrupting anyone over. `deliver` has
+exactly three outcomes, and they mean different things: a thread id (Eve
+spoke; the message was pushed and the thread kept), `None` (Eve produced
+`NOTHING` or an empty answer — both read as a deliberate veto; the thread is
+deleted and nothing is pushed), or a raised `DeliveryError` (thread creation
+failed, the run itself failed, or no final assistant message could be found
+at all — infrastructure failed, not Eve choosing silence). The pipeline
+treats `DeliveryError` exactly like a
+`FilterError`: the signal stays unseen so the next poll retries it, and
+`already_notified` (step 4) is what keeps that retry from re-notifying
+members who already got it on the failed attempt.
+
+**The two tables**, installed by the `0002_ambient` migration in
+`src/eve/memory/db.py` — there is no cursor table, because every source is
+either time-windowed (calendar, by horizon) or content-keyed (a Gmail message
+id, a Monarch transaction id, an entity/state pair), so this pair alone gives
+exactly-once delivery:
+
+- `eve_ambient_seen (source, key, last_seen_at)` — one row per resolved
+  signal (dropped by a gate, vetoed, or delivered), written only once a
+  signal is fully resolved so a crash mid-handling loses nothing.
+- `eve_ambient_notice (id, member_sub, source, key, urgent, thread_id,
+  sent_at)` — one row per notification actually sent. This table *is* the
+  daily-cap counter: step 5 above counts rows here since the member's local
+  midnight.
+
+**First-poll priming.** A freshly enabled source must not announce every
+event, unread message, or transaction that already existed before Eve was
+watching. `app.py`'s `poll_once` checks `store.has_any(source.name)`; if a
+source has never produced a signal before, the current tick marks every
+signal it just found as seen without notifying, and then marks the source
+itself with an explicit sentinel key (`_PRIMED_SENTINEL`,
+`store.mark_seen(source.name, "__primed__")`). The sentinel is deliberate
+rather than inferred from "has any seen row": an empty first poll (nothing
+unread, nothing over budget) would otherwise leave no row behind at all, so
+the next tick — the first one to actually find something — would still read
+as unprimed and get silently primed away instead of notified.
+
+**One replica only.** Nothing in `eve-ambient` elects a leader or coordinates
+across instances; the poll loop and the webhook handler both run in one
+process. A second replica would poll and push the same signals again and
+double-count the daily cap in `eve_ambient_notice`.
+
 ## Running locally
 
 ```bash
@@ -331,6 +479,32 @@ are the tier that verifies
 the `chatgpt/*` Responses-API assumption in `models.py` against the real
 proxy — response shape, incremental streaming, and tool calls.
 
+Ambient's own tests use the same two tiers rather than a third.
+`tests/test_ambient_integration.py` needs the same compose stack as every
+other integration test — it drives the ambient impersonation credential
+against a live `aegra serve` and asserts a member can read a thread ambient
+created for them while another member gets a 404. `tests/test_ambient_live.py`
+additionally needs an ntfy topic (`EVE_AMBIENT_NTFY_BASE_URL`,
+`EVE_AMBIENT_NTFY_TOPIC`) and drives one fabricated signal all the way
+through a real `REFLEX` verdict, a real `eve` turn, and a real push.
+
+One gotcha specific to the ambient tests: `notify.deliver` runs inside the
+pytest process itself, not inside the `aegra_server` fixture's subprocess, so
+it reads `EVE_AMBIENT_TOKEN` and `EVE_AMBIENT_AEGRA_BASE_URL` from the
+*runner's own* shell environment. The `aegra_server` fixture setting
+`EVE_AMBIENT_TOKEN` in the subprocess `env` dict it launches `aegra serve`
+with is not enough — that only lets the server *verify* the credential; the
+test process still needs the same token (and the server's URL) exported in
+its own shell to *present* it. Without that, `deliver` fails on
+infrastructure grounds (a 401, or the wrong base URL) and reads like a test
+failure rather than incomplete setup.
+
+The live ambient tier has never been run. Its four prerequisites from the
+design — CalDAV credentials, a reachable ntfy instance, the Home Assistant
+automation that posts to the webhook, and the ambient token provisioned in
+Vault — are all still outstanding. The assertions exist; none of them have
+executed against real infrastructure.
+
 ## Observability
 
 Tracing is configuration, not code: there is no application-level callback in
@@ -371,3 +545,4 @@ responsibility ends at building and publishing the image
 - [ADR 0004 — Model tier routing](adr/0004-model-tier-routing.md)
 - [ADR 0005 — Memory storage: one table, supersession, read-time decay](adr/0005-memory-storage.md)
 - [ADR 0006 — Specialist and skill tool execution runs in an isolated service](adr/0006-eve-tools-isolation.md)
+- [ADR 0007 — Ambient runs impersonate family members through one scoped token](adr/0007-ambient-impersonation.md)
