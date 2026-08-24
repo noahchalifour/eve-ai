@@ -116,6 +116,26 @@ async def test_pruning_removes_only_rows_past_the_horizon(pool):
         assert (await cur.fetchone())[0] == 1
 
 
+async def test_pruning_never_removes_the_priming_sentinel(pool):
+    """(fix round 4, item 8) `prune_seen` used to delete any row past the
+    horizon, `__primed__` included - so a source quiet for 30+ days would
+    have its priming row pruned right alongside a genuinely stale one,
+    `has_any` would go back to reporting false, and that source's next real
+    signal would be silently primed away instead of notified. The only place
+    this one SQL predicate can actually be verified is against Postgres."""
+    await store.mark_seen("calendar", "__primed__")
+    await store.mark_seen("calendar", "old")
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_ambient_seen SET last_seen_at = now() - interval '40 days'"
+        )
+    assert await store.prune_seen(30) == 1
+    assert await store.has_any("calendar") is True
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT key FROM eve_ambient_seen")
+        assert [row[0] for row in await cur.fetchall()] == ["__primed__"]
+
+
 async def test_has_any_is_false_before_the_first_signal_and_true_after(pool):
     """This is what makes the first poll prime rather than notify."""
     assert await store.has_any("calendar") is False
