@@ -24,6 +24,7 @@ import json
 import logging
 from functools import lru_cache
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage
 from pydantic import ValidationError
 
@@ -97,12 +98,17 @@ async def judge(signal: Signal) -> FilterVerdict:
 
     try:
         verdict = await model.ainvoke([HumanMessage(prompt)])
-    except ValidationError as exc:
+    except (ValidationError, ValueError, OutputParserException) as exc:
         # The call succeeded; what came back does not fit FilterVerdict. A
         # deterministic dead end, not a retry candidate (fix round 2, item
-        # 2): raising FilterError here would defer this signal forever,
-        # since a malformed response does not spontaneously become a
-        # well-formed one.
+        # 2; ValueError and OutputParserException added in the final round):
+        # raising FilterError here would defer this signal forever, since a
+        # malformed response does not spontaneously become a well-formed one.
+        # `with_structured_output`'s parser raises `ValueError` ("tool
+        # arguments must be specified as a dict") and `OutputParserException`
+        # (unknown tool type) for exactly this shape of failure — a response
+        # that arrived and cannot be used, the same category as a
+        # ValidationError, not an infrastructure failure.
         logger.warning(
             "ambient filter returned an unusable response for %s: %s",
             signal.key, exc,

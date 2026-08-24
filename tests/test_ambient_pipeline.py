@@ -420,12 +420,46 @@ async def test_an_audience_fully_already_notified_resolves_as_known_not_filtered
     assert wiring["seen"] == [("finances", "k1"), ("finances", "k1")]
 
 
-async def test_a_malformed_filter_response_is_marked_seen_not_retried(wiring):
-    """fix round 2, item 2: a deterministic dead end (a malformed structured
-    output the filter could never fix by retrying) must resolve like a
-    genuine not-notify verdict — marked seen — not defer forever like a
-    transient outage would."""
-    wiring["verdict"] = FilterVerdict(notify=False, why="filter response malformed")
+async def test_a_malformed_filter_response_resolves_filtered_not_deferred(
+    wiring, monkeypatch
+):
+    """Final round, item 2: the previous version of this test hand-set
+    `wiring["verdict"]` to a not-notify verdict and so exercised the same
+    "the filter said no" path every other filtered test already covers — it
+    would have passed unchanged against code that never classified a
+    malformed response at all. This drives a real `ValidationError` through
+    the actual `filter.judge` (not the fixture's fake), so the
+    classification added in fix round 2 is exercised end to end: without it,
+    `judge` would raise `FilterError` for the ValidationError same as any
+    other exception, and the pipeline would resolve "deferred", not
+    "filtered"."""
+    from pydantic import ValidationError
+
+    from eve_ambient import filter as ambient_filter
+
+    try:
+        FilterVerdict.model_validate({"audience": 123})
+    except ValidationError as exc:
+        malformed = exc
+    else:
+        raise AssertionError("expected model_validate to raise ValidationError")
+
+    class _FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages, *args, **kwargs):
+            raise malformed
+
+    async def _no_memory(sub, thread):
+        return [], [], None
+
+    monkeypatch.setattr(ambient_filter, "load_always_on", _no_memory)
+    monkeypatch.setattr(ambient_filter, "get_model", lambda tier: _FakeModel())
+    # Route the pipeline through the real judge() for this one test, instead
+    # of the fixture's fake, so the classification itself is under test.
+    monkeypatch.setattr(pipeline, "judge", ambient_filter.judge)
+
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "filtered"
     assert wiring["seen"] == [("finances", "k1")]
     assert wiring["delivered"] == []

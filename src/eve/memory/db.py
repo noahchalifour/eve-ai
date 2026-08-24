@@ -2,7 +2,7 @@
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there are only three tables here, across two migration entries.
+them, and there are only three tables here, across three migration entries.
 
     ponytail: hand-rolled because there are so few tables. Move to Alembic if
     MIGRATIONS exceeds ~5 entries.

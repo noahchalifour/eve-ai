@@ -87,6 +87,50 @@ async def test_a_malformed_response_resolves_to_not_notify_rather_than_deferring
     assert "malformed" in verdict.why
 
 
+async def test_a_tool_argument_value_error_resolves_to_not_notify(
+    monkeypatch, no_household_memory
+):
+    """Final round, item 1: the structured-output parser raises a bare
+    `ValueError` ("Tool arguments must be specified as a dict") for one shape
+    of unusable response, not just a Pydantic ValidationError. It belongs on
+    the same side of the boundary — a response that arrived and cannot be
+    used — not on FilterError's side, or it would defer this signal forever
+    despite the model never being asked again to produce something
+    different."""
+    monkeypatch.setattr(
+        ambient_filter,
+        "get_model",
+        lambda tier: FakeStructuredModel(
+            error=ValueError("Tool arguments must be specified as a dict")
+        ),
+    )
+    verdict = await ambient_filter.judge(SIGNAL)
+    assert verdict.notify is False
+    assert "malformed" in verdict.why
+
+
+async def test_an_output_parser_exception_resolves_to_not_notify(
+    monkeypatch, no_household_memory
+):
+    """Final round, item 1: `langchain_core`'s `OutputParserException`
+    (unknown tool type) is the same category of failure as a ValidationError
+    — the call succeeded, the response cannot be used — and must resolve the
+    same way rather than falling through to the general except and
+    deferring forever."""
+    from langchain_core.exceptions import OutputParserException
+
+    monkeypatch.setattr(
+        ambient_filter,
+        "get_model",
+        lambda tier: FakeStructuredModel(
+            error=OutputParserException("unknown tool type")
+        ),
+    )
+    verdict = await ambient_filter.judge(SIGNAL)
+    assert verdict.notify is False
+    assert "malformed" in verdict.why
+
+
 async def test_a_non_filterverdict_response_resolves_to_not_notify(
     monkeypatch, no_household_memory
 ):
