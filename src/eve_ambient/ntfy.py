@@ -44,12 +44,16 @@ class NtfyNotifier:
         headers = {
             "Title": _ascii(title),
             "Priority": "urgent" if urgent else "default",
+            # Literal ASCII values; _ascii() would be a no-op here.
             "Tags": "rotating_light" if urgent else "speech_balloon",
         }
         if settings.ambient_ntfy_token:
             headers["Authorization"] = f"Bearer {settings.ambient_ntfy_token}"
         if click_url:
-            headers["Click"] = click_url
+            # Unlike Title, this comes from configuration
+            # (ambient_thread_url_template), making it the likelier of the
+            # two to carry a non-ASCII character.
+            headers["Click"] = _ascii(click_url)
 
         url = f"{settings.ambient_ntfy_base_url.rstrip('/')}/{settings.ambient_ntfy_topic}"
         try:

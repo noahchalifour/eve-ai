@@ -34,8 +34,16 @@ async def test_an_urgent_message_raises_the_priority_and_the_tag():
     route = respx.post("https://ntfy.test/eve-family").mock(
         return_value=httpx.Response(200)
     )
-    await NtfyNotifier().send(title="Eve", body="Water detected.", urgent=True, click_url=None)
+    # "Eve - urgent" (ASCII hyphen) is the production-shaped title for an
+    # urgent push (eve_ambient.notify.deliver). An em dash here would come
+    # back mangled as "Eve ? urgent" by _ascii's errors="replace" -- on
+    # every single urgent push, the highest-stakes notification the system
+    # sends -- which a title-blind assertion could never catch.
+    await NtfyNotifier().send(
+        title="Eve - urgent", body="Water detected.", urgent=True, click_url=None
+    )
     headers = route.calls.last.request.headers
+    assert headers["title"] == "Eve - urgent"
     assert headers["priority"] == "urgent"
     assert "rotating_light" in headers["tags"]
 
@@ -58,6 +66,21 @@ async def test_the_click_url_is_forwarded():
         title="Eve", body="hi", urgent=False, click_url="https://eve.test/t/abc"
     )
     assert route.calls.last.request.headers["click"] == "https://eve.test/t/abc"
+
+
+@respx.mock
+async def test_a_non_ascii_click_url_does_not_break_the_request():
+    """click_url is built from EVE_AMBIENT_THREAD_URL_TEMPLATE, a
+    configuration value -- the likeliest of the header-bound fields to carry
+    a non-ASCII character, unlike Tags, whose two possible values are always
+    ASCII literals."""
+    route = respx.post("https://ntfy.test/eve-family").mock(
+        return_value=httpx.Response(200)
+    )
+    assert await NtfyNotifier().send(
+        title="Eve", body="hi", urgent=False, click_url="https://eve.test/t/café"
+    ) is True
+    assert route.calls.last.request.headers["click"] == "https://eve.test/t/caf?"
 
 
 @respx.mock
