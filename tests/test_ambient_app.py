@@ -36,8 +36,14 @@ def _clear_background_tasks():
     # `asyncio.wait(_background, ...)` call - tries to await it on a
     # different event loop entirely.
     app_module._background.clear()
+    app_module._in_flight.clear()
+    app_module._last_tick["at"] = None
+    app_module._last_tick["counts"] = {}
     yield
     app_module._background.clear()
+    app_module._in_flight.clear()
+    app_module._last_tick["at"] = None
+    app_module._last_tick["counts"] = {}
 
 
 @pytest.fixture
@@ -57,6 +63,52 @@ def test_healthz_reports_whether_ambient_is_enabled(client):
     assert body["ambient_enabled"] is False
 
 
+def test_healthz_carries_no_tick_yet_before_any_poll(client):
+    """Before the first tick, there is nothing to report yet - distinct from
+    a stale timestamp, which is what a real per-tick failure looks like."""
+    body = client.get("/healthz").json()
+    assert body["last_tick_at"] is None
+    assert body["last_tick_counts"] == {}
+
+
+async def test_healthz_reports_the_last_ticks_timestamp_and_counts(monkeypatch):
+    """(fix round 4, item 10) `/healthz` used to carry no functional signal
+    at all, so the Gatus check the design specifies stayed green through a
+    week of per-tick errors. Exposing the last successful tick's timestamp
+    and counts - already `poll_once`'s return value - lets an alert assert
+    on staleness."""
+
+    async def _poll_once(now=None):
+        return {"sent": 2, "errors": 1}
+
+    async def _prune_seen():
+        return 0
+
+    class _StopHere(Exception):
+        pass
+
+    async def _fake_sleep(_seconds):
+        raise _StopHere()
+
+    monkeypatch.setattr(app_module, "poll_once", _poll_once)
+    monkeypatch.setattr(app_module.store, "prune_seen", _prune_seen)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _fake_sleep)
+
+    before = datetime.now(UTC)
+    with pytest.raises(_StopHere):
+        await app_module._poll_forever()
+    after = datetime.now(UTC)
+
+    assert app_module._last_tick["counts"] == {"sent": 2, "errors": 1}
+    reported_at = datetime.fromisoformat(app_module._last_tick["at"])
+    assert before <= reported_at <= after
+
+    with TestClient(app_module.app) as test_client:
+        body = test_client.get("/healthz").json()
+    assert body["last_tick_counts"] == {"sent": 2, "errors": 1}
+    assert body["last_tick_at"] == app_module._last_tick["at"]
+
+
 def test_the_webhook_rejects_a_wrong_secret(client):
     response = client.post(
         "/signals/home-assistant",
@@ -74,9 +126,63 @@ def test_the_webhook_rejects_a_missing_secret(client):
     assert response.status_code == 401
 
 
-def test_the_webhook_accepts_and_queues(monkeypatch, client):
-    """202 rather than waiting: a compose turn takes far longer than Home
-    Assistant will hold a webhook open."""
+def test_a_rejected_webhook_attempt_is_logged_without_the_secret(client, caplog):
+    """(fix round 4, item 11) An operator otherwise cannot tell a wrong
+    secret from an automation that never fired - both look like silence."""
+    with caplog.at_level("WARNING"):
+        response = client.post(
+            "/signals/home-assistant",
+            headers={"x-eve-ambient-secret": "definitely-wrong-secret"},
+            json={"entity_id": "binary_sensor.garage", "state": "open"},
+        )
+    assert response.status_code == 401
+    line = next(
+        r.getMessage() for r in caplog.records
+        if r.levelname == "WARNING" and "rejected" in r.getMessage().lower()
+    )
+    assert "definitely-wrong-secret" not in line
+
+
+def test_the_webhook_refuses_when_ambient_is_disabled(client):
+    """(fix round 4, item 1) The autouse `settings` fixture sets
+    EVE_AMBIENT_ENABLED=false. Before this fix, `lifespan` was the only
+    consumer of `ambient_enabled`, so a valid-secret post here still ran the
+    filter, spent a VOICE-tier turn, created a thread and pushed - the one
+    lever an operator has to silence Eve at 3am did not silence the only
+    source that can wake them. This test used to assert the opposite: that
+    the signal WAS handled with ambient disabled. 503, not 401 or 404: the
+    secret is right and the endpoint exists, but the service behind it is
+    switched off."""
+    response = client.post(
+        "/signals/home-assistant",
+        headers={"x-eve-ambient-secret": "ha-secret"},
+        json={
+            "entity_id": "binary_sensor.garage",
+            "state": "open",
+            "friendly_name": "Garage door",
+        },
+    )
+    assert response.status_code == 503
+
+
+def test_the_webhook_accepts_and_queues_when_ambient_is_enabled(monkeypatch):
+    """The other direction of fix round 4 item 1: a deployment with ambient
+    enabled must still accept and process a validly-secreted webhook post, so
+    the refusal pinned above is specific to the disabled state rather than a
+    regression that breaks the webhook outright. 202 rather than waiting: a
+    compose turn takes far longer than Home Assistant will hold a webhook
+    open."""
+    monkeypatch.setenv("EVE_AMBIENT_ENABLED", "true")
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", "a" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    async def _poll_forever():
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(app_module, "_poll_forever", _poll_forever)
+
     handled = []
 
     async def _handle(signal, **kwargs):
@@ -89,28 +195,116 @@ def test_the_webhook_accepts_and_queues(monkeypatch, client):
         return "sent"
 
     monkeypatch.setattr(app_module, "handle_signal", _handle)
-    response = client.post(
-        "/signals/home-assistant",
-        headers={"x-eve-ambient-secret": "ha-secret"},
-        json={
-            "entity_id": "binary_sensor.garage",
-            "state": "open",
-            "friendly_name": "Garage door",
-        },
-    )
-    assert response.status_code == 202
-    # `client` runs its ASGI app on a persistent background thread with its
-    # own event loop; the `await asyncio.sleep(0)` above means the task
-    # finishes on that loop's own schedule, not necessarily by the instant
-    # this (synchronous, main-thread) response comes back. Poll briefly
-    # rather than asserting immediately or sleeping a fixed guessed amount.
-    for _ in range(200):
-        if handled:
-            break
-        time.sleep(0.005)
-    assert handled[0].source == "home"
-    assert handled[0].key == "binary_sensor.garage:open"
-    assert "Garage door" in handled[0].summary
+
+    with TestClient(app_module.app) as test_client:
+        response = test_client.post(
+            "/signals/home-assistant",
+            headers={"x-eve-ambient-secret": "ha-secret"},
+            json={
+                "entity_id": "binary_sensor.garage",
+                "state": "open",
+                "friendly_name": "Garage door",
+            },
+        )
+        assert response.status_code == 202
+        # `client` runs its ASGI app on a persistent background thread with
+        # its own event loop; the `await asyncio.sleep(0)` above means the
+        # task finishes on that loop's own schedule, not necessarily by the
+        # instant this (synchronous, main-thread) response comes back. Poll
+        # briefly rather than asserting immediately or sleeping a fixed
+        # guessed amount.
+        for _ in range(200):
+            if handled:
+                break
+            time.sleep(0.005)
+        assert handled[0].source == "home"
+        assert handled[0].key == "binary_sensor.garage:open"
+        assert "Garage door" in handled[0].summary
+
+
+def test_two_concurrent_identical_webhook_posts_notify_once(monkeypatch):
+    """(fix round 4, item 4) By design no `eve_ambient_seen` row exists until
+    a signal resolves, so two posts for the same `entity_id:state` key that
+    arrive while the first is still being handled would otherwise both pass
+    `is_fresh` and `already_notified` and both deliver. Duplicated Home
+    Assistant triggers are common, and this needs no failure at all to
+    happen. The in-process `_in_flight` guard is checked and populated
+    synchronously before the background task is even scheduled, so the
+    second post - arriving while the first's (artificially slow) handler is
+    still running - is deduped rather than queued again."""
+    monkeypatch.setenv("EVE_AMBIENT_ENABLED", "true")
+    monkeypatch.setenv("EVE_AMBIENT_TOKEN", "a" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    async def _poll_forever():
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(app_module, "_poll_forever", _poll_forever)
+
+    handled = []
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        await asyncio.sleep(0.05)
+        return "sent"
+
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+
+    payload = {
+        "entity_id": "binary_sensor.garage",
+        "state": "open",
+        "friendly_name": "Garage door",
+    }
+    with TestClient(app_module.app) as test_client:
+        first = test_client.post(
+            "/signals/home-assistant",
+            headers={"x-eve-ambient-secret": "ha-secret"},
+            json=payload,
+        )
+        assert first.status_code == 202
+        second = test_client.post(
+            "/signals/home-assistant",
+            headers={"x-eve-ambient-secret": "ha-secret"},
+            json=payload,
+        )
+        assert second.status_code == 202
+
+        for _ in range(400):
+            if handled and not app_module._in_flight:
+                break
+            time.sleep(0.005)
+
+    assert len(handled) == 1
+
+
+async def test_the_background_handler_is_bounded_by_a_semaphore(monkeypatch):
+    """(fix round 4, item 4) One leaked secret must not buy unbounded
+    concurrent REFLEX and VOICE spend - the daily cap sits after the filter,
+    so it does not bound this on its own."""
+    monkeypatch.setattr(app_module, "_webhook_semaphore", asyncio.Semaphore(1))
+
+    concurrent = {"now": 0, "max": 0}
+
+    async def _handle(signal, **kwargs):
+        concurrent["now"] += 1
+        concurrent["max"] = max(concurrent["max"], concurrent["now"])
+        await asyncio.sleep(0.02)
+        concurrent["now"] -= 1
+        return "sent"
+
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+
+    signals = [
+        Signal(
+            source="home", key=f"k{i}", occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+            member_sub=None, summary="s", payload={},
+        )
+        for i in range(3)
+    ]
+    await asyncio.gather(*(app_module._handle_in_background(s) for s in signals))
+    assert concurrent["max"] == 1
 
 
 def test_the_webhook_rejects_a_payload_without_an_entity(client):

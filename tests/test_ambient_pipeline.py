@@ -227,6 +227,29 @@ async def test_a_delivery_failure_leaves_the_signal_unseen(wiring):
     assert wiring["seen"] == []
 
 
+async def test_a_record_notice_failure_after_a_successful_delivery_still_marks_seen(
+    wiring, monkeypatch, caplog
+):
+    """(fix round 4, item 5) `deliver` already returned a thread id - the
+    push already happened - when `record_notice` raises. Before this fix
+    that exception escaped `handle_signal` entirely, leaving the signal
+    unseen; the next poll would find no notice row and re-deliver, producing
+    a second 3am push for the sake of a lost cap-counter row. The signal
+    must still resolve as sent and still be marked seen."""
+
+    async def _record_notice(member_sub, source, key, urgent, thread_id):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(pipeline.store, "record_notice", _record_notice)
+
+    with caplog.at_level("ERROR"):
+        assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "sent"
+
+    assert wiring["delivered"] == ["sub-noah"]
+    assert wiring["seen"] == [("finances", "k1")]
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+
+
 async def test_a_mail_signal_only_reaches_its_owner(wiring):
     wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-kid"], why="w")
     result = await pipeline.handle_signal(

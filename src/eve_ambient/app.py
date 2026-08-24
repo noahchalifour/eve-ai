@@ -27,6 +27,22 @@ logger = logging.getLogger(__name__)
 
 _background: set[asyncio.Task] = set()
 
+# Which `(source, key)` webhook signals are currently being handled, so a
+# second concurrent post for the same key can be deduped before it ever
+# reaches the gate chain (fix round 4, item 4): by design no `eve_ambient_seen`
+# row exists until a signal resolves, so two concurrent posts for the same
+# key would otherwise both pass `is_fresh` and `already_notified` and both
+# deliver. Home Assistant automations commonly fire duplicate triggers, so
+# this needs no failure at all to happen.
+_in_flight: set[tuple[str, str]] = set()
+
+# Bounds total concurrent webhook-triggered compose turns (fix round 4, item
+# 4): one leaked secret would otherwise buy unbounded concurrent REFLEX and
+# VOICE spend, and the daily cap sits after the filter, so it does not bound
+# this on its own.
+_MAX_CONCURRENT_WEBHOOK_SIGNALS = 5
+_webhook_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_WEBHOOK_SIGNALS)
+
 # Marked once per source, on the tick that primes it, whether or not that
 # tick found anything to prime. Priming has to be an explicit fact rather
 # than "this source has at least one seen row": an empty first poll (an
@@ -39,6 +55,14 @@ _PRIMED_SENTINEL = "__primed__"
 # How long shutdown waits for in-flight webhook deliveries (compose turns
 # already running when the process stops) before giving up on them.
 _BACKGROUND_DRAIN_TIMEOUT_SECONDS = 10.0
+
+# The last completed tick's timestamp and outcome counts, exposed on
+# `/healthz` (fix round 4, item 10): before this, `/healthz` carried no
+# functional signal at all, so the Gatus check the design specifies stayed
+# green through a week of per-tick errors. `last_tick_at` only advances on a
+# tick that actually returned - a `poll_once` that raises outright leaves it
+# stale, which is what lets an alert assert on staleness.
+_last_tick: dict = {"at": None, "counts": {}}
 
 
 def _audience_for(source: Source) -> list[str]:
@@ -128,7 +152,10 @@ async def _poll_forever() -> None:
     interval = get_settings().ambient_poll_interval_seconds
     while True:
         try:
-            logger.info("ambient poll: %s", await poll_once())
+            counts = await poll_once()
+            _last_tick["at"] = datetime.now(UTC).isoformat()
+            _last_tick["counts"] = counts
+            logger.info("ambient poll: %s", counts)
             await store.prune_seen()
         except asyncio.CancelledError:
             raise
@@ -172,7 +199,12 @@ app = FastAPI(title="eve-ambient", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"status": "ok", "ambient_enabled": get_settings().ambient_enabled}
+    return {
+        "status": "ok",
+        "ambient_enabled": get_settings().ambient_enabled,
+        "last_tick_at": _last_tick["at"],
+        "last_tick_counts": _last_tick["counts"],
+    }
 
 
 @app.post("/signals/home-assistant", status_code=202)
@@ -187,6 +219,10 @@ async def home_assistant_signal(
     # `compare_digest` raises `TypeError` on a `str` operand containing
     # non-ASCII, which a hostile or merely malformed header can trigger.
     if not secret or not compare_digest(presented.encode(), secret.encode()):
+        # (fix round 4, item 11) Without this, an operator cannot tell a
+        # wrong secret from an automation that never fired - both look like
+        # silence. The presented secret is deliberately not logged.
+        logger.warning("rejected home-assistant webhook: invalid or missing secret")
         raise HTTPException(status_code=401, detail="unauthorized")
     try:
         payload = await request.json()
@@ -194,16 +230,40 @@ async def home_assistant_signal(
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"unusable payload: {exc}") from exc
 
+    if not get_settings().ambient_enabled:
+        # The one lever an operator has to silence Eve at 3am (fix round 4,
+        # item 1): `lifespan` was the only consumer of `ambient_enabled`, so
+        # a deployment with the webhook secret set but ambient disabled
+        # still ran the filter, spent a VOICE-tier turn, created a thread and
+        # pushed. Checked here, after the secret and the payload shape are
+        # already known good, and before any of that expensive work starts.
+        # 503, not 404: the endpoint exists, the service behind it is
+        # switched off.
+        raise HTTPException(status_code=503, detail="ambient is disabled")
+
+    dedup_key = (signal.source, signal.key)
+    if dedup_key in _in_flight:
+        logger.info(
+            "webhook signal %s is already in flight; not queuing a duplicate",
+            signal.key,
+        )
+        return {"accepted": signal.key}
+    _in_flight.add(dedup_key)
+
     # 202 and a background task: a compose turn takes far longer than Home
     # Assistant will hold the connection open.
     task = asyncio.create_task(_handle_in_background(signal))
     _background.add(task)
     task.add_done_callback(_background.discard)
+    task.add_done_callback(lambda _task, key=dedup_key: _in_flight.discard(key))
     return {"accepted": signal.key}
 
 
 async def _handle_in_background(signal: Signal) -> None:
     try:
-        logger.info("webhook signal %s resolved as %s", signal.key, await handle_signal(signal))
+        async with _webhook_semaphore:
+            logger.info(
+                "webhook signal %s resolved as %s", signal.key, await handle_signal(signal)
+            )
     except Exception:
         logger.warning("webhook signal %s failed", signal.key, exc_info=True)

@@ -113,9 +113,22 @@ async def handle_signal(
         if thread_id is None:
             outcomes.append("vetoed")
             continue
-        await store.record_notice(
-            sub, signal.source, signal.key, verdict.urgent, thread_id
-        )
+        try:
+            await store.record_notice(
+                sub, signal.source, signal.key, verdict.urgent, thread_id
+            )
+        except Exception:
+            # The push already happened and the thread already exists (fix
+            # round 4, item 5): a database failure on this one statement
+            # after a successful `deliver` must not escape and leave the
+            # signal unseen, or the next poll finds no notice row and
+            # re-delivers - a second 3am push for a lost cap-counter row.
+            # Losing that row is strictly better than duplicating the push.
+            logger.error(
+                "could not record the notice for %s/%s; the message was already "
+                "sent and will not be resent",
+                sub, signal.key, exc_info=True,
+            )
         outcomes.append("sent")
 
     if deferred:
