@@ -104,19 +104,40 @@ async def list_events(
     plan defect in the original brief, not this implementation's)."""
 
     def _run() -> dict:
+        # A total failure to reach the account at all - no credentials for
+        # this member, a bad URL, a rejected login - must propagate rather
+        # than degrade to an empty calendar (rereview fix, item 2). Before
+        # this, `caldav_credentials_json` unset or holding a placeholder -
+        # the literal state of a fresh deployment - made `_credentials_for`
+        # raise `KeyError`, which this swallowed into `{"events": []}`: a
+        # valid-looking empty result that primed the calendar source against
+        # a connection that never actually succeeded. Letting this raise
+        # means `invoke_tool` (`eve_tools/app.py`) turns it into the
+        # `error: ...` string `tool_result` already recognises, and
+        # `calendar.poll` raises instead of priming. Still logged here first,
+        # since a raised exception crossing the `invoke_tool` boundary is
+        # reported to the caller but not logged server-side on its own.
         try:
             calendars = _calendars(member_sub)
         except Exception:
             logger.warning("no reachable calendar for %s", member_sub, exc_info=True)
-            return {"events": []}
+            raise
         start = datetime.now(UTC)
         end = start + timedelta(days=horizon_days)
         events = []
+        partial = False
         for calendar in calendars:
             # `principal().calendars()` returns every collection the member
             # owns - task lists, birthday calendars, shared read-only
             # calendars. One 403, timeout or unsupported-report on any single
-            # one must not blank the rest (fix round 1 item A1).
+            # one must not blank the rest (fix round 1 item A1) - so this
+            # failure is caught per-calendar, not propagated like the one
+            # above. But it is still a partial result, and an unprimed
+            # source priming against a partial calendar is the same hazard
+            # priming against an empty one is (design invariant, item 18):
+            # `partial` rides along in the response so `eve_ambient`'s
+            # calendar source can raise `SourcePollError` and keep the
+            # events it did get without letting them prime the source.
             try:
                 found_events = calendar.search(
                     start=start, end=end, event=True, expand=True
@@ -131,7 +152,8 @@ async def list_events(
                     member_sub,
                     exc_info=True,
                 )
+                partial = True
                 continue
-        return {"events": events}
+        return {"events": events, "partial": partial}
 
     return await asyncio.to_thread(_run)

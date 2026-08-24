@@ -19,7 +19,13 @@ from datetime import UTC, datetime, timedelta
 
 from eve.settings import get_settings
 from eve.tools_client import invoke
-from eve_ambient.types import Signal, SourceUnavailable, list_field, tool_result
+from eve_ambient.types import (
+    Signal,
+    SourcePollError,
+    SourceUnavailable,
+    list_field,
+    tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,4 +169,18 @@ async def poll(member_sub: str) -> list[Signal]:
                     payload=event,
                 )
             )
+
+    if result.get("partial"):
+        # `principal().calendars()` can return several collections (task
+        # lists, birthday calendars, shared read-only calendars), and
+        # `caldav_client.list_events` still isolates a single failing one so
+        # the rest are not blanked - but that makes this a partial result,
+        # not a complete one (rereview fix, item 2). An unprimed source
+        # priming against a partial calendar would lose whatever the broken
+        # calendar would have contributed, the same hazard priming against
+        # an empty result is; `SourcePollError` carries what this poll did
+        # manage to build so an already-primed source still delivers it.
+        raise SourcePollError(
+            "one or more calendars failed to load", partial=signals
+        )
     return signals

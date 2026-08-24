@@ -44,6 +44,7 @@ async def test_an_event_becomes_one_dict(one_calendar):
     assert event["summary"] == "Dentist"
     assert event["location"] == "Office"
     assert event["start"] == "2026-08-23T15:00:00+00:00"
+    assert result["partial"] is False
 
 
 async def test_the_revision_changes_when_the_event_changes(one_calendar):
@@ -117,6 +118,12 @@ async def test_one_failing_calendar_does_not_blind_the_others(monkeypatch):
     monkeypatch.setattr(caldav_client, "_calendars", lambda sub: [broken, healthy])
     result = await caldav_client.list_events("sub-noah", 90, 14)
     assert [e["uid"] for e in result["events"]] == ["uid-3"]
+    # (rereview fix, item 2) A per-calendar failure is still a partial
+    # result: an unprimed source priming against it would lose whatever the
+    # broken calendar would have contributed, the same hazard priming
+    # against an empty result is. `partial` is how `eve_ambient`'s calendar
+    # source knows to raise SourcePollError instead of returning normally.
+    assert result["partial"] is True
 
 
 async def test_a_property_that_breaks_marshalling_does_not_blind_its_siblings(
@@ -148,13 +155,26 @@ async def test_a_property_that_breaks_marshalling_does_not_blind_its_siblings(
     assert [e["uid"] for e in result["events"]] == ["uid-5"]
 
 
-async def test_a_member_without_credentials_gets_an_empty_list(monkeypatch):
+async def test_a_member_without_credentials_raises_rather_than_returning_empty(
+    monkeypatch,
+):
+    """(rereview fix, item 2) This test used to assert that a missing
+    credential degraded to `{"events": []}` - a valid-looking empty result
+    indistinguishable from "nothing on the calendar," which is exactly the
+    scenario `eve_ambient`'s source-level fix (item 2) exists to catch, in
+    the source most likely to be misconfigured on day one:
+    `caldav_credentials_json` unset or holding a placeholder is the literal
+    state of a fresh deployment, and `_credentials_for` raises `KeyError` for
+    it. Letting this propagate means `invoke_tool` (`eve_tools/app.py`)
+    converts it to the `error: ...` string `eve_ambient.types.tool_result`
+    already recognises, and `calendar.poll` raises instead of priming."""
     monkeypatch.setattr(
         caldav_client,
         "_credentials_for",
         lambda sub: (_ for _ in ()).throw(KeyError(sub)),
     )
-    assert await caldav_client.list_events("sub-nobody", 90, 14) == {"events": []}
+    with pytest.raises(KeyError):
+        await caldav_client.list_events("sub-nobody", 90, 14)
 
 
 async def test_the_search_window_starts_now_and_spans_the_horizon(monkeypatch):

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from eve_ambient.sources import calendar
-from eve_ambient.types import SourceUnavailable
+from eve_ambient.types import SourcePollError, SourceUnavailable
 
 _NOW = datetime.now(UTC)
 _SOON = (_NOW + timedelta(minutes=30)).isoformat()
@@ -250,16 +250,38 @@ async def test_an_event_without_a_start_is_skipped(monkeypatch):
 
 
 async def test_an_eve_tools_error_raises_rather_than_reporting_nothing(monkeypatch):
-    """(fix round 4, item 2) `caldav_client.list_events` already swallows a
-    credential failure into `{"events": []}` one layer down; if this source
-    also swallowed eve-tools' `error:` string into `[]`, "the calendar has
-    nothing to report" and "eve-tools cannot reach the calendar" would be
-    indistinguishable - which is exactly what defeats first-poll priming."""
+    """(fix round 4, item 2) If this source swallowed eve-tools' `error:`
+    string into `[]`, "the calendar has nothing to report" and "eve-tools
+    cannot reach the calendar" would be indistinguishable - which is exactly
+    what defeats first-poll priming. (`caldav_client.list_events` used to
+    swallow a total credential failure into `{"events": []}` one layer down
+    too, which made this source's own raise unreachable from that exact
+    failure - fixed separately, at the source of the swallow, in a rereview
+    follow-up.)"""
     monkeypatch.setattr(
         calendar, "invoke", AsyncMock(return_value="error: caldav unavailable")
     )
     with pytest.raises(SourceUnavailable):
         await calendar.poll("sub-noah")
+
+
+async def test_a_partial_calendar_failure_raises_carrying_the_events_it_did_get(
+    monkeypatch,
+):
+    """(rereview fix, item 2) `caldav_client.list_events` isolates a single
+    failing calendar so the rest are not blanked (fix round 1 item A1), but
+    that makes its response partial, not complete - and priming an unprimed
+    source against a partial calendar is the same hazard priming it against
+    an empty one is. When eve-tools reports `partial: true`, this source
+    raises `SourcePollError` carrying the signals it did build, so
+    `poll_once` can still deliver them once the source is already primed
+    without ever priming on a partial result."""
+    monkeypatch.setattr(
+        calendar, "invoke", _invoke_returning({**EVENTS, "partial": True})
+    )
+    with pytest.raises(SourcePollError) as exc_info:
+        await calendar.poll("sub-noah")
+    assert [s.key for s in exc_info.value.partial] == [f"uid-1:start:{_SOON}:abc123"]
 
 
 async def test_an_event_already_past_gets_no_start_signal(monkeypatch):
