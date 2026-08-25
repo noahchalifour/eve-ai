@@ -15,7 +15,15 @@ import logging
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from monarchmoney import MonarchMoney
+from monarchmoney import MonarchMoney, MonarchMoneyEndpoints
+
+# Monarch moved its API off api.monarchmoney.com, which now answers a 301
+# to api.monarch.com. aiohttp rewrites a redirected POST into a GET, so the
+# login endpoint answered 405 and every call failed with something that
+# looked nothing like "the domain changed". monarchmoney 0.1.15 is the
+# latest release and still carries the old host, so it is corrected here.
+# Remove this when a release ships with the new base URL.
+MonarchMoneyEndpoints.BASE_URL = "https://api.monarch.com"
 
 from eve_tools.settings import get_tools_settings
 
@@ -62,7 +70,9 @@ async def _authenticated() -> MonarchMoney:
             _authenticate_with_token(client, settings.monarch_token)
         elif settings.monarch_email and settings.monarch_password:
             await client.login(
-                email=settings.monarch_email, password=settings.monarch_password
+                email=settings.monarch_email,
+                password=settings.monarch_password,
+                mfa_secret_key=settings.monarch_mfa_secret or None,
             )
         else:
             raise RuntimeError(

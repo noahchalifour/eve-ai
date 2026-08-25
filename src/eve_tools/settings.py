@@ -28,6 +28,11 @@ class ToolsSettings(BaseSettings):
     monarch_token: str = ""
     monarch_email: str = ""
     monarch_password: str = ""
+    # The TOTP seed from the account's authenticator setup ("manual entry"
+    # key). Monarch answers a password login with 403 when MFA is on, and
+    # nothing here can answer a prompt, so an unattended login needs the
+    # seed to mint its own code.
+    monarch_mfa_secret: str = ""
 
 
 @lru_cache(maxsize=1)

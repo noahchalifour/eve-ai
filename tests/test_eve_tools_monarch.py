@@ -46,7 +46,9 @@ async def test_list_transactions_filters_by_category():
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.list_transactions(limit=20, category="Groceries")
     assert [t["id"] for t in result["transactions"]] == ["1"]
-    fake_client.login.assert_awaited_once_with(email="family@example.com", password="hunter2")
+    fake_client.login.assert_awaited_once_with(
+        email="family@example.com", password="hunter2", mfa_secret_key=None
+    )
 
 
 async def test_get_budgets_normalizes_an_overrun_category_for_the_current_month():
@@ -352,3 +354,36 @@ async def test_no_credentials_at_all_names_both_ways_in(monkeypatch):
     monkeypatch.setattr(monarch, "_client", lambda: _FakeMonarch())
     with pytest.raises(RuntimeError, match="EVE_TOOLS_MONARCH_TOKEN"):
         await monarch._authenticated()
+
+
+def test_the_api_base_url_is_the_current_monarch_domain():
+    """api.monarchmoney.com 301s to api.monarch.com, and aiohttp turns a
+    redirected POST into a GET — so the login endpoint answers 405 and the
+    failure looks nothing like a moved domain. Pin the host so an upgrade
+    that reintroduces the old one fails here."""
+    from monarchmoney import MonarchMoneyEndpoints
+
+    assert MonarchMoneyEndpoints.BASE_URL == "https://api.monarch.com"
+    assert MonarchMoneyEndpoints.getLoginEndpoint().startswith("https://api.monarch.com/")
+
+
+async def test_the_mfa_secret_is_passed_to_login(monkeypatch):
+    """With MFA on, Monarch answers a bare password login with 403 and nothing
+    here can answer a prompt."""
+    monkeypatch.delenv("EVE_TOOLS_MONARCH_TOKEN", raising=False)
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_MFA_SECRET", "JBSWY3DPEHPK3PXP")
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    await monarch._authenticated()
+    assert fake.login.await_args.kwargs["mfa_secret_key"] == "JBSWY3DPEHPK3PXP"
+
+
+async def test_no_mfa_secret_passes_none_rather_than_an_empty_string(monkeypatch):
+    """`oathtool.generate_otp("")` would be asked for a code the account does
+    not use; the library only skips TOTP when the key is falsy-as-None."""
+    monkeypatch.delenv("EVE_TOOLS_MONARCH_TOKEN", raising=False)
+    monkeypatch.delenv("EVE_TOOLS_MONARCH_MFA_SECRET", raising=False)
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    await monarch._authenticated()
+    assert fake.login.await_args.kwargs["mfa_secret_key"] is None
