@@ -10,6 +10,11 @@ __pycache__/
 # Env files
 .env
 
+# Google OAuth client downloads. scripts/gmail_oauth_setup.py reads the client
+# from Vault, so one should never be here - but a stray download is a live
+# credential, and nothing else in this file would catch it.
+client_secret*.json
+
 # Test / tooling caches
 .pytest_cache/
 .ruff_cache/
