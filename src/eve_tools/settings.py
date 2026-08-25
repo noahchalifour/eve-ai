@@ -22,6 +22,10 @@ class ToolsSettings(BaseSettings):
     home_assistant_token: str = ""
     gmail_credentials_json: str = ""
     caldav_credentials_json: str = ""
+    # A Monarch session token, which is all the client actually needs -
+    # email/password exist only to obtain one, and an account created
+    # through Google sign-in has no password to give. Takes precedence.
+    monarch_token: str = ""
     monarch_email: str = ""
     monarch_password: str = ""
 

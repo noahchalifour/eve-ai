@@ -288,3 +288,67 @@ async def test_an_explicit_month_that_does_not_match_is_skipped():
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets(month="2020-06")
     assert result == {"budgets": []}
+
+
+class _FakeMonarch:
+    """Enough of MonarchMoney to observe how it was authenticated."""
+
+    def __init__(self):
+        self._token = None
+        self._headers = {}
+        self.login = AsyncMock()
+
+    def set_token(self, token):
+        self._token = token
+
+
+async def test_a_token_authenticates_without_logging_in(monkeypatch):
+    """A Monarch account created through Google sign-in has no password, so a
+    session token is the only way in - and it is what every request uses
+    anyway."""
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_TOKEN", "tok-abc123")
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    client = await monarch._authenticated()
+    assert client is fake
+    fake.login.assert_not_awaited()
+
+
+async def test_a_token_sets_the_authorization_header(monkeypatch):
+    """`set_token` alone leaves the header unset, so every request would go
+    out unauthenticated. If a library upgrade renames `_headers`, this is the
+    test that says so - rather than the first poll after a deploy."""
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_TOKEN", "tok-abc123")
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    await monarch._authenticated()
+    assert fake._token == "tok-abc123"
+    assert fake._headers["Authorization"] == "Token tok-abc123"
+
+
+async def test_a_token_wins_over_email_and_password(monkeypatch):
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_TOKEN", "tok-abc123")
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    await monarch._authenticated()
+    fake.login.assert_not_awaited()
+
+
+async def test_email_and_password_are_still_used_when_no_token_is_set(monkeypatch):
+    monkeypatch.delenv("EVE_TOOLS_MONARCH_TOKEN", raising=False)
+    fake = _FakeMonarch()
+    monkeypatch.setattr(monarch, "_client", lambda: fake)
+    await monarch._authenticated()
+    fake.login.assert_awaited_once()
+    assert fake._headers == {}
+
+
+async def test_no_credentials_at_all_names_both_ways_in(monkeypatch):
+    """The library's own message only mentions email and password, which sends
+    a Google sign-in user looking for a password that does not exist."""
+    monkeypatch.delenv("EVE_TOOLS_MONARCH_TOKEN", raising=False)
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_EMAIL", "")
+    monkeypatch.setenv("EVE_TOOLS_MONARCH_PASSWORD", "")
+    monkeypatch.setattr(monarch, "_client", lambda: _FakeMonarch())
+    with pytest.raises(RuntimeError, match="EVE_TOOLS_MONARCH_TOKEN"):
+        await monarch._authenticated()

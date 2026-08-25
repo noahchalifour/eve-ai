@@ -35,12 +35,41 @@ def _client() -> MonarchMoney:
     return MonarchMoney()
 
 
+def _authenticate_with_token(client: MonarchMoney, token: str) -> None:
+    """Adopt an existing Monarch session token.
+
+    `set_token` on its own is not enough: the library sets the token *and*
+    the Authorization header together everywhere it authenticates for real
+    (`_login_user`, `load_session`), and its public setter only does half of
+    that. So the header is set here as well. Reaching into `_headers` is
+    deliberate, and `test_a_token_sets_the_authorization_header` exists so a
+    library upgrade that renames it fails in CI rather than at the first
+    poll after a deploy.
+    """
+    client.set_token(token)
+    client._headers["Authorization"] = f"Token {token}"
+
+
 async def _authenticated() -> MonarchMoney:
     global _logged_in
     client = _client()
     if not _logged_in:
         settings = get_tools_settings()
-        await client.login(email=settings.monarch_email, password=settings.monarch_password)
+        if settings.monarch_token:
+            # A token is what the client uses for every request anyway, and
+            # it is the only option for an account created through Google
+            # sign-in, which has no password. It also sidesteps MFA.
+            _authenticate_with_token(client, settings.monarch_token)
+        elif settings.monarch_email and settings.monarch_password:
+            await client.login(
+                email=settings.monarch_email, password=settings.monarch_password
+            )
+        else:
+            raise RuntimeError(
+                "no Monarch credentials: set EVE_TOOLS_MONARCH_TOKEN (preferred, "
+                "and the only option for a Google sign-in account), or both "
+                "EVE_TOOLS_MONARCH_EMAIL and EVE_TOOLS_MONARCH_PASSWORD"
+            )
         _logged_in = True
     return client
 
