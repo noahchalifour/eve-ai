@@ -387,3 +387,18 @@ async def test_no_mfa_secret_passes_none_rather_than_an_empty_string(monkeypatch
     monkeypatch.setattr(monarch, "_client", lambda: fake)
     await monarch._authenticated()
     assert fake.login.await_args.kwargs["mfa_secret_key"] is None
+
+
+def test_the_installed_gql_accepts_the_call_monarchmoney_makes():
+    """monarchmoney 0.1.15 calls `execute_async(document=..., operation_name=...,
+    variable_values=...)`. gql 4.0 replaced that with a single GraphQLRequest
+    argument, so every Monarch call failed with "missing 1 required positional
+    argument: 'request'" — past login, so it looked like a data problem rather
+    than a dependency one. pyproject pins gql<4; this fails if that pin is ever
+    dropped before monarchmoney catches up."""
+    import inspect
+
+    from gql import Client
+
+    parameters = inspect.signature(Client.execute_async).parameters
+    assert {"document", "operation_name", "variable_values"} <= parameters.keys()
