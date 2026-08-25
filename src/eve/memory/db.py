@@ -1,8 +1,12 @@
-"""Connection pool and schema migration for Eve's memory.
+"""Connection pool and schema migration for Eve's own tables.
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there are only three tables here, across three migration entries.
+them, and there are only four tables here, across four migration entries.
+
+Mostly memory, hence the module's location, plus `eve_pat` - which is auth,
+not memory, but shares this pool and this list rather than standing up a
+second of each for one table.
 
     ponytail: hand-rolled because there are so few tables. Move to Alembic if
     MIGRATIONS exceeds ~5 entries.
@@ -100,6 +104,32 @@ MIGRATIONS: list[tuple[str, str]] = [
         -- fall back to a sequential scan of eve_ambient_notice.
         CREATE INDEX IF NOT EXISTS eve_ambient_notice_member_source_key_sent
           ON eve_ambient_notice (member_sub, source, key, sent_at DESC);
+        """,
+    ),
+    (
+        "0004_pat",
+        """
+        -- Personal access tokens: one long-lived credential per scripted
+        -- client, individually revocable (eve/pat.py). Not memory, but it
+        -- shares this pool and this migration list rather than standing up a
+        -- second of each for one table.
+        --
+        -- The token itself is never stored, only its sha256. A dump of this
+        -- table therefore does not yield a working credential. token_hash is
+        -- the primary key, which is also the index the auth path reads by.
+        CREATE TABLE IF NOT EXISTS eve_pat (
+          token_hash   text        PRIMARY KEY,
+          sub          text        NOT NULL,
+          label        text        NOT NULL,
+          created_at   timestamptz NOT NULL DEFAULT now(),
+          last_used_at timestamptz,
+          revoked_at   timestamptz
+        );
+
+        -- Revocation is by label, so two live tokens must not share one.
+        -- Partial, so a revoked label can be reused for a replacement token.
+        CREATE UNIQUE INDEX IF NOT EXISTS eve_pat_active_label
+          ON eve_pat (label) WHERE revoked_at IS NULL;
         """,
     ),
 ]

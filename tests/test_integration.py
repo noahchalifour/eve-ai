@@ -213,3 +213,38 @@ async def test_a_turn_executes_our_graph_under_aegra(aegra_server):
             "the turn did not reach the model call; "
             f"run status={run['status']} error={run.get('error_message')}"
         )
+
+
+async def test_a_personal_access_token_authenticates_a_langgraph_client(aegra_server):
+    """The whole point of the credential: a scripted client connects with a
+    minted PAT and gets threads scoped to the member it names. Proves the
+    handler resolves it inside the live server, against the live table -
+    every other PAT test either stubs the lookup or skips the server.
+    """
+    import os
+
+    from eve import pat
+    from eve.memory import db
+    from eve.settings import get_settings
+
+    os.environ["EVE_DATABASE_URL"] = "postgresql://eve:eve@127.0.0.1:15432/eve"
+    os.environ["EVE_FAMILY_FILE"] = "tests/fixtures/family.yaml"
+    get_settings.cache_clear()
+    await db.close_pool()
+    await db.migrate()
+    label = f"integration-{time.monotonic_ns()}"
+    token = await pat.mint("sub-noah", label)
+    try:
+        thread = await _client(aegra_server, token).threads.create()
+        assert thread["metadata"]["owner"] == "sub-noah"
+
+        # And the revocation the shared ambient token cannot express: this
+        # client loses access while every other credential keeps working.
+        assert await pat.revoke(label) == 1
+        with pytest.raises(APIStatusError) as exc_info:
+            await _client(aegra_server, token).threads.create()
+        assert exc_info.value.status_code == 401
+        assert await _client(aegra_server, "tok-noah").threads.create()
+    finally:
+        await pat.revoke(label)
+        await db.close_pool()

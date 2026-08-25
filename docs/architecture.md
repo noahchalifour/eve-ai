@@ -67,6 +67,7 @@ src/eve/
   models.py         # tier -> LiteLLM model; sole owner of model identifiers
   graph.py          # the state graph
   auth.py           # Auth() handler: JWT/dev auth + resource scoping
+  pat.py            # personal access tokens: eve_pat SQL and the eve-pat CLI
   memory/
     types.py        # Memory/MemoryBundle and extraction schemas
     ranking.py      # pure decay, reciprocal-rank fusion, token budgeting
@@ -230,6 +231,40 @@ is inert on every other path: a member's own token carrying
 `_ambient_subject` only reads the header once the presented bearer has
 already matched the ambient token. See [ADR 0007](adr/0007-ambient-impersonation.md)
 for why this exists and what it costs.
+
+**Personal access tokens** are the second mode-independent credential, and
+exist because the ambient token is one shared secret that can impersonate
+anyone: rotating it after a laptop goes missing logs out every client at once.
+A PAT (`src/eve/pat.py`) names one member, belongs to one client, and is
+revoked on its own.
+
+```
+uv run eve-pat mint <sub> <label>    # prints the token once
+uv run eve-pat list                  # live tokens, with last-used
+uv run eve-pat revoke <label>
+```
+
+The token is presented as an ordinary bearer and needs no extra header — a
+`langgraph_sdk` client is just `get_client(url=..., headers={"Authorization":
+f"Bearer {token}"})`. Notes on the shape:
+
+- Only the sha256 is stored, in `eve_pat` (migration `0004_pat`,
+  `src/eve/memory/db.py`). There is no way to recover a lost token; mint
+  another.
+- The `evepat_` prefix routes a bearer to the table. Without it every OIDC
+  JWT would cost a database round trip, and `subject_for` short-circuits on
+  the prefix instead.
+- A PAT-shaped bearer that does not resolve is refused as a PAT rather than
+  falling through to the JWT decoder, which would report `Not enough
+  segments` for a credential whose only problem is that it was revoked.
+- The lookup is uncached, so revocation takes effect on the next request. It
+  is one primary-key read on the pool memory already keeps open.
+- `x-eve-on-behalf-of` is ignored on this path. Impersonation belongs to the
+  ambient token alone, or every PAT would be an ambient token.
+- Authentication still ends at `family.yaml`, so removing a member revokes
+  their tokens implicitly.
+- No expiry column: revocation is the lever. See the `ponytail:` note in
+  `src/eve/pat.py` for when to add one.
 
 **Authorization is enforced by two mechanisms layered on top of each
 other**, and the distinction matters when reading test failures:
