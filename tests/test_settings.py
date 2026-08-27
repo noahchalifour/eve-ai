@@ -131,3 +131,13 @@ def test_enabling_ambient_without_a_token_is_refused_at_startup():
 def test_enabling_ambient_with_a_token_is_accepted():
     s = Settings(ambient_enabled=True, ambient_token="a" * 32)
     assert s.ambient_enabled is True
+
+
+def test_self_authoring_is_off_by_default():
+    """The one subsystem that rewrites Eve's own standing instructions must
+    not be live in a deployment that did not ask for it."""
+    assert Settings().self_authoring_enabled is False
+
+
+def test_rule_cap_has_a_default():
+    assert Settings().memory_rule_cap == 20

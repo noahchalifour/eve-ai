@@ -105,6 +105,18 @@ class Settings(BaseSettings):
     ambient_thread_url_template: str = ""
     ambient_aegra_base_url: str = "http://eve:2026"
 
+    # Phase 5a (Self-improvement). See docs/superpowers/specs/
+    # 2026-08-27-eve-self-improvement-design.md sections 6.5 and 8.2.
+    #
+    # Off by default for the same reason ambient_enabled is: this subsystem
+    # rewrites Eve's own standing instructions without being asked, so a
+    # deployment that has not deliberately enabled it must author nothing.
+    self_authoring_enabled: bool = False
+    # Rows per scope before evict_over_cap retires the weakest. A starting
+    # number, not a derived one: at roughly one sentence each, 20 is a few
+    # hundred tokens against memory_token_budget's 1200.
+    memory_rule_cap: int = 20
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:

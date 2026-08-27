@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from eve.skills.types import DynamicToolSpec
 from eve.state import EveState
 
@@ -24,3 +26,32 @@ def test_eve_state_carries_dynamic_tools():
         "dynamic_tools": [spec],
     }
     assert state["dynamic_tools"][0]["tool_name"] == "do_thing"
+
+
+def test_operation_accepts_a_rule_layer():
+    from eve.memory.types import Operation
+
+    op = Operation(op="add", layer="rule", kind="preference", content="Lead with the number.")
+    assert op.layer == "rule"
+    assert op.shared is False
+
+
+def test_operation_shared_defaults_false():
+    """A rule is member-scoped unless the model explicitly asks for a
+    household one, which _resolve_scope then permission-checks."""
+    from eve.memory.types import Operation
+
+    assert Operation(op="add", layer="rule", content="x.").shared is False
+
+
+def test_memory_carries_optional_source_thread_and_run():
+    from eve.memory.types import Memory
+
+    now = datetime(2026, 8, 27, tzinfo=UTC)
+    mem = Memory(
+        id="m1", layer="rule", scope_kind="member", scope_id="sub-noah",
+        kind="preference", subject=None, content="x.", confidence=0.7,
+        salience=0.5, created_at=now, last_seen_at=now,
+    )
+    assert mem.source_thread is None
+    assert mem.source_run is None
