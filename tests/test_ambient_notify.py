@@ -349,3 +349,21 @@ async def test_block_style_content_is_flattened(monkeypatch):
     notifier = RecordingNotifier()
     await notify.deliver(SIGNAL, MEMBER, VERDICT, notifier)
     assert notifier.calls[0]["body"] == "Leave by 2:30."
+
+
+def test_compose_prompt_uses_the_shared_marker():
+    """notify.py must not hand-roll the prefix: the extract guard matches on
+    the constant, so a divergence here disables authoring protection."""
+    from eve.state import is_ambient_text
+
+    signal = Signal(
+        source="mail", key="k1", occurred_at=datetime(2026, 8, 27, tzinfo=UTC),
+        member_sub="sub-noah", summary="A package shipped.",
+    )
+    member = Member(
+        sub="sub-noah", name="Noah", role="adult",
+        timezone="America/Toronto", permissions=frozenset(),
+    )
+    prompt = notify.compose_prompt(signal, member, FilterVerdict(notify=True, why="w"))
+
+    assert is_ambient_text(prompt)

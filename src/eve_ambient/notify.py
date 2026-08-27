@@ -14,6 +14,7 @@ from langgraph_sdk import get_client
 
 from eve.family import Member
 from eve.settings import get_settings
+from eve.state import ambient_marker
 from eve_ambient.ntfy import Notifier
 from eve_ambient.types import FilterVerdict, Signal
 
@@ -48,7 +49,7 @@ def compose_prompt(signal: Signal, member: Member, verdict: FilterVerdict) -> st
     showing what prompted her.
     """
     return (
-        f"[ambient signal — not spoken by {member.name}]\n"
+        f"{ambient_marker(member.name)}\n"
         f"{signal.summary}\n"
         f"Source: {signal.source}. Noticed at {signal.occurred_at.isoformat()}.\n"
         f"Detail: {json.dumps(signal.payload, default=str)[:_PAYLOAD_CHARS]}\n"

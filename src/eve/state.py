@@ -10,6 +10,26 @@ from langgraph.graph.message import add_messages
 from eve.memory.types import MemoryBundle
 from eve.skills.types import DynamicToolSpec
 
+# Phase 4 prefixes an ambient signal's composed human message with this so the
+# model knows the member did not say it (eve_ambient/notify.py). Phase 5a
+# reuses it as the authoring guard: a turn that cannot be attributed to a
+# member speaking authors no rule and no procedure (design doc section 6.2).
+#
+# One owner for the literal, deliberately. A guard that matches a string
+# another module builds by hand is a guard that silently stops matching.
+AMBIENT_MARKER_PREFIX = "[ambient signal — not spoken by"
+
+
+def ambient_marker(name: str) -> str:
+    return f"{AMBIENT_MARKER_PREFIX} {name}]"
+
+
+def is_ambient_text(text: str) -> bool:
+    """True when this message was composed by the ambient pipeline rather than
+    typed by a family member. Fails CLOSED for the ambiguous case: anything
+    carrying the marker is treated as untrusted input."""
+    return text.lstrip().startswith(AMBIENT_MARKER_PREFIX)
+
 
 def _replace_dynamic_tools(
     _old: list[DynamicToolSpec], new: list[DynamicToolSpec]

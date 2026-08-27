@@ -55,3 +55,29 @@ def test_memory_carries_optional_source_thread_and_run():
     )
     assert mem.source_thread is None
     assert mem.source_run is None
+
+
+def test_ambient_marker_round_trips():
+    """One owner for the string. If the guard and the prefix ever decouple,
+    an ambient turn silently becomes an authoring turn."""
+    from eve.state import ambient_marker, is_ambient_text
+
+    assert is_ambient_text(ambient_marker("Noah") + "\nA package arrived.")
+
+
+def test_is_ambient_text_is_false_for_a_member_turn():
+    from eve.state import is_ambient_text
+
+    assert not is_ambient_text("What's left in the grocery budget?")
+
+
+def test_is_ambient_text_tolerates_leading_whitespace():
+    from eve.state import ambient_marker, is_ambient_text
+
+    assert is_ambient_text("\n  " + ambient_marker("Kendra"))
+
+
+def test_is_ambient_text_handles_an_empty_string():
+    from eve.state import is_ambient_text
+
+    assert not is_ambient_text("")
