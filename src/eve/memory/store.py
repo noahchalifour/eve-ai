@@ -353,6 +353,49 @@ async def evict_over_cap(
         return len(await cur.fetchall())
 
 
+async def load_procedures(sub: str) -> list[Memory]:
+    """Eve-authored procedures visible to this member.
+
+    Separate from load_always_on on purpose: a procedure is on-demand, reached
+    through search_skills, so it must never enter the always-on prompt budget
+    (design doc section 3.1).
+    """
+    return await _fetch(
+        f"""
+        SELECT {_COLUMNS} FROM eve_memory
+        WHERE superseded_why IS NULL
+          AND layer = 'procedure'
+          AND (
+            (scope_kind = 'member' AND scope_id = %(sub)s)
+         OR scope_kind = 'household'
+          )
+        ORDER BY salience DESC, last_seen_at DESC
+        """,
+        {"sub": sub},
+    )
+
+
+async def procedure_by_name(sub: str, name: str) -> Memory | None:
+    """The live procedure this member would get for `name`, if any. Used by
+    write_skill to supersede rather than duplicate."""
+    rows = await _fetch(
+        f"""
+        SELECT {_COLUMNS} FROM eve_memory
+        WHERE superseded_why IS NULL
+          AND layer = 'procedure'
+          AND subject = %(name)s
+          AND (
+            (scope_kind = 'member' AND scope_id = %(sub)s)
+         OR scope_kind = 'household'
+          )
+        ORDER BY last_seen_at DESC
+        LIMIT 1
+        """,
+        {"sub": sub, "name": name},
+    )
+    return rows[0] if rows else None
+
+
 async def overlapping(
     sub: str, subjects: list[str], embedding: list[float] | None, limit: int = 10
 ) -> list[Memory]:

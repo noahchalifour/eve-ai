@@ -24,19 +24,29 @@ class Skill:
     spec: DynamicToolSpec | None = None
 
 
-def _load_skill_md(path) -> Skill:
-    text = path.read_text()
+def parse_skill_text(text: str, fallback_name: str) -> tuple[str, str, str]:
+    """Split a SKILL.md-shaped document into (name, description, body).
+
+    One parser for two sources: files on disk and Eve-authored procedure rows,
+    which serialize to this same shape (eve.skills.authoring). `eve_memory`
+    has no description column, and reusing this format is cheaper than adding
+    one.
+    """
     if text.startswith("---"):
         _, frontmatter, body = text.split("---", 2)
         meta = yaml.safe_load(frontmatter) or {}
     else:
         meta, body = {}, text
-    return Skill(
-        name=meta.get("name", path.parent.name),
-        description=meta.get("description", ""),
-        kind="procedure",
-        content=body.strip(),
+    return (
+        meta.get("name", fallback_name),
+        meta.get("description", ""),
+        body.strip(),
     )
+
+
+def _load_skill_md(path) -> Skill:
+    name, description, body = parse_skill_text(path.read_text(), path.parent.name)
+    return Skill(name=name, description=description, kind="procedure", content=body)
 
 
 def load_skills(mcp_tools: list[DynamicToolSpec] | None = None) -> list[Skill]:

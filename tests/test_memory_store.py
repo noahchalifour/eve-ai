@@ -545,3 +545,35 @@ async def test_load_always_on_carries_source_thread_and_run(pool):
     profile, _h, _d, _rules = await load_always_on("sub-noah", None)
     assert profile[0].source_thread == "thread-1"
     assert profile[0].source_run == "run-1"
+
+
+async def test_load_procedures_returns_member_and_household_rows(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','member','sub-noah','decision','a','A')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','household','','decision','b','B')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','member','sub-kid','decision','c','C')"
+        )
+    from eve.memory.store import load_procedures
+
+    rows = await load_procedures("sub-noah")
+    assert {r.content for r in rows} == {"A", "B"}
+
+
+async def test_procedure_by_name_ignores_superseded_rows(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, subject, content, superseded_why)"
+            " VALUES ('procedure','member','sub-noah','decision','a','old','revoked')"
+        )
+    from eve.memory.store import procedure_by_name
+
+    assert await procedure_by_name("sub-noah", "a") is None
