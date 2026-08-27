@@ -149,3 +149,39 @@ def test_layers_are_labelled_by_confidence_not_merged():
         "Something from a past conversation"
     )
     assert "may be relevant" in prompt
+
+
+def test_rules_render_under_their_own_heading():
+    prompt = build_system_prompt(
+        "PERSONA", MEMBER, _bundle(rules=[_mem("Lead with the number.", "rule")])
+    )
+
+    assert "### How you have learned to work with them" in prompt
+    assert "- Lead with the number." in prompt
+
+
+def test_rules_are_framed_as_never_overriding_permissions():
+    """Prompt-level defence in depth. The actual control is that
+    authorisation never reads memory at all - see the invariant test in
+    tests/test_specialists_permissions.py."""
+    prompt = build_system_prompt(
+        "PERSONA", MEMBER, _bundle(rules=[_mem("Lead with the number.", "rule")])
+    )
+
+    assert "never override what you are permitted to do" in prompt
+
+
+def test_no_rules_adds_no_section():
+    prompt = build_system_prompt("PERSONA", MEMBER, _bundle())
+
+    assert "How you have learned" not in prompt
+
+
+def test_a_bundle_without_a_rules_key_still_renders():
+    """A thread checkpointed before this deploy carries a bundle with no
+    `rules` key. Reading it with [] would raise mid-turn on an old thread."""
+    stale = _bundle()
+    del stale["rules"]
+    prompt = build_system_prompt("PERSONA", MEMBER, stale)
+
+    assert "How you have learned" not in prompt
