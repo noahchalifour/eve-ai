@@ -7,8 +7,6 @@ from eve.skills.registry import load_skills
 from eve.skills.search import rank_skills
 from eve.settings import get_settings
 
-pytestmark = pytest.mark.integration
-
 
 def test_the_example_skill_loads_from_disk():
     get_settings.cache_clear()
@@ -70,6 +68,7 @@ async def clean_pool(monkeypatch):
     await db.close_pool()
 
 
+@pytest.mark.integration
 async def test_a_rule_reaches_the_next_turns_prompt_then_is_revoked(clean_pool):
     """DoD 1, 4 and 8: authored rule -> next turn's prompt -> revoked -> gone,
     with the row surviving as the audit trail."""
@@ -110,6 +109,7 @@ async def test_a_rule_reaches_the_next_turns_prompt_then_is_revoked(clean_pool):
         assert (await cur.fetchone())[0].startswith("revoked by operator")
 
 
+@pytest.mark.integration
 async def test_an_authored_procedure_is_retrievable_in_another_thread(clean_pool):
     """DoD 2: write_skill in one thread, search_skills finds it in another."""
     from eve.skills import search as search_mod
@@ -141,6 +141,7 @@ async def test_an_authored_procedure_is_retrievable_in_another_thread(clean_pool
     assert "1. Text Sam." in command.update["messages"][0].content
 
 
+@pytest.mark.integration
 async def test_write_skill_twice_supersedes_and_records_the_chain(clean_pool):
     """DoD 3: the superseded_by chain records the revision."""
     from eve.skills.authoring import write_skill
