@@ -4,16 +4,20 @@ Registered with Aegra via `aegra.json` -> `auth.path`. Raising from the
 `@auth.authenticate` handler produces a 401; an authorization handler denying
 a resource produces a 403.
 
-Two modes, plus one additional accepted credential. `oidc` validates an
+Two modes, plus two additional accepted credentials. `oidc` validates an
 Authentik-issued JWT against its JWKS. `dev` maps an opaque static token to a
 roster subject for local work, and is unreachable in production because
 Settings refuses that combination at startup (spec section 8.1). Independent
 of the mode, a bearer that exactly matches `Settings.ambient_token` plus an
 `x-eve-on-behalf-of: <sub>` header authenticates as that member - this is how
 the unattended ambient service creates threads as a family member (spec
-section 6.1). It is not a third `EVE_AUTH_MODE`: production runs `oidc` and
-the ambient credential has to work there too, so it is checked before the
-configured mode's own path rather than being an alternative to it.
+section 6.1). Also independent of the mode, an `evepat_`-prefixed bearer is
+resolved against the `eve_pat` table: a personal access token for one
+scripted client, individually revocable (`eve/pat.py`).
+
+Neither is a third `EVE_AUTH_MODE`: production runs `oidc` and both have to
+work there too, so both are checked before the configured mode's own path
+rather than being alternatives to it.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ from jwt import PyJWKClient
 from langgraph_sdk import Auth
 
 from eve.family import UnknownMemberError, get_family
+from eve.pat import looks_like_pat
+from eve.pat import subject_for as pat_subject_for
 from eve.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -148,6 +154,17 @@ async def authenticate(headers: dict) -> dict:
     token = extract_bearer(headers)
     subject = _ambient_subject(headers, token)
     impersonated = subject is not None
+    if subject is None and looks_like_pat(token):
+        # Before the configured mode, and refusing outright rather than
+        # falling through: a revoked PAT is a well-formed credential that is
+        # simply no longer valid, and handing it to the JWT decoder would
+        # answer "Not enough segments" to someone whose real problem is that
+        # they need a new token. The `x-eve-on-behalf-of` header is not
+        # consulted here - impersonation belongs to the ambient token alone,
+        # or every PAT would be an ambient token.
+        subject = await pat_subject_for(token)
+        if subject is None:
+            raise AuthError("unrecognised or revoked personal access token")
     if subject is None:
         subject = _subject_from_token(token)
     try:

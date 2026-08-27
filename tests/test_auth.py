@@ -381,3 +381,105 @@ async def test_the_ambient_token_authenticates_under_oidc_mode(oidc, monkeypatch
         }
     )
     assert user["identity"] == "sub-noah"
+
+
+# --- personal access tokens ------------------------------------------------
+#
+# `eve.pat.subject_for` owns the SQL and is tested against a real Postgres in
+# tests/test_pat.py. Here it is stubbed: what these cover is the credential's
+# position in the handler - which bearers reach it, and what happens to a
+# PAT-shaped bearer it declines.
+
+PAT = "evepat_" + "z" * 43
+
+
+def _pat_settings(monkeypatch, resolves: dict[str, str] | None = None):
+    resolved = resolves if resolves is not None else {PAT: "sub-noah"}
+    calls: list[str] = []
+
+    async def fake_subject_for(token):
+        calls.append(token)
+        return resolved.get(token)
+
+    monkeypatch.setattr("eve.auth.pat_subject_for", fake_subject_for)
+    return calls
+
+
+async def test_a_pat_authenticates_as_its_member(monkeypatch):
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    _pat_settings(monkeypatch)
+    user = await authenticate({"Authorization": f"Bearer {PAT}"})
+    assert user["identity"] == "sub-noah"
+    assert user["permissions"] == ["spend"]
+    assert user["is_authenticated"] is True
+
+
+async def test_a_pat_cannot_impersonate(monkeypatch):
+    """The on-behalf-of header belongs to the ambient credential alone. A PAT
+    is one member's credential, so the header must be ignored rather than
+    honoured - otherwise every PAT is an ambient token."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH, KID]))
+    _ambient_settings(monkeypatch)
+    _pat_settings(monkeypatch)
+    user = await authenticate(
+        {"Authorization": f"Bearer {PAT}", "x-eve-on-behalf-of": "sub-kid"}
+    )
+    assert user["identity"] == "sub-noah"
+
+
+async def test_a_declined_pat_is_refused_and_never_reaches_the_jwt_decoder(
+    oidc, monkeypatch
+):
+    """A revoked or unknown PAT must 401 as a PAT. Falling through to the
+    JWT path would report `Not enough segments` for a credential that is
+    perfectly well-formed and simply no longer valid."""
+    calls = _pat_settings(monkeypatch, resolves={})
+
+    def explode(_token):
+        raise AssertionError("the JWT decoder must not see a PAT")
+
+    monkeypatch.setattr("eve.auth._subject_from_token", explode)
+    with pytest.raises(AuthError, match="personal access token"):
+        await authenticate({"Authorization": f"Bearer {PAT}"})
+    assert calls == [PAT]
+
+
+async def test_a_pat_for_a_subject_off_the_roster_is_refused(monkeypatch):
+    """Removing someone from family.yaml revokes their tokens implicitly."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([KID]))
+    _ambient_settings(monkeypatch)
+    _pat_settings(monkeypatch)
+    with pytest.raises(AuthError, match="sub-noah"):
+        await authenticate({"Authorization": f"Bearer {PAT}"})
+
+
+async def test_a_jwt_bearer_does_not_cost_a_pat_lookup(oidc, monkeypatch):
+    calls = _pat_settings(monkeypatch)
+    user = await authenticate({"Authorization": f"Bearer {_token()}"})
+    assert user["identity"] == "sub-noah"
+    assert calls == []
+
+
+async def test_the_ambient_token_does_not_cost_a_pat_lookup(monkeypatch):
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    calls = _pat_settings(monkeypatch)
+    await authenticate(
+        {
+            "Authorization": f"Bearer {AMBIENT_TOKEN}",
+            "x-eve-on-behalf-of": "sub-noah",
+        }
+    )
+    assert calls == []
+
+
+async def test_a_dev_token_is_still_accepted_alongside_the_pat_path(monkeypatch):
+    """The prefix is what routes a bearer to the PAT table. An opaque dev
+    token without it must keep working."""
+    monkeypatch.setattr("eve.auth.get_family", lambda: Family([NOAH]))
+    _ambient_settings(monkeypatch)
+    calls = _pat_settings(monkeypatch)
+    user = await authenticate({"Authorization": "Bearer tok-noah"})
+    assert user["identity"] == "sub-noah"
+    assert calls == []
