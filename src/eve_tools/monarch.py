@@ -15,6 +15,7 @@ import logging
 from datetime import UTC, datetime
 from functools import lru_cache
 
+from gql import gql
 from monarchmoney import MonarchMoney, MonarchMoneyEndpoints
 
 # Monarch moved its API off api.monarchmoney.com, which now answers a 301
@@ -95,37 +96,26 @@ async def list_transactions(limit: int, category: str | None) -> dict:
     return {"transactions": transactions}
 
 
-async def _category_names(client: MonarchMoney) -> dict[str, str]:
-    """The budget query selects only `category { id }` - no name - so a
-    signal built straight from it would read "Budget over: 1a2b3c". Look
-    names up separately and let a missing one fall back to the id rather
-    than raising.
-
-    The category fragment always requests `name`, so a real response
-    should never omit it - possibly null, never absent - but A2 is the one
-    shape in this phase unverified against a live account, so a category
-    record missing "name" entirely is excluded here (falling back to the
-    id in get_budgets) instead of raising KeyError.
+# monarchmoney's own get_budgets sends one kitchen-sink GetJointPlanningData
+# query - goals, goal contributions, category groups, rollover periods - and
+# Monarch now answers all of it with a 500 ("Something went wrong while
+# processing"), whatever the goals flags are set to. The three fields this
+# normalizer actually reads work fine on their own, so ask for only those.
+# Selecting the category name here also replaces a second round trip
+# (get_transaction_categories) that existed only because the library's query
+# asks for `category { id }` without the name.
+_BUDGETS_QUERY = gql(
     """
-    categories = await client.get_transaction_categories()
-    names = {}
-    for category in categories.get("categories") or []:
-        if not isinstance(category, dict) or not category.get("id"):
-            continue
-        name = category.get("name")
-        if not name:
-            # Both fields are always requested by the fragment, so this
-            # should be unreachable against a real account - which is
-            # exactly why it needs to be visible if it ever happens rather
-            # than silently degrading every budget for this category to
-            # its raw id.
-            logger.warning(
-                "category %r has no name; budgets for it will show its id instead",
-                category.get("id"),
-            )
-            continue
-        names[category["id"]] = name
-    return names
+    query Budgets($startDate: Date!, $endDate: Date!) {
+      budgetData(startMonth: $startDate, endMonth: $endDate) {
+        monthlyAmountsByCategory {
+          category { id name }
+          monthlyAmounts { month plannedCashFlowAmount actualAmount }
+        }
+      }
+    }
+    """
+)
 
 
 async def get_budgets(month: str | None = None) -> dict:
@@ -143,26 +133,29 @@ async def get_budgets(month: str | None = None) -> dict:
     call. The tool table calls this with no argument, so every real caller
     still gets the current month.
 
-    Sign convention is unverified against a live Monarch account: expense
-    transactions are negative, and `plannedCashFlowAmount` for an expense
-    category is plausibly negative the same way. Comparing absolute
-    magnitudes (`spent = abs(actual)`, `limit = abs(planned)`) is correct
-    regardless of which way the API actually signs these fields, which is
-    why the comparison uses magnitudes rather than a guessed sign.
+    Live Monarch returns both fields positive for an expense category
+    (planned 900.0, actual 860.82). Comparing absolute magnitudes
+    (`spent = abs(actual)`, `limit = abs(planned)`) still holds if a
+    category ever signs them the other way, so the magnitudes stay.
     """
     client = await _authenticated()
-    raw = await client.get_budgets()
-    names = await _category_names(client)
-
     target_month = month or datetime.now(UTC).strftime("%Y-%m")
+    # startMonth == endMonth: the row this normalizer wants is the target
+    # month's, and a wider window only returns rows the loop below drops.
+    first_of_month = f"{target_month}-01"
+    raw = await client.gql_call(
+        "Budgets",
+        _BUDGETS_QUERY,
+        {"startDate": first_of_month, "endDate": first_of_month},
+    )
     budget_data = raw.get("budgetData") or {}
     budgets = []
     for entry in budget_data.get("monthlyAmountsByCategory") or []:
         if not isinstance(entry, dict):
             continue
-        # The category fragment always requests `id`, but A2 is unverified
-        # against a live account - a truthy non-dict `category` (a list, a
-        # string) must not raise out of a plain `.get`.
+        # The query always requests `id`, and live responses carry it - but
+        # a truthy non-dict `category` (a list, a string) must still not
+        # raise out of a plain `.get`.
         category = entry.get("category")
         if category is not None and not isinstance(category, dict):
             logger.warning("budget entry had a non-dict category, dropping it: %r", category)
@@ -170,6 +163,15 @@ async def get_budgets(month: str | None = None) -> dict:
         category_id = (category or {}).get("id")
         if not category_id:
             continue
+        name = (category or {}).get("name")
+        if not name:
+            # The query asks for `name`, so a real response should never omit
+            # it - which is exactly why it needs to be visible if it happens
+            # rather than silently degrading this category to its raw id.
+            logger.warning(
+                "category %r has no name; its budget will show the id instead", category_id
+            )
+            name = category_id
         for monthly in entry.get("monthlyAmounts") or []:
             if not isinstance(monthly, dict):
                 continue
@@ -195,7 +197,7 @@ async def get_budgets(month: str | None = None) -> dict:
             budgets.append(
                 {
                     "id": f"{category_id}:{target_month}",
-                    "category": names.get(category_id, category_id),
+                    "category": name,
                     "period": target_month,
                     "spent": spent,
                     "limit": limit,

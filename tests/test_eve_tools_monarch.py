@@ -18,14 +18,11 @@ def _current_month() -> str:
     return datetime.now(UTC).strftime("%Y-%m")
 
 
-def _fake_client(monthly_amounts_by_category, categories=()):
+def _fake_client(monthly_amounts_by_category):
     fake_client = AsyncMock()
     fake_client.login = AsyncMock()
-    fake_client.get_budgets = AsyncMock(
+    fake_client.gql_call = AsyncMock(
         return_value={"budgetData": {"monthlyAmountsByCategory": monthly_amounts_by_category}}
-    )
-    fake_client.get_transaction_categories = AsyncMock(
-        return_value={"categories": list(categories)}
     )
     return fake_client
 
@@ -56,7 +53,7 @@ async def test_get_budgets_normalizes_an_overrun_category_for_the_current_month(
     fake_client = _fake_client(
         [
             {
-                "category": {"id": "cat-groceries"},
+                "category": {"id": "cat-groceries", "name": "Groceries"},
                 "monthlyAmounts": [
                     {
                         "month": f"{month}-01",
@@ -65,8 +62,7 @@ async def test_get_budgets_normalizes_an_overrun_category_for_the_current_month(
                     }
                 ],
             }
-        ],
-        categories=[{"id": "cat-groceries", "name": "Groceries"}],
+        ]
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets()
@@ -97,7 +93,7 @@ async def test_a_category_within_its_budget_is_still_normalized_into_a_budget():
     fake_client = _fake_client(
         [
             {
-                "category": {"id": "cat-fuel"},
+                "category": {"id": "cat-fuel", "name": "Fuel"},
                 "monthlyAmounts": [
                     {
                         "month": f"{month}-01",
@@ -114,7 +110,7 @@ async def test_a_category_within_its_budget_is_still_normalized_into_a_budget():
         "budgets": [
             {
                 "id": f"cat-fuel:{month}",
-                "category": "cat-fuel",
+                "category": "Fuel",
                 "period": month,
                 "spent": 120.0,
                 "limit": 300.0,
@@ -144,32 +140,10 @@ async def test_a_month_outside_the_current_one_is_skipped():
     fake_client = _fake_client(
         [
             {
-                "category": {"id": "cat-groceries"},
+                "category": {"id": "cat-groceries", "name": "Groceries"},
                 "monthlyAmounts": [
                     {
                         "month": "1999-01-01",
-                        "plannedCashFlowAmount": -800.0,
-                        "actualAmount": -910.0,
-                    }
-                ],
-            }
-        ],
-        categories=[{"id": "cat-groceries", "name": "Groceries"}],
-    )
-    with patch("eve_tools.monarch._client", return_value=fake_client):
-        result = await monarch.get_budgets()
-    assert result == {"budgets": []}
-
-
-async def test_a_missing_category_name_falls_back_to_the_id():
-    month = _current_month()
-    fake_client = _fake_client(
-        [
-            {
-                "category": {"id": "cat-unknown"},
-                "monthlyAmounts": [
-                    {
-                        "month": f"{month}-01",
                         "plannedCashFlowAmount": -800.0,
                         "actualAmount": -910.0,
                     }
@@ -179,17 +153,13 @@ async def test_a_missing_category_name_falls_back_to_the_id():
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets()
-    [budget] = result["budgets"]
-    assert budget["category"] == "cat-unknown"
+    assert result == {"budgets": []}
 
 
-async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id(caplog):
-    """Distinct from the case above: here the category id *is* in the
-    lookup, just without a "name" field - the exact shape that raised
-    KeyError before _category_names guarded it. The degradation must be
-    logged: this is the one shape in the phase unverified against a live
-    account, and a silent fallback here would look identical to a quiet
-    month with nobody over budget."""
+async def test_a_category_with_no_name_falls_back_to_the_id(caplog):
+    """The query asks for `name`, so this should be unreachable against a
+    real account - which is why the degradation is logged. A silent fallback
+    would look identical to a quiet month with nobody over budget."""
     month = _current_month()
     fake_client = _fake_client(
         [
@@ -203,8 +173,7 @@ async def test_a_category_record_present_but_missing_a_name_falls_back_to_the_id
                     }
                 ],
             }
-        ],
-        categories=[{"id": "cat-weird"}],
+        ]
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         with caplog.at_level("WARNING"):
@@ -244,7 +213,7 @@ async def test_an_explicit_month_pins_which_row_matches():
     fake_client = _fake_client(
         [
             {
-                "category": {"id": "cat-groceries"},
+                "category": {"id": "cat-groceries", "name": "Groceries"},
                 "monthlyAmounts": [
                     {
                         "month": "2020-05-01",
@@ -253,8 +222,7 @@ async def test_an_explicit_month_pins_which_row_matches():
                     }
                 ],
             }
-        ],
-        categories=[{"id": "cat-groceries", "name": "Groceries"}],
+        ]
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets(month="2020-05")
@@ -275,7 +243,7 @@ async def test_an_explicit_month_that_does_not_match_is_skipped():
     fake_client = _fake_client(
         [
             {
-                "category": {"id": "cat-groceries"},
+                "category": {"id": "cat-groceries", "name": "Groceries"},
                 "monthlyAmounts": [
                     {
                         "month": "2020-05-01",
@@ -284,8 +252,7 @@ async def test_an_explicit_month_that_does_not_match_is_skipped():
                     }
                 ],
             }
-        ],
-        categories=[{"id": "cat-groceries", "name": "Groceries"}],
+        ]
     )
     with patch("eve_tools.monarch._client", return_value=fake_client):
         result = await monarch.get_budgets(month="2020-06")
@@ -402,3 +369,25 @@ def test_the_installed_gql_accepts_the_call_monarchmoney_makes():
 
     parameters = inspect.signature(Client.execute_async).parameters
     assert {"document", "operation_name", "variable_values"} <= parameters.keys()
+
+
+async def test_budgets_asks_only_for_the_fields_the_normalizer_reads():
+    """monarchmoney's own get_budgets sends one kitchen-sink query (goals,
+    goal contributions, category groups, rollover periods) that live Monarch
+    now answers with a 500, whatever the goals flags are. Going back to it
+    would break get_budgets again, and the narrow query has to keep asking
+    for the category name (there is no second lookup any more) and for the
+    target month on both ends of the window."""
+    from graphql import print_ast
+
+    fake_client = _fake_client([])
+    with patch("eve_tools.monarch._client", return_value=fake_client):
+        await monarch.get_budgets(month="2020-05")
+
+    fake_client.get_budgets.assert_not_awaited()
+    _operation, document, variables = fake_client.gql_call.await_args.args
+    assert variables == {"startDate": "2020-05-01", "endDate": "2020-05-01"}
+    text = print_ast(document)
+    assert "name" in text
+    for absent in ("goals", "goalsV2", "categoryGroups", "rolloverPeriod"):
+        assert absent not in text
