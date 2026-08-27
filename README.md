@@ -18,15 +18,15 @@ independently useful and gets its own design document:
 | **2** | **Memory** | Four memory layers, post-stream extraction, hybrid recall. **Eve remembers.** |
 | **3** | **Specialists + Skills** | Supervisor topology, permission enforcement, skills registry, the v1 specialists. **Eve does things.** |
 | **4** | **Ambient** | Signal ingestion, relevance filtering, proactive notifications. **Eve speaks first.** |
-| 5 | Self-improvement | Eve authors skills and memory rules; gated tool authoring; eval harness. **Eve gets better.** |
+| **5a** | **Self-improvement** | Eve authors her own behavioural rules and multi-step procedures, stored as memory layers, revocable from a CLI. **Eve gets better.** |
+| 5b | Eval harness | Datasets from Eve's own tables; an A/B measuring what the rule set is worth; a regression gate. |
+| 5c | Gated tool code | Eve proposes executable tool code behind a human approval, run in a sandbox with no network and no credentials. |
 
-This repository is Phase 4: a family assistant that remembers, does things
-through domain specialists and skills, and now speaks first — watching the
-calendar, mail, finances, and the house for what is worth a proactive
-message, filtering it through Eve's own judgment, and delivering it into a
-thread the member can reply in. See
-[`docs/superpowers/specs/2026-08-23-eve-ambient-design.md`](docs/superpowers/specs/2026-08-23-eve-ambient-design.md)
-for the Phase 4 design and definition of done.
+This repository is Phase 5a: Eve now authors her own standing instructions and
+multi-step procedures, stored as memory layers revocable from a CLI, without
+human re-training or prompt edits. See
+[`docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md`](docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md)
+for the Phase 5a design and definition of done.
 
 ## Quick start
 

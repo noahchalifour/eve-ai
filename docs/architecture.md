@@ -1,8 +1,8 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 4,
-"Ambient." For the Phase 4 design rationale and definition of done, see
-[`docs/superpowers/specs/2026-08-23-eve-ambient-design.md`](superpowers/specs/2026-08-23-eve-ambient-design.md).
+This document describes what exists in this repository today: Phase 5a,
+"Self-improvement." For the Phase 5a design rationale and definition of done, see
+[`docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md`](superpowers/specs/2026-08-27-eve-self-improvement-design.md).
 For the task-by-task build record, see
 [`docs/superpowers/plans/2026-08-23-eve-ambient.md`](superpowers/plans/2026-08-23-eve-ambient.md).
 
@@ -76,6 +76,14 @@ src/eve/
     store.py        # every eve_memory SQL read and write
     recall.py       # pre-answer hybrid retrieval node
     extract.py      # post-stream structured extraction and writes
+  skills/
+    search.py       # search_skills tool; matches queries against procedures and MCP tools
+    registry.py     # authored SKILL.md procedures loader
+    mcp_registry.py # registered MCP tool descriptions
+    types.py        # DynamicToolSpec, skill schemas
+    materialize.py  # turn DynamicToolSpec into callable tool at model call time
+    authoring.py    # write_skill tool (Phase 5a)
+    cli.py          # eve-skill script (Phase 5a)
 
 src/eve_ambient/
   types.py      # Signal, FilterVerdict; tool_result/list_field parsing helpers
@@ -116,7 +124,7 @@ Claude proxy — is a one-file change. The tiers, all served through LiteLLM
 | `VOICE` | `chatgpt/gpt-5.6-terra` | Eve herself | Phase 1 |
 | `DEEP` | `chatgpt/gpt-5.6-sol` | Planning; hard reasoning | Phase 5 |
 | `MECHANICAL` | `chatgpt/gpt-5.6-luna` | Structured, tool-heavy specialist work | Phase 3 |
-| `CODE` | `chatgpt/gpt-5.6-sol` | Authoring skills and tool code | Phase 5 |
+| `CODE` | `chatgpt/gpt-5.6-sol` | Authoring skills and tool code | Phase 5a |
 | `REFLEX` | `gemini/gemini-flash-lite-latest` | Ambient filtering; memory extraction | Phase 2 |
 
 The `chatgpt/*` models are registered in LiteLLM with `mode: responses`, so
@@ -175,6 +183,33 @@ without any of them holding a third-party credential directly:
   budgets its callers expect. Both additions exist because `eve_ambient`'s
   mail and finances sources need those shapes, not because a specialist asked
   for them.
+
+## Self-authored behaviour
+
+Phase 5a lets Eve compose her own standing instructions and multi-step
+procedures, stored in the `eve_memory` table as two new `layer` values —
+`rule` (always rendered into the system prompt under an "Advisory rules" heading)
+and `procedure` (found on demand by `search_skills` alongside MCP tools and
+SKILL.md procedures). They inherit the existing memory machinery: scope
+(`profile`, `household`, `episodic`), decay, supersession, embeddings, hybrid
+search, capping (`EVE_MEMORY_RULE_CAP` limits rules in scope), and an audit
+trail.
+
+Inseparably, and foundational to their safety, **authorisation never reads
+memory.** Permissions flow `family.yaml` → `get_family()` → `build_member_context()`
+→ `state["member"]["permissions"]` → `permission_denial()`, resolved in
+`load_context` before `recall` has run. No rule, procedure, or memory row
+influences what a member may do. `extract` refuses to author anything on a
+turn carrying the ambient marker, so authored behaviour cannot originate from
+signals surfaced by the ambient pipeline.
+
+**`src/eve/skills/authoring.py`** exposes the `write_skill` tool to Eve,
+which produces a `Skill` row: unstructured prose instruction, scoped, versioned,
+supersession-chained. **`src/eve/skills/cli.py`** implements the
+`eve-skill` script (`uv run eve-skill list`, `revoke`, `dump`, etc.) for humans
+to audit and revoke authored skills from the command line without deleting the
+row — a revoked skill remains in the audit trail but is excluded from recall.
+See [ADR 0008](adr/0008-authored-behaviour-is-memory.md).
 
 ## Aegra and `aegra.json`
 
@@ -600,3 +635,4 @@ responsibility ends at building and publishing the image
 - [ADR 0005 — Memory storage: one table, supersession, read-time decay](adr/0005-memory-storage.md)
 - [ADR 0006 — Specialist and skill tool execution runs in an isolated service](adr/0006-eve-tools-isolation.md)
 - [ADR 0007 — Ambient runs impersonate family members through one scoped token](adr/0007-ambient-impersonation.md)
+- [ADR 0008 — Eve-authored behaviour is memory, and authorisation never reads memory](adr/0008-authored-behaviour-is-memory.md)
