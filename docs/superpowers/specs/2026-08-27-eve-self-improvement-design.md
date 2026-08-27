@@ -31,7 +31,7 @@ This document is **Phase 5a**. The remaining two slices, and why they wait:
 
 | Slice | Content | Why it waits |
 |---|---|---|
-| **5b** | Eval harness over Langfuse datasets; learned interrupt-worthiness from `eve_ambient_notice`. | An eval harness is the safety net for *automated* self-improvement. There is nothing to detect the regression of until authored content exists. 5a writes that dataset; 5b reads it. |
+| **5b** | Eval harness over Langfuse datasets, including an A/B that measures what the rule set is actually worth, and ambient decision quality measured from recorded filter verdicts. | An eval harness is the safety net for *automated* self-improvement. There is nothing to detect the regression of until authored content exists. 5a writes that dataset; 5b reads it. |
 | **5c** | Eve proposes executable tool code, gated behind an Aegra HITL interrupt, executed in an isolated pod with no cluster credentials and restricted egress. | Needs work in the `infrastructure` repository (pod, NetworkPolicy, egress rules) before a line of it is useful here. Highest risk in the program, and the only slice where a bug executes attacker-influenced code. |
 
 Splitting is not a reduction in ambition. 5a is the slice where the program
@@ -47,14 +47,18 @@ new approval boundary and no new infrastructure to ship.
   gate. That is 5b.
 - **No reflection loop.** Eve does not periodically mine her own traces for
   lessons. This is the most attractive-sounding piece of Phase 5 and the one
-  that most needs 5b's harness to tell you it is not making Eve worse.
-  Authoring in 5a is tied to a specific turn with a specific member.
+  with nobody watching the individual write. Authoring in 5a is tied to a
+  specific turn with a specific member. Deferred here pending 5b's harness;
+  5b §8.1 then rules it out of the program altogether, so this is where the
+  reader should stop expecting it.
 - **No HITL interrupt.** Authoring is autonomous by design decision, already
   made. The operator surface (§7) is review-after, not approve-before.
 - **No new store.** See §3.
 - **No learned filter tuning.** Ambient interrupt-worthiness stays operator
-  configuration. That is 5b, and it needs the `eve_ambient_notice` history
-  Phase 4 writes.
+  configuration. 5b *measures* it and deliberately does not tune it (5b
+  §13.1); the ambient design's expectation of a self-tuning filter does not
+  survive contact with the fact that a reply is a usable positive signal and
+  silence is not a usable negative one.
 - **No family-facing management UI.** A CLI is the review surface (§7).
 
 ---
