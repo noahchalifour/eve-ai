@@ -17,7 +17,8 @@ from eve.settings import get_settings
 
 _COLUMNS = (
     "id, layer, scope_kind, scope_id, kind, subject, content, "
-    "confidence, salience, created_at, last_seen_at"
+    "confidence, salience, created_at, last_seen_at, "
+    "source_thread, source_run"
 )
 
 # Deliberately tiny. This is not linguistics - it is a cheap way to stop
@@ -49,6 +50,8 @@ def _row_to_memory(row: dict) -> Memory:
         salience=row["salience"],
         created_at=row["created_at"],
         last_seen_at=row["last_seen_at"],
+        source_thread=row["source_thread"],
+        source_run=row["source_run"],
     )
 
 
@@ -66,14 +69,30 @@ async def _fetch(sql: str, params: dict) -> list[Memory]:
 
 
 async def load_always_on(
-    sub: str, thread_id: str | None
-) -> tuple[list[Memory], list[Memory], str | None]:
-    """Profile, household, and this thread's digest.
+    sub: str, thread_id: str | None, *, include_rules: bool = False
+) -> tuple[list[Memory], list[Memory], str | None, list[Memory]]:
+    """Profile, household, this thread's digest, and Eve's own rules.
 
-    One query rather than three: three round trips to fetch a hundred short
-    rows is three times the latency for no benefit, and this runs before
+    One query rather than four: four round trips to fetch a hundred short
+    rows is four times the latency for no benefit, and this runs before
     every single token Eve produces.
+
+    `include_rules` rather than always reading them: with
+    EVE_SELF_AUTHORING_ENABLED off, rows from an earlier enabled period must
+    stop applying, not merely stop being written (design doc section 6.5).
+    `procedure` rows are never returned here at all - they are on-demand
+    only, reached through search_skills.
     """
+    rule_arm = (
+        """
+         OR (layer = 'rule' AND (
+               (scope_kind = 'member' AND scope_id = %(sub)s)
+            OR scope_kind = 'household'
+            ))
+        """
+        if include_rules
+        else ""
+    )
     rows = await _fetch(
         f"""
         SELECT {_COLUMNS} FROM eve_memory
@@ -82,6 +101,7 @@ async def load_always_on(
             (layer = 'profile'   AND scope_kind = 'member'    AND scope_id = %(sub)s)
          OR (layer = 'household' AND scope_kind = 'household')
          OR (layer = 'digest'    AND scope_kind = 'thread'    AND scope_id = %(thread)s)
+            {rule_arm}
           )
         ORDER BY salience DESC, last_seen_at DESC
         """,
@@ -90,7 +110,8 @@ async def load_always_on(
     profile = [m for m in rows if m.layer == "profile"]
     household = [m for m in rows if m.layer == "household"]
     digest = next((m.content for m in rows if m.layer == "digest"), None)
-    return profile, household, digest
+    rules = [m for m in rows if m.layer == "rule"]
+    return profile, household, digest, rules
 
 
 async def search_episodic_lexical(

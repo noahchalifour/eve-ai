@@ -58,7 +58,10 @@ async def _household_context() -> str:
     audience is not known yet, and the compose turn does full recall anyway
     (design section 5)."""
     try:
-        _profile, household, _digest = await load_always_on("", None)
+        # Four values since Phase 5a. Rules are deliberately not requested:
+        # the filter decides whether to interrupt, and Eve's notes on how to
+        # phrase things do not bear on that.
+        _profile, household, _digest, _rules = await load_always_on("", None)
     except Exception:
         logger.warning("household memory unavailable to the filter", exc_info=True)
         return "(household memory unavailable)"
