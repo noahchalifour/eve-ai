@@ -44,9 +44,10 @@ def _render(rows: list) -> str:
     for row in rows:
         scope = f"{row.scope_kind}:{row.scope_id}" if row.scope_id else row.scope_kind
         name = f" {row.subject}" if row.subject else ""
+        first_line = row.content.splitlines()[0][:100] if row.content else "(empty)"
         lines.append(
             f"{row.id}  {row.layer:<9}  {scope:<20}{name}\n"
-            f"    {row.content.splitlines()[0][:100]}\n"
+            f"    {first_line}\n"
             f"    created {row.created_at:%Y-%m-%d %H:%M}  thread={row.source_thread or '-'}"
         )
     return "\n".join(lines)

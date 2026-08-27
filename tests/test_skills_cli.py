@@ -42,3 +42,24 @@ async def test_authored_lists_rules_and_procedures(monkeypatch):
 
     monkeypatch.setattr(cli, "_fetch", fetch)
     assert await cli.authored() == rows
+
+
+def test_render_handles_empty_content():
+    """content='' -> "".splitlines() == [] -> [0] raises IndexError unless
+    _render guards it. An operator running a read-only list command should
+    never see a crash because one row has empty content."""
+    from datetime import UTC, datetime
+
+    from eve.memory.types import Memory
+    from eve.skills import cli
+
+    now = datetime(2026, 8, 27, tzinfo=UTC)
+    row = Memory(
+        id="e1", layer="rule", scope_kind="member", scope_id="sub-noah",
+        kind="preference", subject=None, content="",
+        confidence=0.8, salience=0.5, created_at=now, last_seen_at=now,
+    )
+
+    rendered = cli._render([row])
+    assert "e1" in rendered
+    assert "(empty)" in rendered
