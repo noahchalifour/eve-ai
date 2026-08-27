@@ -375,8 +375,8 @@ async def test_a_procedure_op_is_never_accepted_from_extraction(monkeypatch, rec
                 operations=[
                     Operation.model_construct(
                         op="add", layer="procedure", kind="decision",
-                        content="Step 1...", target_id=None, subject=None,
-                        shared=False,
+                        content="Step one is to text Sam.", target_id=None,
+                        subject=None, shared=False,
                     )
                 ]
             )
@@ -434,3 +434,141 @@ async def test_tool_messages_never_reach_the_extraction_prompt(monkeypatch, reco
         {"configurable": {"thread_id": "t1"}},
     )
     assert "always share account details" not in prompts[0]
+
+
+async def test_a_forget_targeting_a_rule_is_refused_on_an_ambient_turn(
+    monkeypatch, recorded
+):
+    """The guard covers erasure, not just authoring. An ambient turn cannot
+    write a new rule, but without this check it could still make the model
+    see an existing rule's id in the candidate list and forget it - deleting
+    standing behaviour is just as much a change as adding it."""
+    from eve.state import ambient_marker
+
+    now = datetime.now(UTC)
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return [Memory(
+            id="rule-1", layer="rule", scope_kind="member",
+            scope_id="sub-noah", kind="preference", subject=None,
+            content="Lead with the number.", confidence=0.9, salience=0.5,
+            created_at=now, last_seen_at=now,
+        )]
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[Operation(op="forget", target_id="rule-1")])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: FakeModel())
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    await extract_mod.extract(
+        {
+            "member": MEMBER_SHARED,
+            "messages": [
+                HumanMessage(ambient_marker("Noah") + "\nA bank email arrived."),
+                AIMessage("Noted."),
+            ],
+        },
+        {"configurable": {"thread_id": "t1"}},
+    )
+    assert recorded["forget"] == []
+
+
+async def test_a_supersede_targeting_a_rule_is_refused_on_an_ambient_turn(
+    monkeypatch, recorded
+):
+    """Same guard, the other erasure path: supersede replaces a rule's
+    content just as effectively as forget deletes it."""
+    from eve.state import ambient_marker
+
+    now = datetime.now(UTC)
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return [Memory(
+            id="rule-1", layer="rule", scope_kind="member",
+            scope_id="sub-noah", kind="preference", subject=None,
+            content="Lead with the number.", confidence=0.9, salience=0.5,
+            created_at=now, last_seen_at=now,
+        )]
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(
+                operations=[Operation(op="supersede", target_id="rule-1")]
+            )
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: FakeModel())
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    await extract_mod.extract(
+        {
+            "member": MEMBER_SHARED,
+            "messages": [
+                HumanMessage(ambient_marker("Noah") + "\nA bank email arrived."),
+                AIMessage("Noted."),
+            ],
+        },
+        {"configurable": {"thread_id": "t1"}},
+    )
+    assert recorded["supersede"] == []
+
+
+async def test_a_forget_targeting_a_non_rule_fact_still_works_on_an_ambient_turn(
+    monkeypatch, recorded
+):
+    """The rule-erasure guard must not spill over onto ordinary fact
+    maintenance. Phase 4 ships forget/supersede of facts on ambient turns and
+    this phase does not change it (Global Constraint: fact extraction on such
+    turns is unchanged)."""
+    from eve.state import ambient_marker
+
+    now = datetime.now(UTC)
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return [Memory(
+            id="fact-1", layer="profile", scope_kind="member",
+            scope_id="sub-noah", kind="fact", subject="noah",
+            content="Noah banks with Tangerine.", confidence=0.9, salience=0.5,
+            created_at=now, last_seen_at=now,
+        )]
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[Operation(op="forget", target_id="fact-1")])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: FakeModel())
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    await extract_mod.extract(
+        {
+            "member": MEMBER_SHARED,
+            "messages": [
+                HumanMessage(ambient_marker("Noah") + "\nA bank email arrived."),
+                AIMessage("Noted."),
+            ],
+        },
+        {"configurable": {"thread_id": "t1"}},
+    )
+    assert recorded["forget"] == ["fact-1"]

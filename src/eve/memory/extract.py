@@ -151,19 +151,35 @@ def _last_exchange(messages: list) -> tuple[str, str]:
 _AUTHORED_LAYERS = ("rule", "procedure")
 
 
-def _filter_authored(ops: list[Operation], human: str) -> tuple[list[Operation], int]:
+def _filter_authored(
+    ops: list[Operation], human: str, rule_ids: set[str]
+) -> tuple[list[Operation], int]:
     """Drop rule and procedure operations unless this turn may author.
 
     Fails CLOSED on the ambiguous case: a turn that cannot be attributed to a
     member speaking authors nothing. `procedure` is dropped unconditionally -
     procedures come from write_skill, never from a REFLEX pass (design doc
     sections 4.2 and 6.2).
+
+    Authoring a new rule is not the only way an untrusted turn could change
+    standing behaviour: `supersede`/`forget` can erase an existing one just as
+    well, and the candidate list handed to the model includes rule-layer ids
+    to judge overlap against. So when this turn may not author, any
+    `supersede`/`forget` naming a rule id from `rule_ids` is dropped too - a
+    turn that cannot add a rule cannot delete or replace one either. This does
+    not touch `supersede`/`forget` of non-rule facts: fact extraction on an
+    ambient turn is unchanged.
     """
     may_author = get_settings().self_authoring_enabled and not is_ambient_text(human)
     kept, rejected = [], 0
     for op in ops:
         layer = getattr(op, "layer", None)
-        if layer == "procedure" or (layer in _AUTHORED_LAYERS and not may_author):
+        targets_rule = op.op in ("supersede", "forget") and op.target_id in rule_ids
+        if (
+            layer == "procedure"
+            or (layer in _AUTHORED_LAYERS and not may_author)
+            or (not may_author and targets_rule)
+        ):
             rejected += 1
             continue
         kept.append(op)
@@ -190,7 +206,8 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
         )
         model = get_model(Tier.REFLEX).with_structured_output(Extraction)
         result = await model.ainvoke([HumanMessage(prompt)])
-        operations, rejected = _filter_authored(list(result.operations), human)
+        rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
+        operations, rejected = _filter_authored(list(result.operations), human, rule_ids)
         counts = await apply_operations(operations, member, thread_id, run_id)
         rules_written = sum(
             1 for op in operations if getattr(op, "layer", None) == "rule"
