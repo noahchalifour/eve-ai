@@ -28,6 +28,7 @@ from eve.memory import extract as memory_extract, recall as memory_recall
 from eve.memory.search import search_memory
 from eve.models import Tier, get_model
 from eve.settings import get_settings
+from eve.skills.authoring import write_skill
 from eve.skills.materialize import materialize
 from eve.skills.search import search_skills
 from eve.specialists.finances import ask_finances
@@ -35,7 +36,16 @@ from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import EveState
 
-_STATIC_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
+_BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
+
+
+def _static_tools() -> list:
+    """Rebuilt per call rather than fixed at import: EVE_SELF_AUTHORING_ENABLED
+    gates write_skill, and both `eve` and `tools_node` need the same answer
+    within one turn. Settings are lru_cached, so this is a dict lookup."""
+    if get_settings().self_authoring_enabled:
+        return [*_BASE_TOOLS, write_skill]
+    return list(_BASE_TOOLS)
 
 
 # The ChatGPT backend refuses system messages outright - verified live on
@@ -106,7 +116,7 @@ def build_graph(
             return {"messages": [AIMessage(_LOOP_EXHAUSTED)]}
         model = model_factory(Tier.VOICE)
         dynamic = [materialize(spec) for spec in state.get("dynamic_tools", [])]
-        bound_model = model.bind_tools([*_STATIC_TOOLS, *dynamic])
+        bound_model = model.bind_tools([*_static_tools(), *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
         # `from eve.context import load_persona` here would bind the real
@@ -124,7 +134,7 @@ def build_graph(
         # search_skills two turns ago must still resolve to a live tool now,
         # and EveState is the only thing that survives between them.
         node = ToolNode(
-            [*_STATIC_TOOLS, *dynamic], handle_tool_errors=_handle_tool_error
+            [*_static_tools(), *dynamic], handle_tool_errors=_handle_tool_error
         )
         return await node.ainvoke(state, config)
 

@@ -235,7 +235,7 @@ async def test_eve_calls_a_tool_and_returns_the_final_answer(monkeypatch):
     }
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [get_widget])
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [get_widget])
 
     # `eve` calls `model_factory(Tier.VOICE)` on every node visit, including
     # revisits within one turn's tool loop - fine in production since
@@ -303,7 +303,7 @@ async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(mo
 
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [fake_search_skills])
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [fake_search_skills])
     monkeypatch.setattr("eve.graph.materialize", fake_materialize)
 
     search_call = {
@@ -340,19 +340,21 @@ async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(mo
 async def test_a_static_tool_works_on_a_fresh_thread(monkeypatch):
     """`dynamic_tools` needs a reducer to have a default.
 
-    Every other tool test here either monkeypatches `_STATIC_TOOLS` with
+    Every other tool test here either monkeypatches `_BASE_TOOLS` with
     fakes that take no `InjectedState`, or hand-builds a state dict that
     already carries `dynamic_tools` - so none of them exercise the only path
     production ever takes: a brand-new thread, invoked with nothing but
     `messages`. Without a reducer that channel is a `LastValue` with no value
     at all, the key is absent from the injected state, and pydantic rejects
     it for every real tool that asks for state. `search_skills` here is the
-    real one, out of the real `_STATIC_TOOLS`.
+    real one, out of the real `_BASE_TOOLS`.
     """
     # No skills on disk -> `rank_skills` returns before it would embed
     # anything, so the tool completes locally. The point under test is the
     # injected state, not the ranking.
-    monkeypatch.setattr("eve.skills.search.load_skills", lambda mcp_tools: [])
+    monkeypatch.setattr(
+        "eve.skills.search.load_skills", lambda mcp_tools, authored: []
+    )
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
 
@@ -393,7 +395,7 @@ async def test_a_raising_tool_degrades_to_an_error_message(monkeypatch):
 
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [explode])
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [explode])
 
     call = {
         "name": "explode", "args": {"reason": "timeout"},
@@ -436,7 +438,7 @@ async def test_the_tool_loop_is_bounded_when_the_model_never_answers(monkeypatch
 
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [noop])
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [noop])
 
     visits = []
 
@@ -478,7 +480,7 @@ async def test_the_loop_budget_resets_on_the_next_turn(monkeypatch):
 
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-    monkeypatch.setattr("eve.graph._STATIC_TOOLS", [noop])
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [noop])
 
     visits = []
 
@@ -507,3 +509,27 @@ async def test_the_loop_budget_resets_on_the_next_turn(monkeypatch):
     )
 
     assert len(visits) == after_first_turn * 2
+
+
+def test_write_skill_is_bound_when_authoring_is_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "write_skill" in {t.name for t in graph_mod._static_tools()}
+
+
+def test_write_skill_is_unbound_by_default(monkeypatch):
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    names = {t.name for t in graph_mod._static_tools()}
+    assert "write_skill" not in names
+    # The Phase 3/4 toolset is untouched.
+    assert {"ask_home", "ask_mail", "ask_finances", "search_skills",
+            "search_memory"} <= names
