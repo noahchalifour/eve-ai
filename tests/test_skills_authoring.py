@@ -46,6 +46,27 @@ def test_serialize_round_trips_through_the_shared_parser():
     assert body == "1. Text Sam.\n2. Confirm."
 
 
+def test_serialize_round_trips_a_description_containing_a_colon():
+    """A colon-space in the description ('...sitter: call Sam first.') is
+    exactly the shape an LLM-authored summary tends to take. Raw f-string
+    interpolation into YAML frontmatter turns that into a mapping and
+    yaml.safe_load raises ScannerError on the way back out; safe_dump quotes
+    it instead."""
+    from eve.skills.authoring import serialize_procedure
+    from eve.skills.registry import parse_skill_text
+
+    text = serialize_procedure(
+        "book-the-dog-sitter",
+        "How to book the sitter: call Sam first.",
+        "1. Text Sam.\n2. Confirm.",
+    )
+    name, description, body = parse_skill_text(text, "fallback")
+
+    assert name == "book-the-dog-sitter"
+    assert description == "How to book the sitter: call Sam first."
+    assert body == "1. Text Sam.\n2. Confirm."
+
+
 def test_parse_skill_text_falls_back_without_frontmatter():
     from eve.skills.registry import parse_skill_text
 

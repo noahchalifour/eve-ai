@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
+import yaml
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
@@ -30,8 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 def serialize_procedure(name: str, description: str, content: str) -> str:
-    """SKILL.md's on-disk shape, so parse_skill_text round-trips it."""
-    return f"---\nname: {name}\ndescription: {description}\n---\n{content}"
+    """SKILL.md's on-disk shape, so parse_skill_text round-trips it.
+
+    Built with yaml.safe_dump rather than raw f-string interpolation: a
+    description containing a colon-space ("How to book the sitter: call Sam
+    first") is exactly the shape an LLM-authored one-sentence summary tends
+    to take, and unescaped that breaks parse_skill_text's yaml.safe_load on
+    the way back out. safe_dump quotes whatever needs quoting.
+    """
+    frontmatter = yaml.safe_dump({"name": name, "description": description})
+    return f"---\n{frontmatter}---\n{content}"
 
 
 @tool
