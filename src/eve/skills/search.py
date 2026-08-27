@@ -19,6 +19,7 @@ from langgraph.types import Command
 from opentelemetry import trace
 
 from eve.memory.embed import embed_query
+from eve.memory.store import load_procedures
 from eve.settings import get_settings
 from eve.skills.mcp_registry import registered_mcp_tools
 from eve.skills.registry import Skill, load_skills
@@ -53,7 +54,15 @@ async def search_skills(
     # mechanism unused" and "how many dynamically-bound tools accumulate"
     # are both questions this attribute pair exists to answer with a number.
     trace.get_current_span().set_attribute("eve.skills.search_used", True)
-    skills = load_skills(mcp_tools=registered_mcp_tools())
+    # Authored procedures come from the database; filesystem SKILL.md files
+    # and MCP metadata come from the registry. Indistinguishable downstream.
+    try:
+        authored = await load_procedures(state["member"]["sub"])
+    except Exception:
+        # A skills search that cannot reach Postgres should still return the
+        # filesystem corpus rather than failing the turn.
+        authored = []
+    skills = load_skills(mcp_tools=registered_mcp_tools(), authored=authored)
     matches = await rank_skills(query, skills)
     if not matches:
         return Command(
