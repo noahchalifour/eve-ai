@@ -38,10 +38,11 @@ def _state(text: str = "how is Cooper?") -> dict:
 def wired(monkeypatch):
     calls = {"vector": 0}
 
-    async def always_on(sub, thread_id):
+    async def always_on(sub, thread_id, *, include_rules=False):
         return ([_mem("p1", "Noah is vegetarian", "profile")],
                 [_mem("h1", "The dog is Cooper", "household")],
-                "They talked about dinner.")
+                "They talked about dinner.",
+                [])
 
     async def lexical(sub, query, limit=20):
         return [_mem("e1", "Cooper had his shots in June")]
@@ -101,13 +102,14 @@ async def test_embedding_that_finishes_after_its_budget_is_not_used(
         await release_embedding.wait()
         return [0.0] * 1535 + [1.0]
 
-    async def slow_always_on(sub, thread_id):
+    async def slow_always_on(sub, thread_id, *, include_rules=False):
         await asyncio.sleep(0.03)
         release_embedding.set()
         await asyncio.sleep(0)
         return ([_mem("p1", "Noah is vegetarian", "profile")],
                 [_mem("h1", "The dog is Cooper", "household")],
-                "They talked about dinner.")
+                "They talked about dinner.",
+                [])
 
     monkeypatch.setattr(recall_mod, "embed_query", embed_after_budget)
     monkeypatch.setattr(recall_mod, "load_always_on", slow_always_on)
@@ -137,7 +139,7 @@ async def test_cancelling_recall_cancels_and_awaits_its_embedding(
         finally:
             embedding_cancelled.set()
 
-    async def blocking_always_on(sub, thread_id):
+    async def blocking_always_on(sub, thread_id, *, include_rules=False):
         store_started.set()
         await asyncio.Event().wait()
 
@@ -196,3 +198,58 @@ async def test_the_budget_truncates_episodic_and_reports_the_count(
     monkeypatch.setattr(recall_mod, "search_episodic_lexical", many)
     bundle = (await recall_mod.recall(_state(), CONFIG))["memory"]
     assert 0 < len(bundle["episodic"]) < 20
+
+
+async def test_recall_loads_rules_when_authoring_is_enabled(monkeypatch):
+    from datetime import UTC, datetime
+    from eve.settings import get_settings
+
+    now = datetime(2026, 8, 27, tzinfo=UTC)
+    rule = Memory(
+        id="r1", layer="rule", scope_kind="member", scope_id="sub-noah",
+        kind="preference", subject=None, content="Lead with the number.",
+        confidence=0.8, salience=0.6, created_at=now, last_seen_at=now,
+    )
+    seen = {}
+
+    async def load_always_on(sub, thread_id, *, include_rules=False):
+        seen["include_rules"] = include_rules
+        return [], [], None, ([rule] if include_rules else [])
+
+    async def search_episodic_lexical(sub, query, limit=20):
+        return []
+
+    monkeypatch.setattr(recall_mod, "load_always_on", load_always_on)
+    monkeypatch.setattr(recall_mod, "search_episodic_lexical", search_episodic_lexical)
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+
+    get_settings.cache_clear()
+
+    state = {"member": {"sub": "sub-noah"}, "messages": []}
+    out = await recall_mod.recall(state, {"configurable": {"thread_id": "t1"}})
+
+    assert seen["include_rules"] is True
+    assert [m.content for m in out["memory"]["rules"]] == ["Lead with the number."]
+
+
+async def test_recall_bundle_always_has_a_rules_key(monkeypatch):
+    """Disabled must still produce a well-formed bundle: build_system_prompt
+    and every consumer read the key unconditionally."""
+    from eve.settings import get_settings
+
+    async def load_always_on(sub, thread_id, *, include_rules=False):
+        return [], [], None, []
+
+    async def search_episodic_lexical(sub, query, limit=20):
+        return []
+
+    monkeypatch.setattr(recall_mod, "load_always_on", load_always_on)
+    monkeypatch.setattr(recall_mod, "search_episodic_lexical", search_episodic_lexical)
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "false")
+
+    get_settings.cache_clear()
+
+    out = await recall_mod.recall(
+        {"member": {"sub": "sub-noah"}, "messages": []}, {"configurable": {}}
+    )
+    assert out["memory"]["rules"] == []

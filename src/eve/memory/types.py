@@ -39,6 +39,10 @@ class MemoryBundle(TypedDict):
     profile: list[Memory]
     household: list[Memory]
     episodic: list[Memory]
+    # Phase 5a: Eve's own notes on how to behave. Always present, empty when
+    # EVE_SELF_AUTHORING_ENABLED is off, so every consumer can read the key
+    # unconditionally.
+    rules: list[Memory]
     digest: str | None
     # Observability, not behaviour: whether the vector arm landed inside its
     # budget. Read by the span attributes in recall.py.

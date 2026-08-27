@@ -85,7 +85,9 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
     )
 
     try:
-        profile, household, digest = await load_always_on(sub, thread_id)
+        profile, household, digest, rules = await load_always_on(
+            sub, thread_id, include_rules=settings.self_authoring_enabled
+        )
         lexical = (
             await search_episodic_lexical(sub, query, limit=_CANDIDATES)
             if query.strip()
@@ -107,22 +109,28 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
                 episodic = _fuse_memories(lexical, vectors)
                 vector_used = True
 
-        share = settings.memory_token_budget // 3
+        # A four-way split since Phase 5a. Rules are usually few and short, so
+        # an equal share overpays them slightly and costs nothing when the
+        # layer is empty - whatever the always-on layers do not spend still
+        # flows to episodic below.
+        share = settings.memory_token_budget // 4
         profile = fit_budget(profile, share)
         household = fit_budget(household, share)
+        rules = fit_budget(rules, share)
         # Whatever the always-on layers did not spend flows to episodic, which is
         # the only unbounded layer and so the only one that can use it.
-        spent = sum(len(m.content) // 4 for m in (*profile, *household))
+        spent = sum(len(m.content) // 4 for m in (*profile, *household, *rules))
         episodic = fit_budget(episodic, settings.memory_token_budget - spent)
 
         latency_ms = (perf_counter() - started) * 1000
-        _record_span(profile, household, episodic, vector_used, latency_ms)
+        _record_span(profile, household, episodic, rules, vector_used, latency_ms)
 
         return {
             "memory": MemoryBundle(
                 profile=profile,
                 household=household,
                 episodic=episodic,
+                rules=rules,
                 digest=digest,
                 vector_used=vector_used,
                 latency_ms=latency_ms,
@@ -143,6 +151,7 @@ def _record_span(
     profile: list[Memory],
     household: list[Memory],
     episodic: list[Memory],
+    rules: list[Memory],
     vector_used: bool,
     latency_ms: float,
 ) -> None:
@@ -154,9 +163,17 @@ def _record_span(
     span.set_attribute("eve.recall.vector_used", vector_used)
     span.set_attribute("eve.recall.latency_ms", round(latency_ms, 1))
     span.set_attribute(
-        "eve.recall.items", len(profile) + len(household) + len(episodic)
+        "eve.recall.items",
+        len(profile) + len(household) + len(episodic) + len(rules),
     )
+    # How much of the prompt budget Eve's own rules actually consume. Design
+    # doc section 9: the plausible failure is that authoring never fires, and
+    # this number staying at zero is how that is detected.
+    span.set_attribute("eve.recall.rules", len(rules))
     span.set_attribute(
         "eve.recall.tokens",
-        sum(len(m.content) // 4 for m in (*profile, *household, *episodic)),
+        sum(
+            len(m.content) // 4
+            for m in (*profile, *household, *episodic, *rules)
+        ),
     )

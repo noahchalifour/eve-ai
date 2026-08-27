@@ -193,6 +193,7 @@ async def test_memory_reaches_the_system_prompt(monkeypatch):
         ],
         household=[],
         episodic=[],
+        rules=[],
         digest=None,
         vector_used=False,
         latency_ms=1.0,

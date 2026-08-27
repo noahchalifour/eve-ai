@@ -94,8 +94,8 @@ def _mem(content: str, layer: str) -> Memory:
 
 def _bundle(**kw) -> MemoryBundle:
     return MemoryBundle(**{
-        "profile": [], "household": [], "episodic": [], "digest": None,
-        "vector_used": False, "latency_ms": 0.0, **kw,
+        "profile": [], "household": [], "episodic": [], "rules": [],
+        "digest": None, "vector_used": False, "latency_ms": 0.0, **kw,
     })
 
 
