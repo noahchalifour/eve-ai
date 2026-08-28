@@ -240,3 +240,18 @@ async def prune_decisions(days: int) -> int:
             f" WHERE decided_at < now() - interval '{int(days)} days'"
         )
         return cur.rowcount
+
+
+async def mark_replied(thread_id: str) -> None:
+    """A member speaking in an ambient thread IS the label (eval design 5).
+
+    No lookup first: a thread with no matching row is not an ambient thread,
+    and the UPDATE affects nothing.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_ambient_notice SET replied_at = now()"
+            " WHERE thread_id = %s AND replied_at IS NULL",
+            (thread_id,),
+        )
