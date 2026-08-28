@@ -577,3 +577,27 @@ async def test_procedure_by_name_ignores_superseded_rows(pool):
     from eve.memory.store import procedure_by_name
 
     assert await procedure_by_name("sub-noah", "a") is None
+
+
+async def test_migration_count_is_five(pool):
+    """Exactly at db.py's stated Alembic threshold. Phase 5c crosses it; this
+    phase folds three changes into one entry to stay here."""
+    from eve.memory import db
+
+    assert len(db.MIGRATIONS) == 5
+
+
+async def test_the_eval_tables_exist(pool):
+    async with pool.connection() as conn:
+        for table in ("eve_ambient_decision", "eve_eval_run"):
+            cur = await conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+            assert (await cur.fetchone())[0] == table
+
+
+async def test_notice_has_replied_at(pool):
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_name='eve_ambient_notice' AND column_name='replied_at'"
+        )
+        assert await cur.fetchone() is not None
