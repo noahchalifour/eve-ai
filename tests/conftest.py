@@ -211,11 +211,15 @@ def eve_tools_server(stub_home_assistant):
     _terminate()
 
 
-# 18092, not 8091 (the container-internal / docker-compose host port): 18091
-# is already taken by stub_home_assistant above, and this fixture runs
-# eve-sandbox directly on the host rather than through docker-compose, so it
-# needs its own free port.
-EVE_SANDBOX_URL = "http://127.0.0.1:18092"
+# 18093, not 8091 (the container-internal / docker-compose host port) and not
+# 18092: 18091 is already taken by stub_home_assistant above, and 18092 is
+# docker-compose.test.yml's own eve-sandbox service's host port. This
+# fixture runs its own eve-sandbox directly on the host, as a *separate*
+# process from that compose container, so it needs a genuinely free port of
+# its own - sharing 18092 with the compose service meant that whichever of
+# the two happened to be up would nondeterministically answer requests aimed
+# at "the fixture's" server.
+EVE_SANDBOX_URL = "http://127.0.0.1:18093"
 
 
 @pytest.fixture(scope="session")
@@ -229,7 +233,7 @@ def eve_sandbox_server():
         "EVE_SANDBOX_API_KEY": "test-key-0123456789abcdef0123456789ab",
     }
     proc = subprocess.Popen(
-        ["uv", "run", "uvicorn", "eve_sandbox.app:app", "--host", "127.0.0.1", "--port", "18092"],
+        ["uv", "run", "uvicorn", "eve_sandbox.app:app", "--host", "127.0.0.1", "--port", "18093"],
         env=env,
         start_new_session=True,
     )
