@@ -59,3 +59,18 @@ def test_build_ambient_excludes_a_row_whose_signal_will_not_rehydrate():
              "verdict": {"notify": False}, "decided_at": None,
              "replied": False, "notices": 0}]
     assert ambient_items_from_rows(rows) == []
+
+
+def test_no_production_module_imports_the_harness():
+    """The harness imports Eve; Eve never imports the harness. Otherwise a
+    bug in the eval package can fail a family member's turn."""
+    import pathlib
+
+    offenders = []
+    for path in pathlib.Path("src").rglob("*.py"):
+        if "eve/eval" in str(path).replace("\\", "/"):
+            continue
+        text = path.read_text()
+        if "eve.eval" in text or "from eve import eval" in text:
+            offenders.append(str(path))
+    assert offenders == [], offenders
