@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.constants import TAG_NOSTREAM
 from opentelemetry import trace
 
+from eve.memory import pending
 from eve.memory.embed import embed_texts
 from eve.memory.store import (
     add,
@@ -28,6 +29,7 @@ from eve.settings import get_settings
 from eve.state import is_ambient_text, may_author
 
 logger = logging.getLogger(__name__)
+_tracer = trace.get_tracer("eve.memory.extract")
 
 # Bound at module level so tests can monkeypatch it, and lazily resolved at
 # call time so the import direction stays eve_ambient -> eve.
@@ -195,48 +197,76 @@ def _filter_authored(
 
 
 async def extract(state: dict, config: RunnableConfig) -> dict:
-    """Extract memory after Eve's answer without allowing failures to fail a turn."""
+    """End the turn, then do the bookkeeping.
+
+    The node returns `{}` immediately and the real work runs in the
+    background, because the run is only complete when the graph reaches END -
+    an in-graph extraction holds the SSE stream, and so the client's "done",
+    open for a REFLEX call plus embeddings plus writes. `recall` joins this
+    task on the next turn before it reads memory, so detaching costs no
+    ordering (ADR 0010).
+    """
+    if not get_settings().memory_extract_background:
+        await _run_extraction(state, config)
+        return {}
+    thread_id = config.get("configurable", {}).get("thread_id")
+    pending.spawn(thread_id, _run_extraction(state, config))
+    return {}
+
+
+async def _run_extraction(state: dict, config: RunnableConfig) -> None:
+    """Extract memory after Eve's answer without allowing failures to fail a turn.
+
+    Opens its OWN span rather than writing to the ambient one. When this runs
+    detached, the run's span has already ended, and OpenTelemetry silently
+    drops attributes set on an ended span - every `eve.extract.*` and
+    `eve.authoring.*` number would read as absent. The task inherits the
+    context at creation time, so this span still parents correctly.
+    """
     member = state["member"]
     thread_id = config.get("configurable", {}).get("thread_id")
     run_id = config.get("configurable", {}).get("run_id")
     human, ai = _last_exchange(state["messages"])
     if not human:
-        return {}
+        return
 
-    try:
-        candidates = await overlapping(
-            member["sub"], subjects_in(human), None, limit=10
-        )
-        prompt = (
-            f"{load_extract_prompt()}\n\n"
-            f"## Existing memories that may overlap\n{_render_candidates(candidates)}\n\n"
-            f"## The exchange\n{member['name']}: {human}\nEve: {ai}\n"
-        )
-        model = get_model(Tier.REFLEX).with_structured_output(Extraction)
-        result = await model.with_config(tags=[TAG_NOSTREAM]).ainvoke([HumanMessage(prompt)])
-        rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
-        operations, rejected = _filter_authored(list(result.operations), human, rule_ids)
-        counts = await apply_operations(operations, member, thread_id, run_id)
-        rules_written = sum(
-            1 for op in operations if getattr(op, "layer", None) == "rule"
-        )
-    except Exception:
-        logger.warning("extraction failed for thread %s", thread_id, exc_info=True)
-        trace.get_current_span().set_attribute("eve.extract.failed", True)
-        return {}
+    with _tracer.start_as_current_span("eve.extract") as span:
+        try:
+            candidates = await overlapping(
+                member["sub"], subjects_in(human), None, limit=10
+            )
+            prompt = (
+                f"{load_extract_prompt()}\n\n"
+                f"## Existing memories that may overlap\n{_render_candidates(candidates)}\n\n"
+                f"## The exchange\n{member['name']}: {human}\nEve: {ai}\n"
+            )
+            model = get_model(Tier.REFLEX).with_structured_output(Extraction)
+            result = await model.with_config(tags=[TAG_NOSTREAM]).ainvoke(
+                [HumanMessage(prompt)]
+            )
+            rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
+            operations, rejected = _filter_authored(
+                list(result.operations), human, rule_ids
+            )
+            counts = await apply_operations(operations, member, thread_id, run_id)
+            rules_written = sum(
+                1 for op in operations if getattr(op, "layer", None) == "rule"
+            )
+        except Exception:
+            logger.warning("extraction failed for thread %s", thread_id, exc_info=True)
+            span.set_attribute("eve.extract.failed", True)
+            return
 
-    span = trace.get_current_span()
-    for op_name in ("add", "supersede", "reinforce", "forget", "evict"):
-        span.set_attribute(f"eve.extract.ops.{op_name}", counts.get(op_name, 0))
-    # Design doc section 9: the plausible failure of this phase is that
-    # authoring never fires at all. These two numbers are how that is
-    # detected, and how a firing guard is distinguished from a silent model.
-    span.set_attribute("eve.authoring.rules_written", rules_written)
-    span.set_attribute("eve.authoring.rules_rejected", rejected)
+        for op_name in ("add", "supersede", "reinforce", "forget", "evict"):
+            span.set_attribute(f"eve.extract.ops.{op_name}", counts.get(op_name, 0))
+        # Design doc section 9: the plausible failure of this phase is that
+        # authoring never fires at all. These two numbers are how that is
+        # detected, and how a firing guard is distinguished from a silent model.
+        span.set_attribute("eve.authoring.rules_written", rules_written)
+        span.set_attribute("eve.authoring.rules_rejected", rejected)
 
     await _maybe_refresh_digest(state, thread_id)
     await _mark_replied_if_a_reply(human, thread_id)
-    return {}
 
 
 async def _mark_replied_if_a_reply(human: str, thread_id: str | None) -> None:
