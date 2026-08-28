@@ -253,3 +253,57 @@ async def test_recall_bundle_always_has_a_rules_key(monkeypatch):
         {"member": {"sub": "sub-noah"}, "messages": []}, {"configurable": {}}
     )
     assert out["memory"]["rules"] == []
+
+
+def _budget_rows(layer: str) -> list[Memory]:
+    """Five equal 100-token rows, so a 1200-token budget split three ways
+    (400) keeps four of them and split four ways (300) keeps three."""
+    return [_mem(f"{layer}{i}", "x" * 400, layer) for i in range(5)]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "divisor"), [("false", 3), ("true", 4)]
+)
+async def test_the_always_on_share_is_only_split_four_ways_when_authoring_is_on(
+    monkeypatch, enabled, divisor
+):
+    """EVE_SELF_AUTHORING_ENABLED=false must behave EXACTLY like Phase 4.
+
+    An unconditional `// 4` shrinks every deployment's profile/household
+    prompt share by a quarter to make room for a rule layer that is
+    guaranteed empty when the setting is off - a silent behaviour change in
+    deployments that never opted into this feature.
+    """
+    from eve.memory.ranking import fit_budget
+    from eve.settings import get_settings
+
+    profile_rows = _budget_rows("profile")
+    household_rows = _budget_rows("household")
+
+    async def load_always_on(sub, thread_id, *, include_rules=False):
+        return list(profile_rows), list(household_rows), None, []
+
+    async def search_episodic_lexical(sub, query, limit=20):
+        return []
+
+    monkeypatch.setattr(recall_mod, "load_always_on", load_always_on)
+    monkeypatch.setattr(recall_mod, "search_episodic_lexical", search_episodic_lexical)
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", enabled)
+
+    get_settings.cache_clear()
+    share = get_settings().memory_token_budget // divisor
+
+    out = await recall_mod.recall(
+        {"member": {"sub": "sub-noah"}, "messages": []}, {"configurable": {}}
+    )
+    bundle = out["memory"]
+
+    assert [m.id for m in bundle["profile"]] == [
+        m.id for m in fit_budget(profile_rows, share)
+    ]
+    assert [m.id for m in bundle["household"]] == [
+        m.id for m in fit_budget(household_rows, share)
+    ]
+    # The two divisors must actually differ here, or the assertions above
+    # would pass against either one and prove nothing.
+    assert len(bundle["profile"]) == {3: 4, 4: 3}[divisor]

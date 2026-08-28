@@ -4,7 +4,7 @@ This document describes what exists in this repository today: Phase 5a,
 "Self-improvement." For the Phase 5a design rationale and definition of done, see
 [`docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md`](superpowers/specs/2026-08-27-eve-self-improvement-design.md).
 For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-23-eve-ambient.md`](superpowers/plans/2026-08-23-eve-ambient.md).
+[`docs/superpowers/plans/2026-08-27-eve-self-improvement.md`](superpowers/plans/2026-08-27-eve-self-improvement.md).
 
 ## The graph
 
@@ -188,27 +188,33 @@ without any of them holding a third-party credential directly:
 
 Phase 5a lets Eve compose her own standing instructions and multi-step
 procedures, stored in the `eve_memory` table as two new `layer` values —
-`rule` (always rendered into the system prompt under an "Advisory rules" heading)
-and `procedure` (found on demand by `search_skills` alongside MCP tools and
-SKILL.md procedures). They inherit the existing memory machinery: scope
-(`profile`, `household`, `episodic`), decay, supersession, embeddings, hybrid
-search, capping (`EVE_MEMORY_RULE_CAP` limits rules in scope), and an audit
-trail.
+`rule` (always rendered into the system prompt under the
+`### How you have learned to work with them` heading) and `procedure` (found on
+demand by `search_skills` alongside MCP tools and SKILL.md procedures). They
+inherit the existing memory machinery: the same `scope_kind`/`scope_id` pair
+every other layer uses (`member` for one member's own, `household` for the
+family's; `thread` is the digest layer's), decay, supersession, embeddings,
+hybrid search, capping (`EVE_MEMORY_RULE_CAP` limits rules in scope), and an
+audit trail.
 
 Inseparably, and foundational to their safety, **authorisation never reads
 memory.** Permissions flow `family.yaml` → `get_family()` → `build_member_context()`
 → `state["member"]["permissions"]` → `permission_denial()`, resolved in
 `load_context` before `recall` has run. No rule, procedure, or memory row
-influences what a member may do. `extract` refuses to author anything on a
-turn carrying the ambient marker, so authored behaviour cannot originate from
-signals surfaced by the ambient pipeline.
+influences what a member may do. Both authoring paths — `extract`'s passive
+rule pass and the `write_skill` tool — refuse on a turn carrying the ambient
+marker, behind one shared predicate (`eve.state.may_author`), so authored
+behaviour cannot originate from signals surfaced by the ambient pipeline.
 
-**`src/eve/skills/authoring.py`** exposes the `write_skill` tool to Eve,
-which produces a `Skill` row: unstructured prose instruction, scoped, versioned,
-supersession-chained. **`src/eve/skills/cli.py`** implements the
-`eve-skill` script (`uv run eve-skill list`, `revoke`, `dump`, etc.) for humans
-to audit and revoke authored skills from the command line without deleting the
-row — a revoked skill remains in the audit trail but is excluded from recall.
+**`src/eve/skills/authoring.py`** exposes the `write_skill` tool to Eve, which
+writes a `procedure`-layer `eve_memory` row whose `content` is a SKILL.md-shaped
+document — the same parser (`eve.skills.registry.parse_skill_text`) reads it and
+the files on disk, so `search_skills` cannot tell them apart. It is scoped,
+versioned and supersession-chained like any other memory row.
+**`src/eve/skills/cli.py`** implements the `eve-skill` script
+(`uv run eve-skill list` and `uv run eve-skill revoke <id>`) for humans to audit
+and revoke authored rules and procedures from the command line without deleting
+the row — a revoked one remains in the audit trail but is excluded from recall.
 See [ADR 0008](adr/0008-authored-behaviour-is-memory.md).
 
 ## Aegra and `aegra.json`

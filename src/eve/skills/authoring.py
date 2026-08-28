@@ -18,14 +18,14 @@ import logging
 from typing import Annotated
 
 import yaml
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from opentelemetry import trace
 
 from eve.memory.store import add, procedure_by_name, supersede
-from eve.settings import get_settings
-from eve.state import EveState
+from eve.state import EveState, may_author
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,22 @@ async def write_skill(
     follow it next time without being walked through it again. `name` is a
     short lowercase-hyphenated identifier; `description` is one sentence
     describing when the procedure applies; `content` is the steps."""
-    if not get_settings().self_authoring_enabled:
-        return "error: writing skills is disabled in this deployment."
+    # write_skill is bound into the same graph the ambient pipeline drives
+    # with attacker-controlled text (eve_ambient/notify.py composes a marked
+    # human message around up to 800 characters of raw signal payload), so
+    # the settings check alone is not the guard: an ambient turn must author
+    # no procedure for the same reason it may author no rule. One shared
+    # predicate with eve.memory.extract - see eve.state.may_author.
+    human = next(
+        (
+            str(m.content)
+            for m in reversed(state["messages"])
+            if isinstance(m, HumanMessage)
+        ),
+        "",
+    )
+    if not may_author(human):
+        return "error: cannot record a procedure from this turn."
 
     member = state["member"]
     configurable = config.get("configurable", {}) if config else {}

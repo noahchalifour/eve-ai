@@ -24,7 +24,7 @@ from eve.memory.store import (
 from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
-from eve.state import is_ambient_text
+from eve.state import may_author
 
 logger = logging.getLogger(__name__)
 
@@ -169,16 +169,19 @@ def _filter_authored(
     turn that cannot add a rule cannot delete or replace one either. This does
     not touch `supersede`/`forget` of non-rule facts: fact extraction on an
     ambient turn is unchanged.
+
+    The predicate itself lives in eve.state, shared with write_skill: one
+    guard, two authoring paths.
     """
-    may_author = get_settings().self_authoring_enabled and not is_ambient_text(human)
+    allowed = may_author(human)
     kept, rejected = [], 0
     for op in ops:
         layer = getattr(op, "layer", None)
         targets_rule = op.op in ("supersede", "forget") and op.target_id in rule_ids
         if (
             layer == "procedure"
-            or (layer in _AUTHORED_LAYERS and not may_author)
-            or (not may_author and targets_rule)
+            or (layer in _AUTHORED_LAYERS and not allowed)
+            or (not allowed and targets_rule)
         ):
             rejected += 1
             continue

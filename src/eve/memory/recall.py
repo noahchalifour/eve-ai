@@ -109,11 +109,16 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
                 episodic = _fuse_memories(lexical, vectors)
                 vector_used = True
 
-        # A four-way split since Phase 5a. Rules are usually few and short, so
-        # an equal share overpays them slightly and costs nothing when the
-        # layer is empty - whatever the always-on layers do not spend still
-        # flows to episodic below.
-        share = settings.memory_token_budget // 4
+        # A four-way split when Phase 5a is on. Rules are usually few and
+        # short, so an equal share overpays them slightly and costs nothing
+        # when the layer is empty - whatever the always-on layers do not spend
+        # still flows to episodic below. With the setting off there is no rule
+        # arm to pay for, and the split stays exactly Phase 4's three ways:
+        # a deployment that never touches this feature must not have
+        # profile/household quietly shrink by a quarter.
+        share = settings.memory_token_budget // (
+            4 if settings.self_authoring_enabled else 3
+        )
         profile = fit_budget(profile, share)
         household = fit_budget(household, share)
         rules = fit_budget(rules, share)

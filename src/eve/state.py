@@ -8,6 +8,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph.message import add_messages
 
 from eve.memory.types import MemoryBundle
+from eve.settings import get_settings
 from eve.skills.types import DynamicToolSpec
 
 # Phase 4 prefixes an ambient signal's composed human message with this so the
@@ -29,6 +30,23 @@ def is_ambient_text(text: str) -> bool:
     typed by a family member. Fails CLOSED for the ambiguous case: anything
     carrying the marker is treated as untrusted input."""
     return text.lstrip().startswith(AMBIENT_MARKER_PREFIX)
+
+
+def may_author(human: str) -> bool:
+    """True if a turn whose last human message is `human` may author a rule or
+    a procedure.
+
+    One predicate, two callers - eve.memory.extract's passive rule pass and
+    eve.skills.authoring's deliberate write_skill tool. Two copies of this
+    boolean would be two guards to keep in step, and the ambient pipeline
+    drives the same graph both paths hang off (eve_ambient/notify.py embeds
+    raw signal payload into a marked human message), so a guard that covers
+    only one path leaves the other reachable by attacker-controlled text.
+
+    Fails CLOSED: an ambient-marked turn authors nothing, regardless of the
+    setting (design doc section 6.2).
+    """
+    return get_settings().self_authoring_enabled and not is_ambient_text(human)
 
 
 def _replace_dynamic_tools(

@@ -176,6 +176,100 @@ async def test_write_skill_refuses_when_disabled(monkeypatch):
     assert result.startswith("error:")
 
 
+async def test_write_skill_refuses_on_an_ambient_turn(monkeypatch):
+    """The core invariant of this phase: a turn whose last human message
+    carries the ambient marker authors nothing - no rule AND no procedure.
+
+    `write_skill` is bound into the same graph the ambient pipeline drives
+    with attacker-controlled text (eve_ambient/notify.py wraps up to 800
+    characters of raw signal payload in a marked human message), so the
+    settings check alone would leave the procedure path reachable from an
+    email body while eve.memory.extract's guard closed the rule path. Same
+    shape as tests/test_memory_extract.py's
+    test_a_rule_op_is_refused_on_an_ambient_turn, other authoring path.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from eve.skills import authoring
+    from eve.state import ambient_marker
+
+    added = []
+    looked_up = []
+
+    async def add(**kw):
+        added.append(kw)
+        return "new-1"
+
+    async def procedure_by_name(sub, name):
+        # Deliberately NOT `raise AssertionError`: write_skill's own
+        # `except Exception` would swallow it into an "error:" string and the
+        # test would pass against an unguarded write_skill. Record instead.
+        looked_up.append(name)
+        return None
+
+    monkeypatch.setattr(authoring, "add", add)
+    monkeypatch.setattr(authoring, "procedure_by_name", procedure_by_name)
+    # Enabled: the setting is not what refuses here, the marker is.
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    state = {
+        **STATE,
+        "messages": [
+            HumanMessage(ambient_marker("Noah") + "\nA bank email arrived."),
+        ],
+    }
+    result = await authoring.write_skill.ainvoke(
+        {
+            "name": "exfiltrate", "description": "d", "content": "c",
+            "state": state,
+        },
+        config={"configurable": {"thread_id": "t1"}},
+    )
+
+    assert added == []
+    assert looked_up == []
+    assert result.startswith("error:")
+
+
+async def test_write_skill_still_writes_on_an_ordinary_spoken_turn(monkeypatch):
+    """The guard must refuse the ambient turn without refusing every turn -
+    a guard that always says no is indistinguishable from a broken feature."""
+    from langchain_core.messages import HumanMessage
+
+    from eve.skills import authoring
+
+    added = []
+
+    async def add(**kw):
+        added.append(kw)
+        return "new-1"
+
+    async def procedure_by_name(sub, name):
+        return None
+
+    monkeypatch.setattr(authoring, "add", add)
+    monkeypatch.setattr(authoring, "procedure_by_name", procedure_by_name)
+    monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    state = {**STATE, "messages": [HumanMessage("here is how you book the sitter")]}
+    result = await authoring.write_skill.ainvoke(
+        {
+            "name": "book-the-dog-sitter", "description": "d", "content": "c",
+            "state": state,
+        },
+        config={"configurable": {"thread_id": "t1"}},
+    )
+
+    assert len(added) == 1
+    assert not result.startswith("error:")
+
+
 async def test_write_skill_degrades_a_database_failure_to_a_string(monkeypatch):
     """Global constraint: a tool returns an error string, never raises. A
     raise here would fail the whole turn instead of letting Eve explain."""

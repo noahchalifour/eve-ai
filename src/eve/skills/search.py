@@ -56,12 +56,19 @@ async def search_skills(
     trace.get_current_span().set_attribute("eve.skills.search_used", True)
     # Authored procedures come from the database; filesystem SKILL.md files
     # and MCP metadata come from the registry. Indistinguishable downstream.
-    try:
-        authored = await load_procedures(state["member"]["sub"])
-    except Exception:
-        # A skills search that cannot reach Postgres should still return the
-        # filesystem corpus rather than failing the turn.
-        authored = []
+    #
+    # Gated on the setting for the reason load_always_on's docstring gives for
+    # rules: with self-authoring off, rows written during an earlier enabled
+    # period must stop applying, not merely stop being written. It also spares
+    # every skills search a round trip Phase 4 never paid.
+    authored = []
+    if get_settings().self_authoring_enabled:
+        try:
+            authored = await load_procedures(state["member"]["sub"])
+        except Exception:
+            # A skills search that cannot reach Postgres should still return
+            # the filesystem corpus rather than failing the turn.
+            authored = []
     skills = load_skills(mcp_tools=registered_mcp_tools(), authored=authored)
     matches = await rank_skills(query, skills)
     if not matches:
