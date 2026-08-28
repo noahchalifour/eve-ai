@@ -192,6 +192,9 @@ async def test_an_ambient_turn_authors_neither_a_rule_nor_a_procedure(
     )
 
     class _Structured:
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, messages):
             return proposed
 
