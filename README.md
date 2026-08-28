@@ -18,15 +18,17 @@ independently useful and gets its own design document:
 | **2** | **Memory** | Four memory layers, post-stream extraction, hybrid recall. **Eve remembers.** |
 | **3** | **Specialists + Skills** | Supervisor topology, permission enforcement, skills registry, the v1 specialists. **Eve does things.** |
 | **4** | **Ambient** | Signal ingestion, relevance filtering, proactive notifications. **Eve speaks first.** |
-| **5a** | **Self-improvement** | Eve authors her own behavioural rules and multi-step procedures, stored as memory layers, revocable from a CLI. **Eve gets better.** |
-| 5b | Eval harness | Datasets from Eve's own tables; an A/B measuring what the rule set is worth; a regression gate. |
+| 5a | Self-improvement | Eve authors her own behavioural rules and multi-step procedures, stored as memory layers, revocable from a CLI. **Eve gets better.** |
+| **5b** | **Eval harness** | Datasets built from Eve's own tables; an A/B measuring what the rule set is worth; a regression gate that never depends on Langfuse. **Now we can tell.** |
 | 5c | Gated tool code | Eve proposes executable tool code behind a human approval, run in a sandbox with no network and no credentials. |
 
-This repository is Phase 5a: Eve now authors her own standing instructions and
-multi-step procedures, stored as memory layers revocable from a CLI, without
-human re-training or prompt edits. See
-[`docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md`](docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md)
-for the Phase 5a design and definition of done.
+This repository is Phase 5b: an `eve-eval` command builds evaluation datasets
+from Eve's own Postgres tables, replays them through the real filter and the
+real graph, measures the effect of Phase 5a's self-authored rules with an
+A/B, and gates on a regression — all without depending on Langfuse being
+reachable. See
+[`docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md`](docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md)
+for the Phase 5b design and definition of done.
 
 ## Quick start
 

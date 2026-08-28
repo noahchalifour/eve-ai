@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 5a,
-"Self-improvement." For the Phase 5a design rationale and definition of done, see
-[`docs/superpowers/specs/2026-08-27-eve-self-improvement-design.md`](superpowers/specs/2026-08-27-eve-self-improvement-design.md).
+This document describes what exists in this repository today: Phase 5b,
+"Eval harness." For the Phase 5b design rationale and definition of done, see
+[`docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md`](superpowers/specs/2026-08-27-eve-eval-harness-design.md).
 For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-27-eve-self-improvement.md`](superpowers/plans/2026-08-27-eve-self-improvement.md).
+[`docs/superpowers/plans/2026-08-27-eve-eval-harness.md`](superpowers/plans/2026-08-27-eve-eval-harness.md).
 
 ## The graph
 
@@ -84,6 +84,15 @@ src/eve/
     materialize.py  # turn DynamicToolSpec into callable tool at model call time
     authoring.py    # write_skill tool (Phase 5a)
     cli.py          # eve-skill script (Phase 5a)
+  eval/
+    types.py        # DatasetItem, ItemResult, RunScore -- shapes only
+    datasets.py     # build the two dataset shapes from Postgres and the golden file
+    replay.py       # run one item through the real code path
+    scorers.py      # deterministic scorers and the REFLEX judge
+    store.py        # every eve_eval_run SQL statement; the regression gate
+    publish.py      # best-effort Langfuse dataset + run upload
+    hygiene.py      # duplicate/contradiction/dead-rule detection over eve_memory rules
+    cli.py          # eve-eval script: build | run | gate | hygiene (Phase 5b)
 
 src/eve_ambient/
   types.py      # Signal, FilterVerdict; tool_result/list_field parsing helpers
@@ -106,13 +115,23 @@ internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 `graph` depends on `context`, `memory`, `models`, and `state`; `auth` depends on
 `family` and `settings`.
 
-Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `store` and
-`ntfy` depend only on `eve`'s own modules (`eve.memory.db`, `eve.settings`
-respectively) and not on `types` at all; `filter` and `notify` depend on
-`types` plus `eve`'s own modules (`eve.family`, `eve.memory.store`,
-`eve.models`, `eve.settings`); `pipeline` depends on `types`, `store`,
-`gates`, `filter`, and `notify` (which pulls in `ntfy`); `app` depends on
-`pipeline` and `sources`.
+Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `ntfy`
+depends only on `eve`'s own modules (`eve.settings`) and not on `types` at
+all; `filter` and `notify` depend on `types` plus `eve`'s own modules
+(`eve.family`, `eve.memory.store`, `eve.models`, `eve.settings`); `pipeline`
+depends on `types`, `store`, `gates`, `filter`, and `notify` (which pulls in
+`ntfy`); `app` depends on `pipeline` and `sources`. `store` depends on `eve`'s
+own `eve.memory.db` as before, and, since Phase 5b, also on `eve_ambient.types`
+(`Signal`, `FilterVerdict`) for `record_decision`.
+
+`src/eve/eval/` sits outside this graph on purpose: `datasets` and `store`
+depend on `eve.memory.db`; `replay` depends on `eve_ambient.filter` and
+`eve.graph`; `scorers` depends on `eve.models`; `cli` depends on all of them.
+The dependency runs one way only — nothing in `src/eve/` outside `eve/eval/`
+imports `eve.eval`, so the harness cannot affect a production turn even by
+accident. `tests/test_eval_datasets.py` asserts this the same way the rest of
+this section's acyclicity is asserted, by import graph rather than by
+convention.
 
 `models.py` is a deliberate chokepoint: model identifiers appear nowhere else
 in the codebase, so retiering — or falling back from the ChatGPT proxy to the
@@ -400,6 +419,15 @@ advisory lock. The production Dockerfile runs exactly
 Aegra from starting. Local `aegra dev` does not execute the container command,
 so run the migration explicitly after starting Postgres.
 
+`MIGRATIONS` (`src/eve/memory/db.py`) now holds five entries — `0001_memory`,
+`0002_ambient`, `0003_ambient_notice_window`, `0004_pat`, and Phase 5b's
+`0005_eval`, which folds in `eve_ambient_notice.replied_at`,
+`eve_ambient_decision`, and `eve_eval_run` as one entry rather than three, to
+land exactly on rather than past the threshold below. Five is the number
+`db.py`'s own module docstring names as the point to move to Alembic; Phase 5c
+adds a sixth table and crosses it, so **the Alembic migration is 5c's first
+task**, not deferred maintenance here.
+
 ## Ambient
 
 Phase 4 adds a second deployment, `eve-ambient` (`Dockerfile.eve-ambient`,
@@ -528,6 +556,82 @@ across instances; the poll loop and the webhook handler both run in one
 process. A second replica would poll and push the same signals again and
 double-count the daily cap in `eve_ambient_notice`.
 
+## Eval harness
+
+Phase 5b answers the question Phase 5a raises — is the rule set Eve writes
+for herself helping, doing nothing, or actively working against her — with a
+command instead of an argument. One new console script, `eve-eval`
+(`src/eve/eval/`), with no new service and nothing in the request path: it
+imports Eve's own modules and calls them directly. See
+[ADR 0009](adr/0009-eval-inputs-from-postgres.md) for why its inputs are
+Eve's own Postgres tables rather than parsed Langfuse traces.
+
+**Two dataset shapes**, both built by `eve-eval build`:
+
+- **Shape 1 — ambient decisions.** One row per judged signal, recorded by
+  `eve_ambient.store.record_decision` immediately after `filter.judge()`
+  returns in `pipeline.handle_signal` — before the cap/quiet-hours/permission
+  gates run, so the label is the filter's verdict, not the eventual outcome.
+  Labelled with `eve_ambient_notice.replied_at`, stamped by `extract` when a
+  member replies into an ambient thread (never on a turn carrying the
+  ambient marker) — a weak positive signal only: a reply means the
+  interruption was worth making, but no reply does not mean it wasn't. Both
+  halves are forward-looking only; there is no history to backfill, so the
+  shape is empty until some time after this phase deploys, and `eve-eval
+  gate` skips an empty shape 1 rather than passing it.
+- **Shape 2 — turn behaviour.** A dozen or two hand-written items in
+  `tests/eval/turns.yaml`, each a member, a message, and natural-language
+  `expects` assertions — small and reviewed like code, because it is the
+  definition of "working" the A/B below measures against. One item is a
+  deliberately-failing canary: if it ever passes, the judge is
+  rubber-stamping and the gate fails on it.
+
+**The A/B that justifies Phase 5a.** `eve-eval run` replays shape 2 twice:
+once with authored `rule`-layer memory rendered into the system prompt
+(`with-rules`, the normal path) and once with that section suppressed
+(`without-rules`, everything else — profile, household, episodic, digest,
+persona — identical). `rule_delta` is the difference in `assertion_pass`
+between the two arms: positive means the rule set is earning its prompt
+budget, flat means it is costing budget for nothing, and negative means the
+rules have turned on themselves — the signal to reach for `eve-skill revoke`
+or Phase 5b's own hygiene pass. Suppression is a parameter the eval package
+passes to `build_system_prompt`; production code paths never set it.
+
+**The judge runs on `REFLEX`**, not `DEEP` or `VOICE`. `assertion_pass`
+needs a model to grade a natural-language assertion against a response, and
+every tier except `REFLEX` is a subscription proxy sharing one `max_budget`
+with Noah's own work (see the tier table above) — a judge on any of them
+would make the harness the most expensive thing in the deployment for a
+narrow classification task flash-lite is already good at. Every other
+scorer (`notify_agreement`, `notify_precision`, `audience_exact`) is an
+exact comparison against a recorded verdict or a recorded reply and costs
+nothing. `eve-eval run` prints a spot-check of ten judged assertions with
+the judge's one-sentence reason so a human can read them; the tier decision —
+move to `DEEP` in `scorers.py` if agreement falls below ~85% — is made from
+that reading. **This has not happened yet**: `eve-eval run` has never been
+run against production data, so there is no recorded agreement figure here.
+The first real run's spot-check should be read by hand and the resulting
+percentage recorded in this paragraph.
+
+**The gate never calls Langfuse.** `eve-eval run` writes every score to
+`eve_eval_run` in Postgres first; publishing a Langfuse dataset run is
+best-effort, and its failure is logged and ignored — the same posture
+`extract` takes toward its own writes. `eve-eval gate` reads only
+`eve_eval_run`, compares the newest run against the previous one on the same
+dataset and arm, and exits non-zero past a threshold (`notify_agreement`
+down more than `EVE_EVAL_REGRESSION_POINTS`, `audience_exact` down at all,
+`assertion_pass` down more than the same threshold, or `rule_delta`
+negative). A reporting outage in Langfuse can therefore never block a
+regression check. `eve-eval hygiene` is separate and report-only by default
+(`EVE_EVAL_HYGIENE_APPLY_ENABLED=false`): it finds duplicate rules by
+embedding similarity and can supersede the weaker with `--apply`, but only
+reports contradictions and dormant rules — resolving a conflict is a
+judgement call for a human, not a flash-lite model unattended.
+
+The harness runs on demand and weekly via a `CronJob` in the `infrastructure`
+repository, never in CI: its calls are paid and nondeterministic, so gating
+merges on it buys flaky builds and a budget bill.
+
 ## Running locally
 
 ```bash
@@ -642,3 +746,4 @@ responsibility ends at building and publishing the image
 - [ADR 0006 — Specialist and skill tool execution runs in an isolated service](adr/0006-eve-tools-isolation.md)
 - [ADR 0007 — Ambient runs impersonate family members through one scoped token](adr/0007-ambient-impersonation.md)
 - [ADR 0008 — Eve-authored behaviour is memory, and authorisation never reads memory](adr/0008-authored-behaviour-is-memory.md)
+- [ADR 0009 — Eval inputs come from Postgres, not from Langfuse traces](adr/0009-eval-inputs-from-postgres.md)
