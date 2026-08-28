@@ -33,7 +33,7 @@ class FakeStructuredModel:
 @pytest.fixture
 def no_household_memory(monkeypatch):
     async def _load_always_on(sub, thread):
-        return [], [], None
+        return [], [], None, []
 
     monkeypatch.setattr(ambient_filter, "load_always_on", _load_always_on)
 
@@ -172,7 +172,7 @@ async def test_household_memory_reaches_the_prompt(monkeypatch):
     )
 
     async def _load_always_on(sub, thread):
-        return [], [fact], None
+        return [], [fact], None, []
 
     monkeypatch.setattr(ambient_filter, "load_always_on", _load_always_on)
     model = FakeStructuredModel(verdict=FilterVerdict())

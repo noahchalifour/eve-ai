@@ -475,7 +475,7 @@ async def test_a_malformed_filter_response_resolves_filtered_not_deferred(
             raise malformed
 
     async def _no_memory(sub, thread):
-        return [], [], None
+        return [], [], None, []
 
     monkeypatch.setattr(ambient_filter, "load_always_on", _no_memory)
     monkeypatch.setattr(ambient_filter, "get_model", lambda tier: _FakeModel())

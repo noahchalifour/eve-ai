@@ -129,7 +129,9 @@ async def test_always_on_returns_profile_household_and_digest(pool):
         kind="digest",
         content="They discussed dinner.",
     )
-    profile, household, digest = await store.load_always_on("sub-noah", "thread-1")
+    profile, household, digest, _rules = await store.load_always_on(
+        "sub-noah", "thread-1"
+    )
     assert [m.content for m in profile] == ["Noah is vegetarian"]
     assert [m.content for m in household] == ["The dog is Cooper"]
     assert digest == "They discussed dinner."
@@ -141,7 +143,7 @@ async def test_always_on_does_not_leak_another_members_profile(pool):
     await _insert(
         pool, layer="profile", scope_id="sub-kendra", kind="fact", content="secret"
     )
-    profile, _, _ = await store.load_always_on("sub-noah", "thread-1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "thread-1")
     assert profile == []
 
 
@@ -154,7 +156,7 @@ async def test_household_is_visible_to_every_member(pool):
         kind="fact",
         content="Trash goes out Sunday",
     )
-    _, household, _ = await store.load_always_on("sub-kendra", "thread-1")
+    _, household, _, _ = await store.load_always_on("sub-kendra", "thread-1")
     assert [m.content for m in household] == ["Trash goes out Sunday"]
 
 
@@ -259,7 +261,7 @@ async def test_add_returns_an_id_that_reads_back(pool):
         subject="noah",
         source_thread="t1",
     )
-    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "t1")
     assert [(m.id, m.content) for m in profile] == [(mid, "Noah is vegetarian")]
 
 
@@ -275,7 +277,7 @@ async def test_supersede_hides_the_old_row_but_keeps_it(pool):
         kind="fact", content="Kendra works Wednesdays",
     )
     await store.supersede(old, new, "contradicted")
-    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "t1")
     assert [m.content for m in profile] == ["Kendra works Wednesdays"]
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT count(*) FROM eve_memory")
@@ -345,7 +347,7 @@ async def test_set_embeddings_makes_a_row_findable_by_vector(pool):
 async def test_upsert_digest_replaces_rather_than_accumulates(pool):
     await store.upsert_digest("t1", "first summary")
     await store.upsert_digest("t1", "second summary")
-    _, _, digest = await store.load_always_on("sub-noah", "t1")
+    _, _, digest, _ = await store.load_always_on("sub-noah", "t1")
     assert digest == "second summary"
     async with pool.connection() as conn:
         cur = await conn.execute(
@@ -377,7 +379,7 @@ async def test_eviction_retires_the_weakest_until_the_cap_is_met(pool):
                 "UPDATE eve_memory SET salience=%s WHERE id=%s", ((4 - i) / 10.0, mid)
             )
     evicted = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
-    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "t1")
     assert evicted == 2
     assert {m.content for m in profile} == {"fact 0", "fact 1", "fact 2"}
 
@@ -415,7 +417,7 @@ async def test_eviction_is_idempotent(pool):
             )
     first = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
     second = await store.evict_over_cap("profile", "member", "sub-noah", cap=3)
-    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "t1")
     assert first == 2
     assert second == 0
     assert {m.content for m in profile} == {"fact 2", "fact 3", "fact 4"}
@@ -440,7 +442,7 @@ async def test_supersede_accepts_new_id_none_for_an_eviction(pool):
         why, by = await cur.fetchone()
         assert why == "evicted"
         assert by is None
-    profile, _, _ = await store.load_always_on("sub-noah", "t1")
+    profile, _, _, _ = await store.load_always_on("sub-noah", "t1")
     assert profile == []
 
 
@@ -456,3 +458,122 @@ async def test_overlapping_finds_candidates_by_subject_and_by_vector(pool):
     await store.set_embeddings([(by_vector, _VEC)])
     found = await store.overlapping("sub-noah", ["kendra"], _VEC, limit=10)
     assert {m.id for m in found} == {by_subject, by_vector}
+
+
+async def test_load_always_on_returns_rules_when_asked(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('rule','member','sub-noah','preference','Lead with the number.')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('rule','household','','preference','Never text during dinner.')"
+        )
+    from eve.memory.store import load_always_on
+
+    _p, _h, _d, rules = await load_always_on("sub-noah", None, include_rules=True)
+    assert {r.content for r in rules} == {
+        "Lead with the number.", "Never text during dinner.",
+    }
+
+
+async def test_load_always_on_omits_rules_by_default(pool):
+    """With EVE_SELF_AUTHORING_ENABLED off, recall must not pay for or apply
+    rules even if rows exist from an earlier enabled period."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('rule','member','sub-noah','preference','Lead with the number.')"
+        )
+    from eve.memory.store import load_always_on
+
+    _p, _h, _d, rules = await load_always_on("sub-noah", None)
+    assert rules == []
+
+
+async def test_load_always_on_excludes_another_members_rule(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('rule','member','sub-kid','preference','Use small words.')"
+        )
+    from eve.memory.store import load_always_on
+
+    _p, _h, _d, rules = await load_always_on("sub-noah", None, include_rules=True)
+    assert rules == []
+
+
+async def test_load_always_on_excludes_a_superseded_rule(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, superseded_why)"
+            " VALUES ('rule','member','sub-noah','preference','Old.','revoked')"
+        )
+    from eve.memory.store import load_always_on
+
+    _p, _h, _d, rules = await load_always_on("sub-noah", None, include_rules=True)
+    assert rules == []
+
+
+async def test_load_always_on_never_returns_procedures(pool):
+    """A procedure is on-demand only. Loading one into every prompt is the
+    prompt-budget failure the two-layer split exists to prevent."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('procedure','member','sub-noah','decision','Step 1...')"
+        )
+    from eve.memory.store import load_always_on
+
+    profile, household, _d, rules = await load_always_on(
+        "sub-noah", None, include_rules=True
+    )
+    assert rules == [] and profile == [] and household == []
+
+
+async def test_load_always_on_carries_source_thread_and_run(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, source_thread, source_run)"
+            " VALUES ('profile','member','sub-noah','fact','x','thread-1','run-1')"
+        )
+    from eve.memory.store import load_always_on
+
+    profile, _h, _d, _rules = await load_always_on("sub-noah", None)
+    assert profile[0].source_thread == "thread-1"
+    assert profile[0].source_run == "run-1"
+
+
+async def test_load_procedures_returns_member_and_household_rows(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','member','sub-noah','decision','a','A')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','household','','decision','b','B')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, subject, content)"
+            " VALUES ('procedure','member','sub-kid','decision','c','C')"
+        )
+    from eve.memory.store import load_procedures
+
+    rows = await load_procedures("sub-noah")
+    assert {r.content for r in rows} == {"A", "B"}
+
+
+async def test_procedure_by_name_ignores_superseded_rows(pool):
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, subject, content, superseded_why)"
+            " VALUES ('procedure','member','sub-noah','decision','a','old','revoked')"
+        )
+    from eve.memory.store import procedure_by_name
+
+    assert await procedure_by_name("sub-noah", "a") is None

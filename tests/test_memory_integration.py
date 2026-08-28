@@ -96,7 +96,7 @@ async def test_household_is_shared_but_another_members_profile_is_private(
         content="Trash goes out Sunday",
     )
 
-    profile, household, _ = await store.load_always_on("sub-kid", "t1")
+    profile, household, _, _ = await store.load_always_on("sub-kid", "t1")
     assert profile == []
     assert [memory.content for memory in household] == ["Trash goes out Sunday"]
 

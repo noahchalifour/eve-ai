@@ -24,10 +24,17 @@ from eve.memory.store import (
 from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
+from eve.state import may_author
 
 logger = logging.getLogger(__name__)
 
-_CAPPED = {"profile": "memory_profile_cap", "household": "memory_household_cap"}
+_CAPPED = {
+    "profile": "memory_profile_cap",
+    "household": "memory_household_cap",
+    # Phase 5a: without a cap, a year of small corrections becomes a prompt
+    # preamble longer than the conversation (design doc section 5.1).
+    "rule": "memory_rule_cap",
+}
 
 
 @lru_cache(maxsize=1)
@@ -36,11 +43,18 @@ def load_extract_prompt() -> str:
 
 
 def _resolve_scope(op: Operation, member: dict) -> tuple[str, str, str]:
-    """Resolve layer and scope after enforcing shared-write permission."""
-    if op.layer == "household":
+    """Resolve layer and scope after enforcing shared-write permission.
+
+    A rule is member-scoped unless the model asked for a household one, which
+    needs the same memory.write_shared permission a household fact needs. One
+    code path for both, so a kid cannot author a rule that changes how Eve
+    treats the whole family (design doc section 6.4).
+    """
+    shared = op.layer == "household" or (op.layer == "rule" and op.shared)
+    if shared:
         if "memory.write_shared" in (member.get("permissions") or []):
-            return "household", "household", ""
-        return "profile", "member", member["sub"]
+            return ("rule" if op.layer == "rule" else "household"), "household", ""
+        return ("rule" if op.layer == "rule" else "profile"), "member", member["sub"]
     return op.layer or "episodic", "member", member["sub"]
 
 
@@ -134,6 +148,47 @@ def _last_exchange(messages: list) -> tuple[str, str]:
     return str(human), str(ai)
 
 
+_AUTHORED_LAYERS = ("rule", "procedure")
+
+
+def _filter_authored(
+    ops: list[Operation], human: str, rule_ids: set[str]
+) -> tuple[list[Operation], int]:
+    """Drop rule and procedure operations unless this turn may author.
+
+    Fails CLOSED on the ambiguous case: a turn that cannot be attributed to a
+    member speaking authors nothing. `procedure` is dropped unconditionally -
+    procedures come from write_skill, never from a REFLEX pass (design doc
+    sections 4.2 and 6.2).
+
+    Authoring a new rule is not the only way an untrusted turn could change
+    standing behaviour: `supersede`/`forget` can erase an existing one just as
+    well, and the candidate list handed to the model includes rule-layer ids
+    to judge overlap against. So when this turn may not author, any
+    `supersede`/`forget` naming a rule id from `rule_ids` is dropped too - a
+    turn that cannot add a rule cannot delete or replace one either. This does
+    not touch `supersede`/`forget` of non-rule facts: fact extraction on an
+    ambient turn is unchanged.
+
+    The predicate itself lives in eve.state, shared with write_skill: one
+    guard, two authoring paths.
+    """
+    allowed = may_author(human)
+    kept, rejected = [], 0
+    for op in ops:
+        layer = getattr(op, "layer", None)
+        targets_rule = op.op in ("supersede", "forget") and op.target_id in rule_ids
+        if (
+            layer == "procedure"
+            or (layer in _AUTHORED_LAYERS and not allowed)
+            or (not allowed and targets_rule)
+        ):
+            rejected += 1
+            continue
+        kept.append(op)
+    return kept, rejected
+
+
 async def extract(state: dict, config: RunnableConfig) -> dict:
     """Extract memory after Eve's answer without allowing failures to fail a turn."""
     member = state["member"]
@@ -154,8 +209,11 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
         )
         model = get_model(Tier.REFLEX).with_structured_output(Extraction)
         result = await model.ainvoke([HumanMessage(prompt)])
-        counts = await apply_operations(
-            list(result.operations), member, thread_id, run_id
+        rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
+        operations, rejected = _filter_authored(list(result.operations), human, rule_ids)
+        counts = await apply_operations(operations, member, thread_id, run_id)
+        rules_written = sum(
+            1 for op in operations if getattr(op, "layer", None) == "rule"
         )
     except Exception:
         logger.warning("extraction failed for thread %s", thread_id, exc_info=True)
@@ -165,6 +223,11 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
     span = trace.get_current_span()
     for op_name in ("add", "supersede", "reinforce", "forget", "evict"):
         span.set_attribute(f"eve.extract.ops.{op_name}", counts.get(op_name, 0))
+    # Design doc section 9: the plausible failure of this phase is that
+    # authoring never fires at all. These two numbers are how that is
+    # detected, and how a firing guard is distinguished from a silent model.
+    span.set_attribute("eve.authoring.rules_written", rules_written)
+    span.set_attribute("eve.authoring.rules_rejected", rejected)
 
     await _maybe_refresh_digest(state, thread_id)
     return {}
