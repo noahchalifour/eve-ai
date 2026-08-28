@@ -141,3 +141,15 @@ def test_self_authoring_is_off_by_default():
 
 def test_rule_cap_has_a_default():
     assert Settings().memory_rule_cap == 20
+
+
+def test_eval_defaults():
+    from eve.settings import Settings
+
+    s = Settings()
+    assert s.eval_dataset_limit == 200
+    assert s.eval_voice_call_ceiling == 60
+    assert s.eval_regression_points == 10
+    assert s.eval_dead_rule_days == 90
+    assert s.eval_decision_retention_days == 180
+    assert s.eval_hygiene_apply_enabled is False

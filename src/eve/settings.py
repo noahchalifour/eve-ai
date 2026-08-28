@@ -117,6 +117,19 @@ class Settings(BaseSettings):
     # hundred tokens against memory_token_budget's 1200.
     memory_rule_cap: int = 20
 
+    # Phase 5b (Eval harness). See docs/superpowers/specs/
+    # 2026-08-27-eve-eval-harness-design.md section 9.2.
+    eval_dataset_limit: int = 200
+    # Above this many VOICE-tier calls, `eve-eval run` requires --yes. Both
+    # subscription proxies share a max_budget of 20 per 30 days with Noah's
+    # own work; a harness that can silently spend the month is one that will.
+    eval_voice_call_ceiling: int = 60
+    eval_regression_points: int = 10
+    eval_dead_rule_days: int = 90
+    eval_decision_retention_days: int = 180
+    eval_hygiene_apply_enabled: bool = False
+    langfuse_host: str = "https://langfuse.chalifour.dev"
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
