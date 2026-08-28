@@ -22,7 +22,9 @@ async def pool(monkeypatch):
     await db.migrate()
     p = await db.get_pool()
     async with p.connection() as conn:
-        await conn.execute("TRUNCATE eve_ambient_seen, eve_ambient_notice")
+        await conn.execute(
+            "TRUNCATE eve_ambient_seen, eve_ambient_notice, eve_ambient_decision"
+        )
     yield p
     await db.close_pool()
 
@@ -142,3 +144,42 @@ async def test_has_any_is_false_before_the_first_signal_and_true_after(pool):
     await store.mark_seen("calendar", "uid-1:start:x")
     assert await store.has_any("calendar") is True
     assert await store.has_any("mail") is False
+
+
+async def test_record_and_read_back_a_decision(pool):
+    from datetime import UTC, datetime
+
+    from eve_ambient.store import decisions_since, record_decision
+    from eve_ambient.types import FilterVerdict, Signal
+
+    signal = Signal(
+        source="mail", key="k1", occurred_at=datetime(2026, 8, 27, tzinfo=UTC),
+        member_sub="sub-noah", summary="A package shipped.",
+        payload={"from": "shop"},
+    )
+    await record_decision(signal, FilterVerdict(notify=True, audience=["sub-noah"], why="w"))
+
+    rows = await decisions_since(datetime(2026, 1, 1, tzinfo=UTC), limit=10)
+    assert len(rows) == 1
+    assert rows[0]["signal"]["summary"] == "A package shipped."
+    assert rows[0]["verdict"]["notify"] is True
+
+
+async def test_prune_decisions_respects_the_window(pool):
+    from datetime import UTC, datetime, timedelta
+
+    from eve_ambient.store import prune_decisions
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict, decided_at)"
+            " VALUES ('mail','old','{}','{}', now() - interval '400 days')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict)"
+            " VALUES ('mail','new','{}','{}')"
+        )
+    assert await prune_decisions(180) == 1
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) FROM eve_ambient_decision")
+        assert (await cur.fetchone())[0] == 1
