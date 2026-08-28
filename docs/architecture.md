@@ -813,18 +813,25 @@ likely already running. Container-internal ports are standard.
 
 ## Running the tests
 
-Three tiers, matching the pytest markers declared in `pyproject.toml`.
-`addopts` deselects `integration` and `live` by default, so a bare `pytest`
-is the unit tier; an explicit `-m` on the command line replaces that
+Four tiers, matching the pytest markers declared in `pyproject.toml`.
+`addopts` deselects `integration`, `live`, and `docker` by default, so a bare
+`pytest` is the unit tier; an explicit `-m` on the command line replaces that
 expression rather than adding to it.
 
 ```bash
 # Unit — no network, no services (the default; the -m is explicit for clarity)
-uv run pytest -m "not integration and not live"
+uv run pytest -m "not integration and not live and not docker"
 
 # Integration — real Postgres, Redis, and a live `aegra serve`
 docker compose -f docker-compose.test.yml up -d
 uv run pytest -m integration
+
+# Docker — builds the real eve-sandbox image and hits a running container
+# over HTTP (tests/test_sandbox_docker_image.py); the regression coverage
+# for a bug class no in-process test can see, since a dev checkout's
+# editable-install .pth file masks how the built image actually resolves
+# imports
+uv run pytest -m docker
 
 # Live — hits the real LiteLLM proxy and spends real quota
 EVE_LIVE_TESTS=1 uv run pytest -m live

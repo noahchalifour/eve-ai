@@ -64,7 +64,7 @@ uv run aegra dev
 Run the unit tests (no network, no services required):
 
 ```bash
-uv run pytest -m "not integration and not live"
+uv run pytest -m "not integration and not live and not docker"
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the graph, the module

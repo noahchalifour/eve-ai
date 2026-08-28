@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run pytest -m "not integration and not live" -v
+      - run: uv run pytest -m "not integration and not live and not docker" -v
 
   # Runs on every PR/push, unlike the tag-gated `image` job below: that job
   # publishes the eve-sandbox image but never asserts it actually works.
@@ -35,8 +35,13 @@ jobs:
       - run: uv run pytest -m docker -v
 
   # Publishing stays tag-only; `test` above now runs on every PR and push.
+  # Gated on docker-image-test too, not just test: that job is what actually
+  # proves the built eve-sandbox image can run a tool (Critical 1's
+  # regression coverage) - publishing without it would let a broken image
+  # ship on a tag the moment the `not docker` deselect above stops being an
+  # accident.
   image:
-    needs: test
+    needs: [test, docker-image-test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
