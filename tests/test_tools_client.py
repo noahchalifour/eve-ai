@@ -70,3 +70,54 @@ async def test_invoke_degrades_to_error_on_missing_result_and_error_keys():
     )
     result = await invoke("home.get_state", {"entity_id": "light.kitchen"})
     assert result.startswith("error:") and "KeyError" in result
+
+
+@respx.mock
+async def test_invoke_targets_the_sandbox_when_asked(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_BASE_URL", "http://sandbox:8091")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "s" * 32)
+    monkeypatch.setenv("EVE_TOOLS_BASE_URL", "http://tools:8090")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    route = respx.post("http://sandbox:8091/invoke").respond(
+        json={"result": {"n": 42}}
+    )
+    from eve.tools_client import invoke
+
+    out = await invoke("amortise", {"a": 41}, target="sandbox")
+
+    assert route.called
+    assert "42" in out
+    assert route.calls[0].request.headers["authorization"] == "Bearer " + "s" * 32
+
+
+@respx.mock
+async def test_invoke_still_defaults_to_eve_tools(monkeypatch):
+    monkeypatch.setenv("EVE_TOOLS_BASE_URL", "http://tools:8090")
+    monkeypatch.setenv("EVE_TOOLS_API_KEY", "t" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    route = respx.post("http://tools:8090/invoke").respond(json={"result": 1})
+    from eve.tools_client import invoke
+
+    await invoke("home.get_state", {"entity_id": "x"})
+    assert route.called
+
+
+@respx.mock
+async def test_a_dead_sandbox_returns_an_error_string(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_BASE_URL", "http://sandbox:8091")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "s" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    respx.post("http://sandbox:8091/invoke").mock(side_effect=ConnectionError)
+    from eve.tools_client import invoke
+
+    out = await invoke("amortise", {}, target="sandbox")
+    assert out.startswith("error:")
