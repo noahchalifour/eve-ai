@@ -2,9 +2,16 @@
 
 `extract` hands its work here and returns, so a turn ends when Eve stops
 talking rather than when her bookkeeping finishes. The next turn on the same
-thread joins the pending task before it reads memory, which is what keeps
+thread joins the pending task(s) before it reads memory, which is what keeps
 "detached" from meaning "eventually consistent": the wait lands in the gap
 where a member is typing, not in front of the reply they just asked for.
+
+This guarantee is process-local: `_pending` and `_detached` are ordinary
+module-global Python state, not shared across processes. A second replica of
+`eve`, or a rolling deploy that moves turn N+1 to a fresh process, has
+nothing in `_pending` to find and `join` returns EMPTY - not because there
+was nothing pending, but because this process never knew about it. See ADR
+0010's Consequences section.
 
 This module imports nothing from the rest of `eve`, so both `extract` (which
 spawns) and `recall` (which joins) may depend on it without a cycle.
@@ -15,17 +22,36 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Coroutine
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# thread_id -> the newest extraction still in flight for that thread.
-_pending: dict[str, asyncio.Task[None]] = {}
-# Tasks not reachable by thread id: those spawned without one, and older
-# tasks displaced by a second spawn on the same thread. Held for one reason
-# only - asyncio keeps just a WEAK reference to a running task, so a task
-# nobody else references can be garbage-collected mid-flight and lose the
-# writes it was about to make.
+
+class JoinResult(str, Enum):
+    """What `join` actually did, so a span attribute can tell these apart.
+
+    A bare bool collapses "there was nothing pending" and "something was
+    pending and finished" into the same True - which means a multi-replica
+    deployment silently serving stale reads (nothing pending IN THIS
+    PROCESS) reads identically to a healthy single-process join.
+    """
+
+    JOINED = "joined"
+    EMPTY = "empty"
+    TIMEOUT = "timeout"
+
+
+# thread_id -> every extraction still in flight for that thread. Usually a
+# set of one, but two runs can race on the same thread (Aegra does not
+# serialize them), or a join can time out and the turn move on while the
+# old task keeps running - either way, ALL of them must be joinable, not
+# just the newest.
+_pending: dict[str, set[asyncio.Task[None]]] = {}
+# Tasks not reachable by thread id: those spawned without one. Held for one
+# reason only - asyncio keeps just a WEAK reference to a running task, so a
+# task nobody else references can be garbage-collected mid-flight and lose
+# the writes it was about to make.
 _detached: set[asyncio.Task[None]] = set()
 
 
@@ -57,51 +83,47 @@ def spawn(thread_id: str | None, coro: Coroutine[Any, Any, None]) -> asyncio.Tas
         _hold(task)
         return task
 
-    previous = _pending.get(thread_id)
-    if previous is not None and not previous.done():
-        # Two runs raced on one thread (Aegra does not serialize them), or a
-        # join timed out and the turn moved on. Only the newest is joinable
-        # by thread id; the older one still needs a reference to survive.
-        _hold(previous)
-
-    _pending[thread_id] = task
+    _pending.setdefault(thread_id, set()).add(task)
 
     def _release(finished: asyncio.Task[None]) -> None:
-        # Only clear the slot if it is still OURS. A later spawn may have
-        # replaced it, and popping unconditionally would drop a live task's
-        # only strong reference.
-        if _pending.get(thread_id) is finished:
+        # Discard from whatever bucket is current, and drop the bucket
+        # itself once empty so a stale key does not accumulate forever.
+        bucket = _pending.get(thread_id)
+        if bucket is None:
+            return
+        bucket.discard(finished)
+        if not bucket:
             del _pending[thread_id]
 
     task.add_done_callback(_release)
     return task
 
 
-async def join(thread_id: str | None, budget_s: float) -> bool:
-    """Wait for this thread's pending extraction.
+async def join(thread_id: str | None, budget_s: float) -> JoinResult:
+    """Wait for every extraction still pending on this thread.
 
-    Returns True if there was nothing to wait for or it finished (including
-    by failing - a failed extraction is still finished), False if the budget
-    ran out. The budget bounds the WAIT, not the work: the task is shielded,
-    so giving up on it does not cancel the writes it is partway through.
+    Returns EMPTY if there was nothing to wait for, JOINED if everything
+    pending finished within the budget (including by failing - a failed
+    extraction is still finished), TIMEOUT if the budget ran out. The budget
+    bounds the WAIT, not the work: the gather is shielded, so giving up on it
+    does not cancel the writes any task is partway through.
     """
-    task = _pending.get(thread_id) if thread_id else None
-    if task is None or task.done():
-        return True
+    tasks = _pending.get(thread_id) if thread_id else None
+    if not tasks:
+        return JoinResult.EMPTY
     try:
-        await asyncio.wait_for(asyncio.shield(task), budget_s)
+        await asyncio.wait_for(
+            asyncio.shield(asyncio.gather(*tasks, return_exceptions=True)),
+            budget_s,
+        )
     except TimeoutError:
-        return False
-    except Exception:
-        # Logged by _log_failure. A broken extraction must not break the
-        # turn that merely waited for it.
-        return True
-    return True
+        return JoinResult.TIMEOUT
+    return JoinResult.JOINED
 
 
 async def drain() -> None:
     """Await every in-flight extraction. For tests and orderly shutdown."""
-    tasks = [*_pending.values(), *_detached]
+    tasks = [task for bucket in _pending.values() for task in bucket] + [*_detached]
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
