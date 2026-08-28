@@ -47,13 +47,13 @@ async def judge_assertion(assertion: str, response: str) -> Judgement:
     """A malformed structured-output response is a FAIL, not a crash - the same
     posture eve_ambient/filter.py takes for the same reason: retrying a
     response that will never come back different costs the same outage twice."""
-    model = get_model(Tier.REFLEX).with_structured_output(Judgement)
     try:
+        model = get_model(Tier.REFLEX).with_structured_output(Judgement)
         result = await model.ainvoke(
             [HumanMessage(_JUDGE_PROMPT.format(assertion=assertion, response=response))]
         )
-    except (ValidationError, ValueError, OutputParserException):
-        logger.warning("judge returned an unusable response")
+    except (ValidationError, ValueError, OutputParserException) as exc:
+        logger.warning("judge returned an unusable response: %s", exc)
         return Judgement(passed=False, why="judge response malformed")
     except Exception:
         logger.warning("judge call failed", exc_info=True)
