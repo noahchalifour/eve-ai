@@ -29,8 +29,8 @@ services:
       context: .
       dockerfile: Dockerfile.eve-sandbox
     environment:
-      EVE_SANDBOX_API_KEY: test-key
-    ports: ["8091:8091"]
+      EVE_SANDBOX_API_KEY: test-key-0123456789abcdef0123456789ab
+    ports: ["18092:8091"]
     healthcheck:
       test: ["CMD", "python", "-c",
               "import urllib.request as u; u.urlopen('http://localhost:8091/healthz')"]

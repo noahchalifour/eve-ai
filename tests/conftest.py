@@ -209,3 +209,55 @@ def eve_tools_server(stub_home_assistant):
         raise RuntimeError("eve-tools did not become ready within 20s")
     yield EVE_TOOLS_URL
     _terminate()
+
+
+# 18092, not 8091 (the container-internal / docker-compose host port): 18091
+# is already taken by stub_home_assistant above, and this fixture runs
+# eve-sandbox directly on the host rather than through docker-compose, so it
+# needs its own free port.
+EVE_SANDBOX_URL = "http://127.0.0.1:18092"
+
+
+@pytest.fixture(scope="session")
+def eve_sandbox_server():
+    """Start the real `eve-sandbox` service. Same rationale as
+    `eve_tools_server` above for `start_new_session=True` and
+    process-group teardown: `uv run uvicorn` spawns its worker as a separate
+    child rather than exec'ing into it, so a plain terminate leaks it."""
+    env = {
+        **os.environ,
+        "EVE_SANDBOX_API_KEY": "test-key-0123456789abcdef0123456789ab",
+    }
+    proc = subprocess.Popen(
+        ["uv", "run", "uvicorn", "eve_sandbox.app:app", "--host", "127.0.0.1", "--port", "18092"],
+        env=env,
+        start_new_session=True,
+    )
+
+    def _terminate():
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            os.killpg(pgid, signal.SIGKILL)
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            if httpx.get(f"{EVE_SANDBOX_URL}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+    else:
+        _terminate()
+        raise RuntimeError("eve-sandbox did not become ready within 20s")
+    yield EVE_SANDBOX_URL
+    _terminate()
