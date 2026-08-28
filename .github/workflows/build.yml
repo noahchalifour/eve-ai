@@ -16,6 +16,24 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest -m "not integration and not live" -v
 
+  # Runs on every PR/push, unlike the tag-gated `image` job below: that job
+  # publishes the eve-sandbox image but never asserts it actually works.
+  # This builds it fresh (Docker layer caching keeps a same-deps rebuild
+  # fast; a cold build is on the order of a minute) and asserts a real
+  # /invoke call against the real container succeeds - the regression
+  # coverage for Critical 1 (whole-branch review: `python -I` silently
+  # discarding PYTHONPATH, breaking every /invoke call in the built image)
+  # that test_sandbox_docker_image.py's own docstring explains no other test
+  # in this suite provides, dev-checkout .pth files masking that exact bug
+  # everywhere else.
+  docker-image-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run pytest -m docker -v
+
   # Publishing stays tag-only; `test` above now runs on every PR and push.
   image:
     needs: test

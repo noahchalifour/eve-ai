@@ -8,11 +8,27 @@ which never exercises the real subprocess boundary a deployed pod actually
 serves through - `execute.py`'s asyncio.create_subprocess_exec call is
 identical either way, but only a real HTTP round trip against a service that
 was itself started as a subprocess (`uv run uvicorn ...`) puts that call
-under the same process-tree shape production does. This is the shape of test
-that would have caught Critical 1 from the whole-branch review (`python -I`
-silently discarding PYTHONPATH, making every /invoke call fail in the built
-image): it exercises propose -> approve -> sandbox_specs -> a real /invoke
-POST, end to end.
+under the same process-tree shape production does. This test exercises
+propose -> approve -> sandbox_specs -> a real /invoke POST, end to end, over
+the process/HTTP boundary.
+
+What this test does NOT verify, despite exercising a real subprocess and a
+real HTTP call: that the *built Docker image* can import its own package.
+`eve_sandbox_server` starts the service with `uv run uvicorn ...` from this
+dev checkout, and the editable `uv sync` install drops a .pth file into
+.venv/lib/python3.12/site-packages that puts src/ on sys.path independent of
+PYTHONPATH or any interpreter isolation flag - so a bug shaped exactly like
+Critical 1 from the whole-branch review (`python -I` silently discarding
+PYTHONPATH, so a real deployed pod's `sys.executable -I -m
+eve_sandbox.runner` subprocess call always failed with ModuleNotFoundError)
+would NOT be caught here: the very .pth file the built image has no
+equivalent of masks it in a dev checkout regardless of PYTHONPATH/isolation
+flags. A previous re-reviewer proved this and flagged an earlier version of
+this docstring, which claimed the opposite, as false. The regression test
+that *does* cover the built image is tests/test_sandbox_docker_image.py,
+marked `docker` (it builds the real image with `docker build` and runs a
+container from it - too slow to want by default, so it needs `-m docker`
+explicitly, mirroring how `-m integration` and `-m live` are opt-in here).
 """
 
 import httpx
