@@ -32,6 +32,28 @@ def test_a_small_agreement_drop_passes():
     assert code == 0
 
 
+def test_exactly_ten_point_drop_passes():
+    """Boundary check: exactly 10 points should pass (drop > points is False when drop == points)."""
+    from eve.eval import store as store_mod
+
+    code, reasons = store_mod.evaluate_gate(
+        [_run({"notify_agreement": 65.0})], _run({"notify_agreement": 75.0})
+    )
+    assert code == 0
+    assert not any("notify_agreement" in r for r in reasons)
+
+
+def test_just_over_ten_point_drop_fails():
+    """Boundary check: 10.1 points should fail (exceeds the > 10 threshold)."""
+    from eve.eval import store as store_mod
+
+    code, reasons = store_mod.evaluate_gate(
+        [_run({"notify_agreement": 64.9})], _run({"notify_agreement": 75.0})
+    )
+    assert code == 1
+    assert any("notify_agreement" in r for r in reasons)
+
+
 def test_any_audience_drop_fails():
     """A member receiving a notification they lack the permission for is the
     failure Phase 4's definition of done treats as unacceptable."""
