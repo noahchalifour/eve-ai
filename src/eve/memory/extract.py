@@ -7,6 +7,7 @@ from functools import lru_cache
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.constants import TAG_NOSTREAM
 from opentelemetry import trace
 
 from eve.memory.embed import embed_texts
@@ -212,7 +213,7 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
             f"## The exchange\n{member['name']}: {human}\nEve: {ai}\n"
         )
         model = get_model(Tier.REFLEX).with_structured_output(Extraction)
-        result = await model.ainvoke([HumanMessage(prompt)])
+        result = await model.with_config(tags=[TAG_NOSTREAM]).ainvoke([HumanMessage(prompt)])
         rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
         operations, rejected = _filter_authored(list(result.operations), human, rule_ids)
         counts = await apply_operations(operations, member, thread_id, run_id)
@@ -270,7 +271,7 @@ async def _maybe_refresh_digest(state: dict, thread_id: str | None) -> None:
             for m in state["messages"]
             if isinstance(m, HumanMessage | AIMessage)
         )
-        summary = await get_model(Tier.REFLEX).ainvoke(
+        summary = await get_model(Tier.REFLEX).with_config(tags=[TAG_NOSTREAM]).ainvoke(
             [
                 HumanMessage(
                     "Summarise this conversation in at most four sentences, "
