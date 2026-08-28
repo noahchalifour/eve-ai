@@ -49,6 +49,50 @@ async def test_a_memory_hog_is_refused():
     assert "error" in out
 
 
+def test_the_memory_limit_itself_is_actually_applied():
+    """The end-to-end test above (`test_a_memory_hog_is_refused`) is real
+    coverage that *something* refuses a memory hog, but running it three
+    times shows it is caught non-deterministically by RLIMIT_CPU (~5s) or
+    the parent's wall-clock kill (~6s) - never observed via RLIMIT_AS itself.
+    A regression that silently broke RLIMIT_AS specifically on Linux (for
+    example, a platform check in runner._limit widened to swallow a real
+    failure) would leave that test green forever.
+
+    This is a direct, fast unit test of the limit-setting function instead:
+    it runs `_limit` in a throwaway subprocess (never in the pytest process
+    itself - RLIMIT_CPU/RLIMIT_AS, once lowered, cannot be raised back
+    without privilege, so applying them in-process could wound the test
+    runner) and asserts what RLIMIT_AS actually became afterwards.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import resource\n"
+        "from eve_sandbox.runner import _limit\n"
+        "before = resource.getrlimit(resource.RLIMIT_AS)[0]\n"
+        "_limit(memory_mb=123, cpu_seconds=5)\n"
+        "after = resource.getrlimit(resource.RLIMIT_AS)[0]\n"
+        "print(before, after)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    before, after = (int(x) for x in result.stdout.split())
+
+    if sys.platform == "darwin":
+        # The known-unsupported case: the kernel refuses to change it, so
+        # _limit must leave it exactly as it found it rather than silently
+        # claiming to have applied a limit that never took effect.
+        assert after == before
+    else:
+        assert after == 123 * 1024 * 1024
+
+
 async def test_oversized_output_is_truncated_or_refused():
     source = "def run(arguments):\n    return {'x': 'y' * 200000}\n"
     out = await run_tool(source, _sha(source), {}, max_output_bytes=1024)

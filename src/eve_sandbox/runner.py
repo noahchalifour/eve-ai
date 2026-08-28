@@ -22,16 +22,21 @@ def _limit(memory_mb: int, cpu_seconds: int) -> None:
     #
     # RLIMIT_AS is not settable on Darwin (macOS): the kernel rejects any
     # value, on every process, unconditionally - not a config error, a
-    # platform limitation. Caught and skipped rather than crashing the
-    # child, since the deployed pod is Linux, where this limit does apply
-    # and is enforced; RLIMIT_CPU below is a real backstop on every
-    # platform, including this one.
+    # platform limitation. That known case is caught and skipped rather than
+    # crashing the child, since the deployed pod is Linux, where this limit
+    # does apply and is enforced. The except is scoped to Darwin only: on
+    # any other platform a setrlimit(RLIMIT_AS) failure is a real
+    # regression (a restrictive seccomp profile, a bad argument, a future
+    # container runtime quirk) and must fail closed exactly like an
+    # RLIMIT_CPU or RLIMIT_CORE failure does below - re-raised, not
+    # swallowed, so the 256 MiB guarantee can't silently stop applying.
     try:
         resource.setrlimit(
             resource.RLIMIT_AS, (memory_mb * 1024 * 1024, memory_mb * 1024 * 1024)
         )
     except (ValueError, OSError):
-        pass
+        if sys.platform != "darwin":
+            raise
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     # No core dumps: a dump of this process is the one artefact that could
     # persist tool data outside the call.
@@ -54,7 +59,11 @@ def main() -> None:
         payload = json.dumps({"error": "the tool exceeded its memory limit"})
     except Exception as exc:  # noqa: BLE001
         payload = json.dumps({"error": f"{exc.__class__.__name__}: {exc}"})
-    except BaseException as exc:  # SystemExit, KeyboardInterrupt from rlimits
+    except BaseException as exc:  # SystemExit, KeyboardInterrupt, etc. raised
+        # by the tool's own code. Not how an RLIMIT_CPU/RLIMIT_AS kill shows
+        # up: those deliver SIGXCPU/SIGKILL straight to the interpreter and
+        # terminate it without unwinding through any except clause here -
+        # execute.py's "no stdout" branch is what actually detects that.
         payload = json.dumps({"error": f"the tool was stopped ({exc.__class__.__name__})"})
 
     sys.stdout.write(payload)
