@@ -33,6 +33,8 @@ jobs:
             dockerfile: Dockerfile.eve-tools
           - image: eve-ambient
             dockerfile: Dockerfile.eve-ambient
+          - image: eve-sandbox
+            dockerfile: Dockerfile.eve-sandbox
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3

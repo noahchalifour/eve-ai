@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import psycopg.errors
+
 from eve.memory.db import close_pool
 from eve.tools_authoring.inspect import check
 from eve.tools_authoring.store import (
@@ -98,7 +100,16 @@ def main() -> None:
                     if row:
                         print(f"\n--- {row['name']} ---\n{row['source']}")
             elif args.command == "approve":
-                ok = await approve_one(args.id, args.approver)
+                try:
+                    ok = await approve_one(args.id, args.approver)
+                except psycopg.errors.UniqueViolation:
+                    # store.approve() deliberately lets this propagate (see
+                    # its docstring): the partial unique index is the real
+                    # backstop, and only the CLI layer knows what a friendly
+                    # answer looks like.
+                    raise SystemExit(
+                        "a live version of this tool already exists; revoke it first"
+                    ) from None
                 print("approved" if ok else "not approved (already decided?)")
             elif args.command == "reject":
                 await reject(args.id, args.why)

@@ -66,5 +66,5 @@ testpaths = ["tests"]
 addopts = ["-m", "not integration and not live"]
 markers = [
     "integration: requires docker-compose.test.yml services",
-    "live: hits the real LiteLLM proxy; requires EVE_LIVE_TESTS=1",
+    "live: requires real external infrastructure (the real LiteLLM proxy, or kubectl against a real cluster for tests/test_sandbox_live.py); requires EVE_LIVE_TESTS=1",
 ]
