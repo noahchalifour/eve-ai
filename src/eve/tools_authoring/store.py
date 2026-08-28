@@ -32,24 +32,37 @@ async def propose(
     LangGraph replays a node's code from the top on every resume from an
     `interrupt()`, so `propose_tool` calls this function twice per
     interactive approval: once before the pause, once again when the human's
-    decision resumes the graph. Both calls carry the same
-    (name, source_sha256, thread_id, run_id), so the second is recognised as
-    the same proposal and returns the first row's id instead of inserting an
-    orphaned duplicate that would sit "pending" forever. A proposal made
-    outside a graph thread (thread_id/run_id both None) cannot replay this
-    way, so it always inserts."""
+    decision resumes the graph. `run_id` is NOT part of the dedup key: Aegra
+    mints a fresh run id for every HTTP submission, including the resume
+    submission that carries `Command(resume=...)`
+    (`aegra_api/services/run_preparation.py`'s `run_id = str(uuid4())`, forced
+    into `configurable` server-side and never client-overridable per
+    `aegra_api/services/langgraph_service.py`), so the pre-interrupt call and
+    the replayed call run under two different, unrelated run ids. `thread_id`
+    is what actually survives the pause/resume boundary - the resume is
+    submitted against the same thread. So the key is
+    (name, source_sha256, thread_id): the second call is recognised as the
+    same proposal and returns the first row's id instead of inserting an
+    orphaned duplicate that would sit "pending" forever. `run_id` is still
+    stored as metadata (source_run), just not matched on. A proposal made
+    outside a graph thread (thread_id is None) cannot replay this way, so it
+    always inserts.
+
+    This is a best-effort, friendly-result guard, not the invariant itself:
+    `eve_tool_pending_dedup` (a partial unique index, migration
+    0003_eve_tool_pending_dedup) is the real backstop against two genuinely
+    concurrent proposals racing past this SELECT before either commits."""
     pool = await get_pool()
     sha = source_hash(source)
     async with pool.connection() as conn:
-        if thread_id is not None and run_id is not None:
+        if thread_id is not None:
             cur = await conn.execute(
                 """
                 SELECT id FROM eve_tool
-                WHERE name = %s AND source_sha256 = %s
-                  AND source_thread = %s AND source_run = %s
+                WHERE name = %s AND source_sha256 = %s AND source_thread = %s
                   AND approved_at IS NULL AND rejected_why IS NULL
                 """,
-                (name, sha, thread_id, run_id),
+                (name, sha, thread_id),
             )
             existing = await cur.fetchone()
             if existing is not None:

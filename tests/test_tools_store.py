@@ -135,10 +135,13 @@ async def test_revoke_all(pool):
 async def test_propose_dedupes_the_interrupt_replay(pool):
     """LangGraph replays a node's code from the top on every resume from an
     interrupt, so `propose_tool` calls `store.propose()` twice for the exact
-    same proposal: once before the pause, once again on resume. Both calls
-    carry the same (name, source_sha256, thread_id, run_id), so the second
-    must return the first row's id rather than inserting an orphaned
-    duplicate."""
+    same proposal: once before the pause, once again on resume. Aegra mints a
+    fresh run id for every HTTP submission - including the resume submission
+    - so the two calls do NOT share a run_id; only thread_id survives the
+    pause/resume boundary. The dedup key is therefore
+    (name, source_sha256, thread_id), and the second call - with a different
+    run_id - must still return the first row's id rather than inserting an
+    orphaned duplicate."""
     from eve.tools_authoring.store import all_tools, by_id, propose
 
     first = await propose(
@@ -147,7 +150,7 @@ async def test_propose_dedupes_the_interrupt_replay(pool):
     )
     second = await propose(
         name="amortise", description="d", args_schema={"properties": {}},
-        source=SOURCE, proposed_by="sub-noah", thread_id="t1", run_id="r1",
+        source=SOURCE, proposed_by="sub-noah", thread_id="t1", run_id="r2",
     )
     assert first == second
     assert (await by_id(first)) is not None
@@ -156,7 +159,7 @@ async def test_propose_dedupes_the_interrupt_replay(pool):
     third = await propose(
         name="amortise", description="d", args_schema={"properties": {}},
         source=SOURCE + "# v2\n", proposed_by="sub-noah",
-        thread_id="t1", run_id="r1",
+        thread_id="t1", run_id="r3",
     )
     assert third != first
     assert len(await all_tools()) == 2
