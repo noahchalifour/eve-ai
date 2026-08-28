@@ -24,3 +24,15 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
+  eve-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.eve-sandbox
+    environment:
+      EVE_SANDBOX_API_KEY: test-key
+    ports: ["8091:8091"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+              "import urllib.request as u; u.urlopen('http://localhost:8091/healthz')"]
+      interval: 2s
+      retries: 30
