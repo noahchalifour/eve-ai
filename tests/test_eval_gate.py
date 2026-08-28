@@ -130,3 +130,38 @@ async def test_publish_reports_success(monkeypatch):
     monkeypatch.setattr(publish_mod, "_client", FakeClient)
 
     assert await publish_mod.publish_run("d", "with-rules", [], {}, {"x": 1.0}) is True
+
+
+def test_run_refuses_to_exceed_the_voice_ceiling(monkeypatch):
+    """A harness that can silently spend the month's budget is one that will."""
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_VOICE_CALL_CEILING", "10")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    with pytest.raises(SystemExit):
+        cli.check_ceiling(11, yes=False)
+
+
+def test_yes_overrides_the_ceiling(monkeypatch):
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_VOICE_CALL_CEILING", "10")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    cli.check_ceiling(11, yes=True)  # must not raise
+
+
+def test_under_the_ceiling_proceeds(monkeypatch):
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_VOICE_CALL_CEILING", "10")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    cli.check_ceiling(9, yes=False)
