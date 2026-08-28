@@ -3,7 +3,7 @@ from langchain_core.messages import ToolMessage
 from eve.skills.registry import Skill
 from eve.skills.search import rank_skills, search_skills
 from eve.skills.types import DynamicToolSpec
-from tests.test_specialists_base import MEMBER
+from tests.test_specialists_base import MEMBER, STATE
 
 
 async def _fake_embed(text: str) -> list[float]:
@@ -98,7 +98,11 @@ async def test_search_skills_adds_an_mcp_match_to_dynamic_tools(monkeypatch):
 async def test_search_skills_caps_dynamic_tools(monkeypatch):
     monkeypatch.setattr("eve.skills.search.embed_query", _fake_embed)
     monkeypatch.setattr("eve.skills.search.get_settings", lambda: type(
-        "S", (), {"dynamic_tools_cap": 1, "self_authoring_enabled": False}
+        "S", (), {
+            "dynamic_tools_cap": 1,
+            "self_authoring_enabled": False,
+            "sandbox_enabled": False,
+        }
     )())
     existing: DynamicToolSpec = {
         "server_id": "a", "tool_name": "x", "description": "roll dice", "schema": {}
@@ -238,6 +242,83 @@ async def test_search_skills_omits_authored_procedures_when_disabled(
 
     assert calls == []
     assert "1. Text Sam." not in command.update["messages"][0].content
+
+
+async def test_search_skills_binds_an_approved_sandbox_tool(monkeypatch, tmp_path):
+    from eve.skills import search as search_mod
+
+    async def load_procedures(sub):
+        return []
+
+    async def sandbox_specs():
+        return [
+            {
+                "server_id": "sandbox", "tool_name": "amortise",
+                "description": "Amortise a loan.",
+                "schema": {"properties": {"a": {"type": "integer"}}},
+                "source": "def run(arguments):\n    return {}\n",
+                "source_sha256": "a" * 64,
+            }
+        ]
+
+    async def embed_query(text):
+        return [1.0] + [0.0] * 1535
+
+    monkeypatch.setattr(search_mod, "load_procedures", load_procedures)
+    monkeypatch.setattr(search_mod, "sandbox_specs", sandbox_specs)
+    monkeypatch.setattr(search_mod, "embed_query", embed_query)
+    monkeypatch.setenv("EVE_SKILLS_DIR", str(tmp_path))
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    command = await search_mod.search_skills.ainvoke(
+        {
+            "name": "search_skills",
+            "args": {"query": "amortise a loan", "state": STATE},
+            "id": "c1",
+            "type": "tool_call",
+        }
+    )
+    specs = command.update["dynamic_tools"]
+    assert any(s["server_id"] == "sandbox" for s in specs)
+    assert "amortise" in command.update["messages"][0].content
+
+
+async def test_no_sandbox_specs_are_offered_when_disabled(monkeypatch, tmp_path):
+    """Fail closed: the kill switch must hold even against a spec the DB
+    still lists as approved."""
+    from eve.skills import search as search_mod
+
+    async def load_procedures(sub):
+        return []
+
+    async def sandbox_specs():
+        raise AssertionError("must not be consulted when disabled")
+
+    async def embed_query(text):
+        return [1.0] + [0.0] * 1535
+
+    monkeypatch.setattr(search_mod, "load_procedures", load_procedures)
+    monkeypatch.setattr(search_mod, "sandbox_specs", sandbox_specs)
+    monkeypatch.setattr(search_mod, "embed_query", embed_query)
+    monkeypatch.setenv("EVE_SKILLS_DIR", str(tmp_path))
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    command = await search_mod.search_skills.ainvoke(
+        {
+            "name": "search_skills",
+            "args": {"query": "amortise", "state": STATE},
+            "id": "c1",
+            "type": "tool_call",
+        }
+    )
+    assert command.update.get("dynamic_tools", []) == []
 
 
 def test_load_skills_parses_an_authored_row_like_a_file():
