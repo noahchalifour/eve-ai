@@ -64,6 +64,28 @@ That costs one turn's facts, in a path that already tolerates total failure
 lifespan hook `eve` does not own - Aegra owns the app - and is not worth
 standing one up for this. Revisit if deploys become frequent enough to notice.
 
+**The ordering guarantee is per-process.** `eve.memory.pending`'s registry is
+ordinary module-global Python state, not a shared or externally visible one.
+`recall`'s join can only find an extraction that was spawned in the *same*
+process. A second replica of `eve`, or a rolling deploy that routes turn N+1
+to a fresh process after turn N's extraction was spawned on the old one,
+means `join` finds nothing pending - not because there is nothing to wait
+for, but because this process never knew about it - and returns EMPTY. The
+turn then reads memory that has not been written yet, for exactly one turn,
+per replica transition, with nothing crashing to say so. This is accepted for
+the same reason the in-flight-task loss above is accepted: eve-ai is deployed
+as a single instance today (docs/architecture.md documents the equivalent
+constraint for eve-ambient, "One replica only" in its own section, for the
+same underlying reason - no cross-process coordination). This ADR does not
+independently verify that eve-ai's deployment manifest enforces a single
+replica; if it does not, this design REQUIRES that it does, and running more
+than one replica silently reintroduces the eventually-consistent read this
+ADR exists to rule out. `eve.recall.extract_joined` records `"empty"` for
+this case exactly as it does for the ordinary "nothing was pending" case, so
+a multi-replica deployment cannot be distinguished from a healthy one by that
+attribute alone - only the fraction of turns where it fires unexpectedly
+would hint at it.
+
 The pool is `max_size=5` (`memory/db.py`). Detached extractions each take a
 connection, so a burst of concurrent turns contends with recall for it. Not a
 problem at family scale; it is the number to look at first if it becomes one.

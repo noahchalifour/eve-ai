@@ -48,6 +48,10 @@ Five nodes, wired in `src/eve/graph.py`:
   extraction failure cannot erase a completed answer. The next turn on the
   thread joins the pending task in `recall` before reading memory, so detaching
   costs no ordering — see [ADR 0010](adr/0010-extraction-is-detached-and-joined.md).
+  That guarantee is per-process (the pending-task registry is in-memory, not
+  shared), so it requires `eve` to run as a single instance — a second
+  replica or a rolling deploy can serve one stale-memory turn per replica
+  transition, the same class of risk documented for `eve-ambient` below.
 
 The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
@@ -760,3 +764,4 @@ responsibility ends at building and publishing the image
 - [ADR 0007 — Ambient runs impersonate family members through one scoped token](adr/0007-ambient-impersonation.md)
 - [ADR 0008 — Eve-authored behaviour is memory, and authorisation never reads memory](adr/0008-authored-behaviour-is-memory.md)
 - [ADR 0009 — Eval inputs come from Postgres, not from Langfuse traces](adr/0009-eval-inputs-from-postgres.md)
+- [ADR 0010 — Memory extraction is detached from the turn and joined by the next one](adr/0010-extraction-is-detached-and-joined.md)

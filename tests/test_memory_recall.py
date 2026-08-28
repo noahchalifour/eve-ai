@@ -6,12 +6,24 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from eve.memory import pending
 from eve.memory import recall as memory_recall
 from eve.memory.types import Memory
 
 recall_mod = importlib.import_module("eve.memory.recall")
 
 CONFIG = {"configurable": {"thread_id": "t1"}}
+
+
+@pytest.fixture(autouse=True)
+def _clean_pending_registry():
+    """Several tests below (real-join and stalled-extraction cases) call the
+    actual `pending.join`/`pending.spawn` against the module-global registry
+    in `eve.memory.pending`. Without this, a task left pending by one test
+    (or a stale thread-id key) can leak into the next."""
+    pending.clear()
+    yield
+    pending.clear()
 
 
 def _mem(mid: str, content: str, layer: str = "episodic") -> Memory:
@@ -317,7 +329,7 @@ async def test_recall_joins_the_pending_extraction_before_reading(monkeypatch, w
 
     async def fake_join(thread_id, budget_s):
         order.append(("join", thread_id))
-        return True
+        return pending.JoinResult.JOINED
 
     original = recall_mod.load_always_on
 
@@ -337,7 +349,7 @@ async def test_recall_joins_with_the_configured_budget(monkeypatch, wired):
 
     async def fake_join(thread_id, budget_s):
         seen["budget"] = budget_s
-        return True
+        return pending.JoinResult.JOINED
 
     monkeypatch.setattr(recall_mod.pending, "join", fake_join)
     monkeypatch.setattr(
@@ -360,7 +372,7 @@ async def test_a_stalled_extraction_does_not_hang_the_turn(monkeypatch, wired):
     wedged, this turn ships with slightly stale candidates rather than
     waiting on it forever."""
     async def fake_join(thread_id, budget_s):
-        return False
+        return pending.JoinResult.TIMEOUT
 
     monkeypatch.setattr(recall_mod.pending, "join", fake_join)
 
