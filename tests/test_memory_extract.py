@@ -153,6 +153,9 @@ async def test_a_model_failure_does_not_break_the_turn(monkeypatch, recorded):
         def with_structured_output(self, schema):
             return self
 
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, _messages):
             raise RuntimeError("gemini is down")
 
@@ -172,6 +175,9 @@ async def test_zero_digest_cadence_does_not_break_a_completed_turn(
     """Digest setup runs after streaming and must not be able to fail the turn."""
     class Recording:
         def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
             return self
 
         async def ainvoke(self, _messages):
@@ -214,6 +220,9 @@ async def test_extraction_asks_the_model_about_overlapping_memories(
         def with_structured_output(self, schema):
             return self
 
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, messages):
             seen["prompt"] = messages[0].content
             return Extraction(operations=[])
@@ -240,6 +249,9 @@ async def _run_extract(monkeypatch, ops, human, member, enabled=True):
 
     class FakeModel:
         def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
             return self
 
         async def ainvoke(self, messages):
@@ -370,6 +382,9 @@ async def test_a_procedure_op_is_never_accepted_from_extraction(monkeypatch, rec
         def with_structured_output(self, schema):
             return self
 
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, messages):
             return Extraction.model_construct(
                 operations=[
@@ -410,6 +425,9 @@ async def test_tool_messages_never_reach_the_extraction_prompt(monkeypatch, reco
 
     class FakeModel:
         def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
             return self
 
         async def ainvoke(self, messages):
@@ -459,6 +477,9 @@ async def test_a_forget_targeting_a_rule_is_refused_on_an_ambient_turn(
         def with_structured_output(self, schema):
             return self
 
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, messages):
             return Extraction(operations=[Operation(op="forget", target_id="rule-1")])
 
@@ -501,6 +522,9 @@ async def test_a_supersede_targeting_a_rule_is_refused_on_an_ambient_turn(
 
     class FakeModel:
         def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
             return self
 
         async def ainvoke(self, messages):
@@ -549,6 +573,9 @@ async def test_a_forget_targeting_a_non_rule_fact_still_works_on_an_ambient_turn
 
     class FakeModel:
         def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
             return self
 
         async def ainvoke(self, messages):
