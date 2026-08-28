@@ -165,3 +165,123 @@ def test_under_the_ceiling_proceeds(monkeypatch):
     get_settings.cache_clear()
 
     cli.check_ceiling(9, yes=False)
+
+
+def _hygiene_args(apply=False):
+    import types
+
+    return types.SimpleNamespace(member="sub-noah", apply=apply)
+
+
+def _fake_rule(rid, content):
+    import types
+
+    return types.SimpleNamespace(id=rid, content=content)
+
+
+def _fake_duplicate_pair():
+    return (_fake_rule("keeper", "Lead with the number."), _fake_rule("loser", "Give the number first."), 0.99)
+
+
+def _wire_hygiene_cli(monkeypatch, *, duplicates, apply_calls, prune_calls):
+    """Stub every collaborator `_cmd_hygiene` calls so the test asserts only
+    on the --apply / EVE_EVAL_HYGIENE_APPLY_ENABLED gating, not on the real
+    duplicate/contradiction/prune logic - each of which already has its own
+    unit or integration tests."""
+    import eve_ambient.store as ambient_store_mod
+    from eve.eval import cli, hygiene as hygiene_mod
+
+    async def fake_load_always_on(sub, thread_id, *, include_rules=False):
+        return [], [], None, []
+
+    async def fake_rules_with_embeddings(sub):
+        return []
+
+    async def fake_report_contradictions(rules):
+        return []
+
+    async def fake_apply_duplicates(pairs):
+        apply_calls.append(pairs)
+        return len(pairs)
+
+    async def fake_prune_decisions(days):
+        prune_calls.append(days)
+        return 0
+
+    monkeypatch.setattr(cli, "load_always_on", fake_load_always_on)
+    monkeypatch.setattr(cli, "rules_with_embeddings", fake_rules_with_embeddings)
+    monkeypatch.setattr(hygiene_mod, "find_dead", lambda rules, days: [])
+    monkeypatch.setattr(hygiene_mod, "report_contradictions", fake_report_contradictions)
+    monkeypatch.setattr(hygiene_mod, "find_duplicates", lambda pairs, threshold=0.95: duplicates)
+    monkeypatch.setattr(hygiene_mod, "apply_duplicates", fake_apply_duplicates)
+    monkeypatch.setattr(ambient_store_mod, "prune_decisions", fake_prune_decisions)
+
+
+async def test_hygiene_without_apply_only_reports_duplicates(monkeypatch):
+    """Report-only by default (docs/architecture.md): a bare
+    `hygiene --member X` must supersede nothing and delete nothing."""
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_HYGIENE_APPLY_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    apply_calls, prune_calls = [], []
+    _wire_hygiene_cli(
+        monkeypatch,
+        duplicates=[_fake_duplicate_pair()],
+        apply_calls=apply_calls,
+        prune_calls=prune_calls,
+    )
+
+    await cli._cmd_hygiene(_hygiene_args(apply=False))
+
+    assert apply_calls == []
+    assert prune_calls == []
+
+
+async def test_hygiene_apply_flag_alone_is_inert(monkeypatch):
+    """--apply without EVE_EVAL_HYGIENE_APPLY_ENABLED must not supersede or
+    prune - the setting is the deliberate second gate on a destructive path."""
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_HYGIENE_APPLY_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    apply_calls, prune_calls = [], []
+    _wire_hygiene_cli(
+        monkeypatch,
+        duplicates=[_fake_duplicate_pair()],
+        apply_calls=apply_calls,
+        prune_calls=prune_calls,
+    )
+
+    await cli._cmd_hygiene(_hygiene_args(apply=True))
+
+    assert apply_calls == []
+    assert prune_calls == []
+
+
+async def test_hygiene_applies_duplicates_and_prunes_when_both_gates_are_open(
+    monkeypatch,
+):
+    from eve.eval import cli
+
+    monkeypatch.setenv("EVE_EVAL_HYGIENE_APPLY_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    apply_calls, prune_calls = [], []
+    pairs = [_fake_duplicate_pair()]
+    _wire_hygiene_cli(
+        monkeypatch, duplicates=pairs, apply_calls=apply_calls, prune_calls=prune_calls
+    )
+
+    await cli._cmd_hygiene(_hygiene_args(apply=True))
+
+    assert apply_calls == [pairs]
+    assert len(prune_calls) == 1

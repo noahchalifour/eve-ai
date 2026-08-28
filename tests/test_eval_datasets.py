@@ -21,6 +21,20 @@ def test_the_golden_file_has_exactly_one_canary():
     assert len(canaries) == 1
 
 
+def test_every_golden_file_member_resolves_in_the_real_roster():
+    """replay_turn calls the real graph, which resolves `member` through
+    get_family().get(identity) and raises UnknownMemberError on anything
+    not in family.yaml. A placeholder sub (e.g. "sub-noah") here would crash
+    `eve-eval run` on its very first item in every environment - this test
+    exists so that class of bug fails loudly in the unit suite instead."""
+    from eve.eval.datasets import build_turns
+    from eve.family import get_family
+
+    family = get_family()
+    for item in build_turns("tests/eval/turns.yaml"):
+        family.get(item.input["member"])  # raises UnknownMemberError if missing
+
+
 def test_build_ambient_shapes_a_decision_row():
     from datetime import UTC, datetime
 

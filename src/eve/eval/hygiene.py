@@ -10,6 +10,7 @@ authoring rules about her own authoring is out of scope for the program
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 
 from langchain_core.messages import HumanMessage
@@ -38,8 +39,21 @@ common answer.
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity.
+
+    A bare dot product is correct ONLY if both vectors are unit-normalized -
+    true today (`eve.memory.embed._normalise` re-normalises after truncating
+    gemini-embedding-001's Matryoshka output, ADR 0003) but not something
+    this function should have to trust silently: a future embedding model or
+    a bypass of `embed_texts` that skips normalisation would make this scorer
+    wrong in a way that is invisible until it auto-supersedes a real rule.
+    Normalising here costs two cheap passes over a 1536-length list and
+    removes that dependency entirely.
+    """
+    norm_a = math.sqrt(sum(x * x for x in a)) or 1.0
+    norm_b = math.sqrt(sum(y * y for y in b)) or 1.0
     dot = sum(x * y for x, y in zip(a, b, strict=True))
-    return round(dot, 4)
+    return round(dot / (norm_a * norm_b), 4)
 
 
 def find_duplicates(

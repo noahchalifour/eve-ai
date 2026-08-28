@@ -2,7 +2,7 @@
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there are only four tables here, across four migration entries.
+them, and there are only six tables here, across five migration entries.
 
 Mostly memory, hence the module's location, plus `eve_pat` - which is auth,
 not memory, but shares this pool and this list rather than standing up a

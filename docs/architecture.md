@@ -628,9 +628,15 @@ embedding similarity and can supersede the weaker with `--apply`, but only
 reports contradictions and dormant rules — resolving a conflict is a
 judgement call for a human, not a flash-lite model unattended.
 
-The harness runs on demand and weekly via a `CronJob` in the `infrastructure`
-repository, never in CI: its calls are paid and nondeterministic, so gating
-merges on it buys flaky builds and a budget bill.
+The harness is designed to run on demand and, eventually, weekly via a
+`CronJob` in the `infrastructure` repository, never in CI: its calls are paid
+and nondeterministic, so gating merges on it buys flaky builds and a budget
+bill. **That CronJob and its container image do not exist yet** - building
+and shipping them is Phase 5c's packaging work. Today, `eve-eval build`/`run`
+require a working directory that contains `tests/eval/turns.yaml` (or
+whatever `EVE_EVAL_TURNS_FILE` is pointed at instead): none of this repo's
+three Dockerfiles copy `tests/`, so the harness cannot run inside any image
+built from them yet.
 
 ## Running locally
 

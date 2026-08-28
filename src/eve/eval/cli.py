@@ -20,10 +20,9 @@ from eve.eval.scorers import judge_assertion, rule_delta, score_ambient, score_t
 from eve.eval.store import gate, record_run
 from eve.eval.types import RunScore
 from eve.memory.db import close_pool
-from eve.memory.store import load_always_on
+from eve.memory.store import load_always_on, rules_with_embeddings
 from eve.settings import get_settings
 
-_TURNS_FILE = "tests/eval/turns.yaml"
 _SPOT_CHECK = 10
 
 
@@ -49,11 +48,19 @@ async def _run_ambient(limit: int | None) -> tuple[RunScore, list, dict]:
 
 
 async def _run_turns(arm: str) -> tuple[RunScore, list, dict, list[str]]:
-    items = build_turns(_TURNS_FILE)
+    items = build_turns(get_settings().eval_turns_file)
     judged: dict[str, list] = {}
     spot: list[str] = []
     for item in items:
-        response = await replay_turn(item, suppress_rules=(arm == "without-rules"))
+        outcome = await replay_turn(item, suppress_rules=(arm == "without-rules"))
+        if outcome["error"]:
+            # Excluded, not counted as a failing assertion: an unavailable
+            # graph call is not a behaviour change. Mirrors replay_ambient's
+            # `{"error": True}` posture and score_ambient's handling of it.
+            judged[item.id] = []
+            spot.append(f"[ERROR] {item.id}: replay failed, excluded from scoring")
+            continue
+        response = outcome["text"]
         verdicts = [
             await judge_assertion(assertion, response)
             for assertion in item.expected["expects"]
@@ -66,7 +73,7 @@ async def _run_turns(arm: str) -> tuple[RunScore, list, dict, list[str]]:
 
 
 async def _cmd_run(args) -> int:
-    items = build_turns(_TURNS_FILE)
+    items = build_turns(get_settings().eval_turns_file)
     check_ceiling(voice_call_estimate(items, arms=2), args.yes)
 
     ambient_score, ambient_items, ambient_results = await _run_ambient(args.limit)
@@ -109,7 +116,7 @@ async def _cmd_gate(args) -> int:
 
 async def _cmd_build(args) -> int:
     ambient = await build_ambient(args.limit)
-    turns = build_turns(_TURNS_FILE)
+    turns = build_turns(get_settings().eval_turns_file)
     print(f"ambient items: {len(ambient)}")
     print(f"turn items:    {len(turns)}")
     if not ambient:
@@ -127,25 +134,39 @@ async def _cmd_hygiene(args) -> int:
     )
     dead = hygiene_mod.find_dead(rules, settings.eval_dead_rule_days)
     conflicts = await hygiene_mod.report_contradictions(rules)
+    pairs = await rules_with_embeddings(args.member)
+    duplicates = hygiene_mod.find_duplicates(pairs)
 
     print(f"{len(rules)} live rules for {args.member}")
     for rule in dead:
         print(f"  dormant: {rule.id} {rule.content[:80]}")
     for conflict in conflicts:
         print(f"  CONFLICT (report only): {conflict}")
-    print(
-        "duplicate detection needs embeddings; run with --apply once "
-        "EVE_EVAL_HYGIENE_APPLY_ENABLED is set to act on them."
-        if not args.apply
-        else ""
-    )
+    for keeper, loser, score in duplicates:
+        print(f"  DUPLICATE (cosine {score}): {loser.id} -> keeping {keeper.id}")
+        print(f"    keeper: {keeper.content[:80]}")
+        print(f"    loser:  {loser.content[:80]}")
+
+    apply_enabled = args.apply and settings.eval_hygiene_apply_enabled
     if args.apply and not settings.eval_hygiene_apply_enabled:
         print("--apply is inert: EVE_EVAL_HYGIENE_APPLY_ENABLED is false")
-    # Pruning rides this command so the weekly CronJob does it in one place.
-    from eve_ambient.store import prune_decisions
+    if duplicates and not apply_enabled:
+        print(
+            f"{len(duplicates)} duplicate pair(s) found; report-only. Run "
+            "with --apply once EVE_EVAL_HYGIENE_APPLY_ENABLED is set to act "
+            "on them."
+        )
+    elif apply_enabled:
+        applied = await hygiene_mod.apply_duplicates(duplicates)
+        print(f"superseded {applied} duplicate rule(s)")
 
-    pruned = await prune_decisions(settings.eval_decision_retention_days)
-    print(f"pruned {pruned} decision rows beyond the retention window")
+        # Pruning rides the same gate as duplicate application: hygiene is
+        # report-only by default (docs/architecture.md), so a bare
+        # `hygiene --member X` invocation must not run a real DELETE.
+        from eve_ambient.store import prune_decisions
+
+        pruned = await prune_decisions(settings.eval_decision_retention_days)
+        print(f"pruned {pruned} decision rows beyond the retention window")
     return 0
 
 

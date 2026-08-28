@@ -11,7 +11,7 @@ import re
 from psycopg.rows import dict_row
 
 from eve.memory.db import get_pool
-from eve.memory.embed import to_pgvector
+from eve.memory.embed import from_pgvector, to_pgvector
 from eve.memory.types import Memory
 from eve.settings import get_settings
 
@@ -112,6 +112,36 @@ async def load_always_on(
     digest = next((m.content for m in rows if m.layer == "digest"), None)
     rules = [m for m in rows if m.layer == "rule"]
     return profile, household, digest, rules
+
+
+async def rules_with_embeddings(sub: str) -> list[tuple[Memory, list[float]]]:
+    """Live, non-superseded rules visible to one member, paired with their
+    embedding - what the eval harness's duplicate-rule check needs to compare
+    rules by similarity.
+
+    Separate from `load_always_on`'s rule arm rather than reusing it:
+    `load_always_on` returns bare `Memory` rows (the prompt has no use for a
+    rule's own embedding), and adding an embedding column there would carry
+    it through the always-on load path for every turn. `embedding IS NOT
+    NULL` for the same reason `search_episodic_vector` filters on it: a rule
+    is written before it is embedded, and the embed call can fail.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                SELECT {_COLUMNS}, embedding FROM eve_memory
+                WHERE superseded_why IS NULL
+                  AND layer = 'rule'
+                  AND embedding IS NOT NULL
+                  AND ((scope_kind = 'member' AND scope_id = %(sub)s)
+                       OR scope_kind = 'household')
+                """,
+                {"sub": sub},
+            )
+            rows = await cur.fetchall()
+    return [(_row_to_memory(row), from_pgvector(row["embedding"])) for row in rows]
 
 
 async def search_episodic_lexical(

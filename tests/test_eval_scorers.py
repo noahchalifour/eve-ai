@@ -73,6 +73,39 @@ def test_errored_items_are_excluded_not_counted_as_disagreement():
     assert score_ambient(items, results)["notify_agreement"] == 100.0
 
 
+def _turn(item_id, canary=False):
+    return DatasetItem(
+        id=item_id, shape="turns", input={}, expected={"expects": []}, canary=canary,
+    )
+
+
+def test_score_turns_excludes_an_errored_items_empty_verdict_list():
+    """`_cmd_run` records `[]` for an item whose replay errored (the same
+    convention as `replay_ambient`'s `{"error": True}`). An empty list must
+    contribute nothing to assertion_pass rather than read as zero assertions
+    passed out of zero, or worse, skew the percentage."""
+    from eve.eval.scorers import Judgement, score_turns
+
+    items = [_turn("a"), _turn("b")]
+    judged = {
+        "a": [Judgement(passed=True, why="ok"), Judgement(passed=True, why="ok")],
+        "b": [],  # replay of "b" errored
+    }
+    scores = score_turns(items, judged)
+
+    assert scores["assertion_pass"] == 100.0
+    assert scores["assertions"] == 2
+
+
+def test_score_turns_treats_an_errored_canary_as_not_passed():
+    from eve.eval.scorers import score_turns
+
+    items = [_turn("canary", canary=True)]
+    scores = score_turns(items, {"canary": []})
+
+    assert scores["canary_passed"] is False
+
+
 async def test_judge_returns_a_boolean_and_a_reason(monkeypatch):
     from eve.eval import scorers as scorers_mod
     from eve.eval.scorers import Judgement

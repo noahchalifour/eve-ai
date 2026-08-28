@@ -106,7 +106,16 @@ def score_ambient(items: list[DatasetItem], results: dict[str, dict]) -> dict:
 
 
 def score_turns(items: list[DatasetItem], judged: dict[str, list[Judgement]]) -> dict:
-    """Fraction of assertions the judge marked satisfied, plus the canary."""
+    """Fraction of assertions the judge marked satisfied, plus the canary.
+
+    An item whose replay errored (an unknown member sub, a graph failure)
+    carries an empty verdict list here, the same convention `_cmd_run` uses
+    for it. An empty list contributes zero to both `total` and `passed`, so
+    the item is excluded from `assertion_pass` rather than counted as a
+    failure - mirroring how `score_ambient` excludes `{"error": True}`
+    results from `comparable`. A canary with no verdicts is treated as not
+    passed, the safe default: the gate only fails on `canary_passed is True`.
+    """
     passed = total = 0
     canary_passed = False
     for item in items:

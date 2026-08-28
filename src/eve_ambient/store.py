@@ -207,6 +207,18 @@ async def decisions_since(since: datetime, limit: int) -> list[dict]:
 
     LEFT JOIN, not INNER: a notify=false decision has no notice row, and
     dropping those would leave the dataset with only the positives.
+
+    The join is bounded to `[d.decided_at, d.decided_at + 1 hour)`, not open
+    over `(source, key)` alone: that pair is not unique over time - the same
+    key legitimately re-fires after its cooldown window (`already_notified`'s
+    docstring). An unbounded join would let a reply to an OLD notice mark a
+    much LATER, unrelated decision for the same key as `replied=True`, and
+    would count notices from unrelated past occurrences into `notices`. A
+    notice can never precede the decision that produced it, and one that
+    would have followed from this decision is sent promptly if at all - a
+    one-hour window is generous against the poll interval
+    (`ambient_poll_interval_seconds`, five minutes by default) without
+    reaching into the next cooldown-bounded recurrence of the same key.
     """
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -219,6 +231,8 @@ async def decisions_since(since: datetime, limit: int) -> list[dict]:
                   FROM eve_ambient_decision d
                   LEFT JOIN eve_ambient_notice n
                     ON n.source = d.source AND n.key = d.key
+                   AND n.sent_at >= d.decided_at
+                   AND n.sent_at < d.decided_at + interval '1 hour'
                  WHERE d.decided_at >= %(since)s
                  GROUP BY d.id
                  ORDER BY d.decided_at DESC

@@ -65,3 +65,11 @@ def to_pgvector(vec: list[float]) -> str:
     format, versus a dependency and a per-connection registration hook.
     """
     return "[" + ",".join(repr(float(v)) for v in vec) + "]"
+
+
+def from_pgvector(raw: str) -> list[float]:
+    """The inverse of `to_pgvector`. Without the adapter this module avoids
+    registering, psycopg has no type mapping for `vector` and returns the
+    column as this same text literal (`"[0.1,0.2,...]"`) rather than a
+    Python list - confirmed against the real column, not assumed."""
+    return [float(v) for v in raw.strip("[]").split(",")]

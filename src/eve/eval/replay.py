@@ -63,7 +63,7 @@ async def _no_extract(state: dict, config) -> dict:
     return {}
 
 
-async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> str:
+async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     """Invoke the real graph for one member message and return the final text.
 
     `suppress_rules` is threaded through build_system_prompt via a patched
@@ -71,6 +71,10 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> str:
     internally and adding an arm parameter to EveState would make every tool
     taking InjectedState fail validation wherever the key is absent - the same
     failure mode eve/state.py's _replace_dynamic_tools exists to prevent.
+
+    Mirrors replay_ambient's posture: any failure (an unknown `member` sub, a
+    model outage, ...) is reported as `{"error": True}` rather than raised, so
+    one bad item cannot abort a run of two hundred.
     """
     original = context.build_system_prompt
 
@@ -93,13 +97,16 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> str:
                 }
             },
         )
+    except Exception:
+        logger.warning("replay: %s failed", item.id, exc_info=True)
+        return {"text": "", "error": True}
     finally:
         context.build_system_prompt = original
 
     for message in reversed(result["messages"]):
         if isinstance(message, AIMessage) and not message.tool_calls:
-            return str(message.content)
-    return ""
+            return {"text": str(message.content), "error": False}
+    return {"text": "", "error": False}
 
 
 def voice_call_estimate(items: list[DatasetItem], arms: int) -> int:

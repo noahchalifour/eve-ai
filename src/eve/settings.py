@@ -129,6 +129,11 @@ class Settings(BaseSettings):
     eval_decision_retention_days: int = 180
     eval_hygiene_apply_enabled: bool = False
     langfuse_host: str = "https://langfuse.chalifour.dev"
+    # Overridable rather than hardcoded: none of this repo's Dockerfiles copy
+    # `tests/`, so `eve-eval build`/`run` need a working directory that
+    # contains this file, or this setting pointed at wherever it lives - a
+    # packaging detail Phase 5c owns, not this one.
+    eval_turns_file: str = "tests/eval/turns.yaml"
 
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)

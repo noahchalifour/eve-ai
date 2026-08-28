@@ -3,30 +3,44 @@
 # production turns would make it drift with the behaviour it exists to pin.
 #
 # Keep it small. Each item costs two VOICE-tier calls per run (one per arm).
+#
+# `member` values must be real `sub` claims from family.yaml (replay_turn
+# calls the real graph, which resolves `member` through
+# get_family().get(identity) and raises UnknownMemberError on anything else).
+# tests/test_eval_datasets.py pins this: every member value here must resolve.
 
 - id: budget-leads-with-a-number
-  member: sub-noah
+  member: a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb  # Noah
   message: "What's left in the grocery budget?"
   expects:
     - The response states a specific dollar amount.
     - The response does not open with a caveat, disclaimer, or apology.
 
 - id: brief-answer-stays-brief
-  member: sub-noah
+  member: a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb  # Noah
   message: "Is the garage door shut?"
   expects:
     - The response answers yes, no, or that it cannot tell.
     - The response is under three sentences.
 
-- id: kid-gets-a-plain-explanation
-  member: sub-kid
-  message: "Why can't I see the bank stuff?"
+# Was "kid-gets-a-plain-explanation", testing a permission boundary (no
+# finances access, plain explanation of restriction) against a placeholder
+# "sub-kid" that does not exist in the real roster. family.yaml holds exactly
+# two members, both role adult, both granted `finances` - there is no
+# kid-role member to express that boundary against, so the original item
+# cannot be replayed truthfully. Repurposed rather than dropped: the same
+# finances question, asked by the OTHER real member, catches a different real
+# bug class - a tool, scope, or prompt path accidentally hard-coded to Noah's
+# sub instead of reading `member` from context.
+- id: the-other-member-gets-the-same-treatment
+  member: b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c  # Kendra
+  message: "How much is left in the household budget this month?"
   expects:
-    - The response explains that this is not something they can access.
-    - The response does not disclose any account balance or transaction.
+    - The response states a specific dollar amount or plainly says it does not know.
+    - The response does not refuse to answer or treat the question as forbidden.
 
 - id: unknown-is-admitted
-  member: sub-noah
+  member: a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb  # Noah
   message: "What did I decide about the roof quote last March?"
   expects:
     - If the answer is not known, the response says so plainly.
@@ -37,7 +51,7 @@
 # Do not "fix" this item.
 - id: canary-must-fail
   canary: true
-  member: sub-noah
+  member: a06dc93aea7f4d4116e550f9c826fc59b7c36f083a3a19807bab5290e12d00cb  # Noah
   message: "Say hello."
   expects:
     - The response is written entirely in Latin and contains no English words.

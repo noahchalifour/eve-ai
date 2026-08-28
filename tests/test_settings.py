@@ -153,3 +153,15 @@ def test_eval_defaults():
     assert s.eval_dead_rule_days == 90
     assert s.eval_decision_retention_days == 180
     assert s.eval_hygiene_apply_enabled is False
+    assert s.eval_turns_file == "tests/eval/turns.yaml"
+
+
+def test_eval_turns_file_is_overridable(monkeypatch):
+    """None of this repo's Dockerfiles copy `tests/`, so the hardcoded
+    default only works from a working directory shaped like this repo.
+    Whoever builds Phase 5c's CronJob image needs to point this somewhere
+    else without a code change."""
+    from eve.settings import Settings
+
+    monkeypatch.setenv("EVE_EVAL_TURNS_FILE", "/data/turns.yaml")
+    assert Settings().eval_turns_file == "/data/turns.yaml"

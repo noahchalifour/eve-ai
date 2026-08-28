@@ -142,10 +142,32 @@ async def test_replay_turn_never_runs_extract(monkeypatch):
         input={"member": "sub-noah", "message": "Say hello."},
         expected={"expects": ["It greets."]},
     )
-    text = await replay_mod.replay_turn(item, suppress_rules=False)
+    outcome = await replay_mod.replay_turn(item, suppress_rules=False)
 
-    assert "Hello." in text
+    assert outcome["error"] is False
+    assert "Hello." in outcome["text"]
     assert called == []
+
+
+async def test_replay_turn_reports_an_error_rather_than_raising(monkeypatch):
+    """Mirrors replay_ambient's posture: an unknown member sub (or any other
+    graph failure) must not abort a run of many items."""
+    from eve.eval import replay as replay_mod
+    from eve.eval.types import DatasetItem
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("graph blew up")
+
+    monkeypatch.setattr(replay_mod, "build_graph", boom)
+
+    item = DatasetItem(
+        id="t1", shape="turns",
+        input={"member": "sub-does-not-exist", "message": "hi"},
+        expected={"expects": []},
+    )
+    outcome = await replay_mod.replay_turn(item, suppress_rules=False)
+
+    assert outcome == {"text": "", "error": True}
 
 
 def test_voice_call_estimate_counts_both_arms():
