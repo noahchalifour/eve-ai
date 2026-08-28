@@ -104,12 +104,25 @@ async def run_tool(
         # `await stream.read()` can leave a stream "paused" once its
         # internal buffer passes StreamReader's flow-control limit, which
         # stalls the OS-level pipe and can block the child in write() -
-        # exactly the hang this fixes. _read_capped compensates by capping
-        # how much it will ever buffer and, on the kill paths below, by
-        # continuing to drain whatever is left after the SIGKILL rather
-        # than abandoning the stream mid-read.
+        # exactly the hang this fixes. _read_capped/_read_stderr_capped
+        # compensate by capping how much they will ever buffer, and _reap
+        # below lets any still-in-flight reader finish draining rather than
+        # abandoning the stream mid-read.
         stdout_task = asyncio.ensure_future(_read_capped(proc.stdout, max_output_bytes))
-        stderr_task = asyncio.ensure_future(_read_capped(proc.stderr, _STDERR_CAP_BYTES))
+        # Not _read_capped: stdout-over-cap immediately triggers _kill_group
+        # below, which unblocks any pending write as a side effect of ending
+        # the child, so stopping the read right at the cap is fine there.
+        # stderr-over-cap triggers no kill - it is purely diagnostic - so if
+        # this stopped reading at the cap too, a tool that wrote more than
+        # _STDERR_CAP_BYTES to stderr (only reachable with the AST checker
+        # bypassed) would leave the rest sitting unread in the pipe. Once the
+        # kernel's pipe buffer filled, the child would block forever inside
+        # its stderr write() call and never reach the return statement that
+        # would have produced a correct result - a result the wall-clock
+        # timeout below would then misreport to the caller as "time limit".
+        stderr_task = asyncio.ensure_future(
+            _read_stderr_capped(proc.stderr, _STDERR_CAP_BYTES)
+        )
 
         try:
             stdout, stdout_over = await asyncio.wait_for(
@@ -166,6 +179,45 @@ async def _read_capped(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, b
     return data, len(data) > cap
 
 
+async def _read_stderr_capped(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, bool]:
+    """Like `_read_capped`, but never stops reading once the cap is crossed:
+    it keeps consuming (and discarding, so memory stays bounded regardless of
+    how much more arrives) everything else until the stream hits EOF, rather
+    than returning as soon as `cap` bytes have been seen.
+
+    stdout uses `_read_capped` instead, deliberately: stdout-over-cap
+    immediately triggers `_kill_group` in `run_tool`, which unblocks any
+    pending write as a side effect of ending the child, so there is nothing
+    left to drain. stderr-over-cap triggers no kill - it exists purely to
+    produce a diagnostic snippet - so if it stopped reading at the cap the
+    same way, a tool that wrote more than `cap` bytes to stderr (only
+    reachable with the AST checker bypassed, e.g. `sys.stderr.write('e' *
+    500000)`) would leave the remainder sitting unread in the OS pipe buffer.
+    Once that buffer filled, the child would block forever inside its
+    stderr write() call - never reaching the return statement that would
+    have produced a correct result - and `run_tool`'s wall-clock timeout
+    would eventually fire and misreport that correct-but-unreached result as
+    a timeout instead. Draining stderr to EOF here (concurrently with
+    `run_tool` awaiting `stdout_task`, since this coroutine is scheduled as
+    its own task) is what actually unblocks that write.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    over = False
+    while True:
+        chunk = await stream.read(_READ_CHUNK)
+        if not chunk:
+            break
+        if not over:
+            chunks.append(chunk)
+            total += len(chunk)
+            over = total > cap
+    data = b"".join(chunks)
+    if over:
+        data = data[: cap + 1]
+    return data, over
+
+
 async def _reap(
     proc: asyncio.subprocess.Process,
     stdout_task: asyncio.Task,
@@ -188,32 +240,43 @@ async def _reap(
         except (asyncio.CancelledError, Exception):
             return b""
 
+    # Mirrors what asyncio.subprocess.Process.communicate()'s own
+    # _read_stream does after each stream hits EOF: explicitly close each
+    # pipe's transport once its reader is done. Without this, nothing here
+    # ever calls it, and (observed directly: this was missing in an earlier
+    # version of this fix and produced exactly this symptom) a transport can
+    # still be "connected" when the test event loop closes, so its __del__
+    # later fires a PytestUnraisableExceptionWarning ("Event loop is closed")
+    # instead of shutting down cleanly.
+    #
+    # Done BEFORE `proc.wait()` below, not after in a `finally` (that was an
+    # earlier version of this fix and, on macOS specifically, it could stall
+    # `proc.wait()` for the full grace period even though the child had
+    # already been SIGKILLed - closing the pipe transports first is what
+    # actually lets `proc.wait()` return promptly there). stdout_task is
+    # always already done by the time `_reap` is called (every call site
+    # awaits or cancels it first), so closing fd 1 here never truncates a
+    # read still in progress; stderr_task may still be mid-drain (see
+    # `_read_stderr_capped`), and closing fd 2 here simply delivers it an
+    # EOF, which is the outcome it would have reached on its own once the
+    # child actually exits.
+    for fd in (1, 2):
+        pipe = proc._transport.get_pipe_transport(fd)
+        if pipe is not None:
+            pipe.close()
+
     try:
-        try:
-            _, stderr, _ = await asyncio.wait_for(
-                asyncio.gather(_safe(stdout_task), _safe(stderr_task), proc.wait()),
-                timeout=_REAP_GRACE_SECONDS,
-            )
-            return stderr
-        except asyncio.TimeoutError:
-            logger.error(
-                "sandbox child pid=%s did not exit within %ss of being killed",
-                proc.pid, _REAP_GRACE_SECONDS,
-            )
-            return b""
-    finally:
-        # Mirrors what asyncio.subprocess.Process.communicate()'s own
-        # _read_stream does after each stream hits EOF: explicitly close
-        # each pipe's transport once its reader is done. Without this, nothing
-        # here ever calls it, and (observed directly: this was missing in an
-        # earlier version of this fix and produced exactly this symptom) a
-        # transport can still be "connected" when the test event loop closes,
-        # so its __del__ later fires a PytestUnraisableExceptionWarning
-        # ("Event loop is closed") instead of shutting down cleanly.
-        for fd in (1, 2):
-            pipe = proc._transport.get_pipe_transport(fd)
-            if pipe is not None:
-                pipe.close()
+        _, stderr, _ = await asyncio.wait_for(
+            asyncio.gather(_safe(stdout_task), _safe(stderr_task), proc.wait()),
+            timeout=_REAP_GRACE_SECONDS,
+        )
+        return stderr
+    except asyncio.TimeoutError:
+        logger.error(
+            "sandbox child pid=%s did not exit within %ss of being killed",
+            proc.pid, _REAP_GRACE_SECONDS,
+        )
+        return b""
 
 
 def _package_root() -> str:

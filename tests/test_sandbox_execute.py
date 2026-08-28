@@ -179,6 +179,52 @@ async def test_a_printing_tool_does_not_corrupt_the_json_payload():
     assert out == {"result": {"ok": True}}
 
 
+async def test_stderr_backpressure_does_not_cause_a_false_timeout():
+    """Fix-wave re-review residual finding 1. A tool that writes more than
+    _STDERR_CAP_BYTES to stderr (only reachable with the AST checker
+    bypassed - `import sys` is not on the allowlist) then returns a correct
+    result used to hang: the stderr reader stopped reading the instant it
+    crossed the cap, leaving the rest sitting unread in the OS pipe buffer.
+    Once that buffer filled, the child blocked forever inside its stderr
+    write() call, never reaching `return {'ok': True}`, and the wall-clock
+    timeout below would eventually fire and misreport that correct-but-
+    unreached result as a timeout. This must come back promptly with the
+    tool's actual result, not a "time limit" error."""
+    import time
+
+    source = (
+        "def run(arguments):\n"
+        "    import sys\n"  # deliberately bypasses the AST checker
+        "    sys.stderr.write('e' * 500000)\n"
+        "    return {'ok': True}\n"
+    )
+    start = time.monotonic()
+    out = await run_tool(source, _sha(source), {}, timeout=5)
+    elapsed = time.monotonic() - start
+    assert elapsed < 2, f"run_tool took {elapsed}s - it should return promptly, not stall to the timeout"
+    assert out == {"result": {"ok": True}}
+
+
+async def test_a_killed_child_is_reaped_promptly(caplog):
+    """Fix-wave re-review residual finding 2. `_reap` used to close the
+    stdout/stderr pipe transports in a `finally` block AFTER `await
+    proc.wait()`. On macOS specifically, a process that has already been
+    SIGKILLed could still make `proc.wait()` hang for the full
+    `_REAP_GRACE_SECONDS` grace period if its pipe transports weren't closed
+    first - producing both a multi-second stall and a false "did not exit
+    within Ns" error log for a child that was, in fact, already dead. This
+    must come back well under the grace period, with no such log."""
+    import time
+
+    source = "def run(arguments):\n    return {'x': 'y' * 10000000}\n"
+    start = time.monotonic()
+    out = await run_tool(source, _sha(source), {}, max_output_bytes=100)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1, f"run_tool took {elapsed}s - a killed child should be reaped promptly"
+    assert "error" in out and "100 bytes" in out["error"]
+    assert "did not exit within" not in caplog.text
+
+
 async def test_an_empty_stdout_diagnosis_includes_the_stderr_snippet_when_present(
     monkeypatch,
 ):
