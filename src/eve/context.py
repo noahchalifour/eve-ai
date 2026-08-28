@@ -56,7 +56,11 @@ _RULES_PREAMBLE = (
 
 
 def build_system_prompt(
-    persona: str, member: MemberContext, memory: MemoryBundle | None = None
+    persona: str,
+    member: MemberContext,
+    memory: MemoryBundle | None = None,
+    *,
+    suppress_rules: bool = False,
 ) -> str:
     prompt = (
         f"{persona}\n\n"
@@ -83,7 +87,10 @@ def build_system_prompt(
     # `.get`, not `["rules"]`: a thread checkpointed before Phase 5a deployed
     # carries a bundle without the key, and a KeyError here would break an
     # existing conversation on the first turn after the upgrade.
-    rules = memory.get("rules") or []
+    # `suppress_rules` exists for Phase 5b's A/B and nothing else: the two arms
+    # must differ in exactly one thing or the delta measures noise. Production
+    # never passes it, and tests/test_context.py pins the default.
+    rules = [] if suppress_rules else (memory.get("rules") or [])
     if rules:
         lines = "\n".join(f"- {rule.content}" for rule in rules)
         body += (
