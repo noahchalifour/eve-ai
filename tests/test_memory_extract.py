@@ -572,3 +572,42 @@ async def test_a_forget_targeting_a_non_rule_fact_still_works_on_an_ambient_turn
         {"configurable": {"thread_id": "t1"}},
     )
     assert recorded["forget"] == ["fact-1"]
+
+
+async def test_a_member_turn_in_an_ambient_thread_stamps_replied_at(monkeypatch, recorded):
+    stamped = []
+
+    async def mark_replied(thread_id):
+        stamped.append(thread_id)
+
+    monkeypatch.setattr(extract_mod, "mark_replied", mark_replied)
+    await _run_extract(monkeypatch, [], "Thanks, I'll move it.", MEMBER_SHARED)
+
+    assert stamped == ["t1"]
+
+
+async def test_an_ambient_turn_does_not_stamp_replied_at(monkeypatch, recorded):
+    """Eve's own opening message is not a reply to herself."""
+    from eve.state import ambient_marker
+
+    stamped = []
+
+    async def mark_replied(thread_id):
+        stamped.append(thread_id)
+
+    monkeypatch.setattr(extract_mod, "mark_replied", mark_replied)
+    await _run_extract(
+        monkeypatch, [], ambient_marker("Noah") + "\nYour 3pm moved.", MEMBER_SHARED
+    )
+
+    assert stamped == []
+
+
+async def test_a_stamp_failure_does_not_fail_the_turn(monkeypatch, recorded):
+    async def mark_replied(thread_id):
+        raise RuntimeError("postgres is down")
+
+    monkeypatch.setattr(extract_mod, "mark_replied", mark_replied)
+    out = await _run_extract(monkeypatch, [], "Thanks.", MEMBER_SHARED)
+
+    assert out == {}

@@ -24,9 +24,13 @@ from eve.memory.store import (
 from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
-from eve.state import may_author
+from eve.state import is_ambient_text, may_author
 
 logger = logging.getLogger(__name__)
+
+# Bound at module level so tests can monkeypatch it, and lazily resolved at
+# call time so the import direction stays eve_ambient -> eve.
+mark_replied = None  # set on first use by _mark_replied_if_a_reply
 
 _CAPPED = {
     "profile": "memory_profile_cap",
@@ -230,7 +234,23 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
     span.set_attribute("eve.authoring.rules_rejected", rejected)
 
     await _maybe_refresh_digest(state, thread_id)
+    await _mark_replied_if_a_reply(human, thread_id)
     return {}
+
+
+async def _mark_replied_if_a_reply(human: str, thread_id: str | None) -> None:
+    """Stamp the ambient reply label. Deliberately lazy-imported: eve_ambient
+    depends on eve, never the reverse, and a module-level import here would
+    invert that."""
+    if thread_id is None or is_ambient_text(human):
+        return
+    fn = mark_replied
+    if fn is None:
+        from eve_ambient.store import mark_replied as fn  # noqa: PLC0415
+    try:
+        await fn(thread_id)
+    except Exception:
+        logger.debug("could not stamp the ambient reply label", exc_info=True)
 
 
 async def _maybe_refresh_digest(state: dict, thread_id: str | None) -> None:

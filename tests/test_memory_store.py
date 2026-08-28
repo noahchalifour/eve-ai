@@ -577,3 +577,109 @@ async def test_procedure_by_name_ignores_superseded_rows(pool):
     from eve.memory.store import procedure_by_name
 
     assert await procedure_by_name("sub-noah", "a") is None
+
+
+async def test_migration_count_is_five(pool):
+    """Exactly at db.py's stated Alembic threshold. Phase 5c crosses it; this
+    phase folds three changes into one entry to stay here."""
+    from eve.memory import db
+
+    assert len(db.MIGRATIONS) == 5
+
+
+async def test_the_eval_tables_exist(pool):
+    async with pool.connection() as conn:
+        for table in ("eve_ambient_decision", "eve_eval_run"):
+            cur = await conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+            assert (await cur.fetchone())[0] == table
+
+
+async def test_notice_has_replied_at(pool):
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_name='eve_ambient_notice' AND column_name='replied_at'"
+        )
+        assert await cur.fetchone() is not None
+
+
+async def test_rules_with_embeddings_returns_the_vector_as_a_python_list(pool):
+    """`eve.eval.hygiene.find_duplicates` needs real floats, not pgvector's
+    text literal - psycopg has no adapter for the `vector` type registered
+    in this codebase (embed.py's `to_pgvector` docstring), so the raw column
+    comes back as a string and must be parsed back out."""
+    from eve.memory.embed import to_pgvector
+    from eve.memory.store import rules_with_embeddings
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, embedding)"
+            " VALUES ('rule','member','sub-noah','preference','Be brief.', %s::vector)",
+            (to_pgvector(_VEC),),
+        )
+    pairs = await rules_with_embeddings("sub-noah")
+
+    assert len(pairs) == 1
+    memory, vec = pairs[0]
+    assert memory.content == "Be brief."
+    assert vec == pytest.approx(_VEC)
+
+
+async def test_rules_with_embeddings_excludes_unembedded_rows(pool):
+    """A rule is written before it is embedded, and the embed call can fail
+    - the same reason `search_episodic_vector` excludes NULL embeddings."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory (layer, scope_kind, scope_id, kind, content)"
+            " VALUES ('rule','member','sub-noah','preference','Unembedded.')"
+        )
+    from eve.memory.store import rules_with_embeddings
+
+    assert await rules_with_embeddings("sub-noah") == []
+
+
+async def test_rules_with_embeddings_includes_household_scope(pool):
+    from eve.memory.embed import to_pgvector
+    from eve.memory.store import rules_with_embeddings
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, embedding)"
+            " VALUES ('rule','household','','preference','Shared rule.', %s::vector)",
+            (to_pgvector(_VEC),),
+        )
+    pairs = await rules_with_embeddings("sub-noah")
+
+    assert [m.content for m, _ in pairs] == ["Shared rule."]
+
+
+async def test_rules_with_embeddings_excludes_another_members_rule(pool):
+    from eve.memory.embed import to_pgvector
+    from eve.memory.store import rules_with_embeddings
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, embedding)"
+            " VALUES ('rule','member','sub-kendra','preference','Kendra only.', %s::vector)",
+            (to_pgvector(_VEC),),
+        )
+    assert await rules_with_embeddings("sub-noah") == []
+
+
+async def test_rules_with_embeddings_excludes_superseded_rows(pool):
+    from eve.memory.embed import to_pgvector
+    from eve.memory.store import rules_with_embeddings
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_memory"
+            " (layer, scope_kind, scope_id, kind, content, embedding,"
+            "  superseded_why)"
+            " VALUES ('rule','member','sub-noah','preference','Old.', %s::vector,"
+            "         'duplicate')",
+            (to_pgvector(_VEC),),
+        )
+    assert await rules_with_embeddings("sub-noah") == []

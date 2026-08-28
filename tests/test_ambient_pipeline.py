@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 import pytest
 
 from eve_ambient import pipeline
+from eve_ambient import pipeline as pipeline_mod
+from eve_ambient.filter import FilterError
 from eve_ambient.types import FilterVerdict, Signal
 
 ROSTER = """
@@ -486,3 +488,121 @@ async def test_a_malformed_filter_response_resolves_filtered_not_deferred(
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "filtered"
     assert wiring["seen"] == [("finances", "k1")]
     assert wiring["delivered"] == []
+
+
+@pytest.fixture
+def pipeline_stubs(monkeypatch):
+    """A self-contained set of stubs for the eval-recording tests below:
+    freshness, the seen-marker, the filter, delivery, and `record_decision`
+    itself. Independent of `wiring`'s own fakes (still autouse for the
+    family/settings environment the gate chain needs) so this task's tests
+    can tune exactly the knobs they care about via `_handle`, without
+    reaching into `wiring`'s state dict."""
+    calls = {"decisions": [], "seen": [], "delivered": []}
+
+    async def _is_fresh(source, key, cooldown_hours):
+        return True
+
+    async def _mark_seen(source, key):
+        calls["seen"].append((source, key))
+
+    async def _record_decision(signal, verdict):
+        calls["decisions"].append((signal, verdict))
+
+    async def _judge(signal):
+        return FilterVerdict(notify=True, audience=["sub-noah"], why="w")
+
+    async def _deliver(signal, member, verdict, notifier):
+        calls["delivered"].append(member.sub)
+        return "thread-1"
+
+    monkeypatch.setattr(pipeline.store, "is_fresh", _is_fresh)
+    monkeypatch.setattr(pipeline.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(pipeline.store, "record_decision", _record_decision)
+    monkeypatch.setattr(pipeline, "judge", _judge)
+    monkeypatch.setattr(pipeline, "deliver", _deliver)
+    return calls
+
+
+async def _handle(
+    monkeypatch,
+    *,
+    notify: bool = True,
+    why: str = "w",
+    fresh: bool = True,
+    filter_raises: bool = False,
+    over_daily_cap: bool = False,
+) -> str:
+    """Builds one Signal and drives it through `handle_signal`, tuning only
+    the knobs the record_decision tests need on top of whatever
+    `pipeline_stubs` already wired."""
+    signal = _signal()
+
+    async def _is_fresh(source, key, cooldown_hours):
+        return fresh
+
+    async def _judge(signal):
+        if filter_raises:
+            raise FilterError("litellm down")
+        return FilterVerdict(notify=notify, audience=["sub-noah"], why=why)
+
+    monkeypatch.setattr(pipeline.store, "is_fresh", _is_fresh)
+    monkeypatch.setattr(pipeline, "judge", _judge)
+
+    if over_daily_cap:
+        async def _notices_since(member_sub, since):
+            return 999
+
+        monkeypatch.setattr(pipeline.store, "notices_since", _notices_since)
+
+    return await pipeline.handle_signal(signal, now=MIDDAY)
+
+
+async def test_a_verdict_is_recorded_once(monkeypatch, pipeline_stubs):
+    """One row per judged signal, carrying the whole Signal so the dataset
+    item is replayable."""
+    recorded = pipeline_stubs["decisions"]
+    await _handle(monkeypatch, notify=False, why="not worth it")
+
+    assert len(recorded) == 1
+    signal, verdict = recorded[0]
+    assert signal.summary
+    assert verdict.notify is False
+
+
+async def test_a_capped_signal_still_records_notify_true(monkeypatch, pipeline_stubs):
+    """The dataset measures the filter, not the gates. If the cap rewrote the
+    label, the harness would score the wrong component."""
+    recorded = pipeline_stubs["decisions"]
+    await _handle(monkeypatch, notify=True, why="worth it", over_daily_cap=True)
+
+    assert recorded[0][1].notify is True
+
+
+async def test_nothing_is_recorded_for_a_stale_signal(monkeypatch, pipeline_stubs):
+    """`stale` resolves before the filter runs: there is no decision."""
+    recorded = pipeline_stubs["decisions"]
+    await _handle(monkeypatch, fresh=False)
+
+    assert recorded == []
+
+
+async def test_nothing_is_recorded_when_the_filter_errors(monkeypatch, pipeline_stubs):
+    """A FilterError is a couldn't-decide. Recording it as a decision would
+    put an un-labelled item in the dataset."""
+    recorded = pipeline_stubs["decisions"]
+    await _handle(monkeypatch, filter_raises=True)
+
+    assert recorded == []
+
+
+async def test_a_recording_failure_does_not_break_the_pipeline(monkeypatch, pipeline_stubs):
+    """Best-effort, like every other non-essential write here: losing an eval
+    row must never cost a notification."""
+    async def boom(signal, verdict):
+        raise RuntimeError("postgres is down")
+
+    monkeypatch.setattr(pipeline_mod.store, "record_decision", boom)
+    outcome = await _handle(monkeypatch, notify=False, why="no")
+
+    assert outcome == "filtered"

@@ -50,6 +50,16 @@ async def handle_signal(
         )
         return _resolved(signal, None, [], "deferred")
 
+    # Before the gate chain, deliberately: the dataset's label is the
+    # filter's verdict, not the outcome (eval design 4.2). Best-effort -
+    # losing an eval row must never cost a notification.
+    try:
+        await store.record_decision(signal, verdict)
+    except Exception:
+        logger.warning(
+            "could not record the eval decision for %s", signal.key, exc_info=True
+        )
+
     # The roster is only worth reading once we know somebody might be told
     # something (fix round 1, item 5): `gates.permitted` calls `get_family`,
     # and a non-event should never pay for it, cached or not.

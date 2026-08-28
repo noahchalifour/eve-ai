@@ -2,7 +2,7 @@
 
 Migrations are a hand-rolled ordered list rather than Alembic. Aegra already
 runs its own Alembic migrations at startup and ours must not interleave with
-them, and there are only four tables here, across four migration entries.
+them, and there are only six tables here, across five migration entries.
 
 Mostly memory, hence the module's location, plus `eve_pat` - which is auth,
 not memory, but shares this pool and this list rather than standing up a
@@ -130,6 +130,55 @@ MIGRATIONS: list[tuple[str, str]] = [
         -- Partial, so a revoked label can be reused for a replacement token.
         CREATE UNIQUE INDEX IF NOT EXISTS eve_pat_active_label
           ON eve_pat (label) WHERE revoked_at IS NULL;
+        """,
+    ),
+    (
+        "0005_eval",
+        """
+        -- Phase 5b. Three changes in ONE entry deliberately: db.py's own
+        -- guidance says move to Alembic past ~5 entries, and Phase 5c is
+        -- where that happens. Splitting these into three would cross the
+        -- line here instead, for no benefit.
+
+        -- The reply IS the label for notification precision (design 5): a
+        -- member who answers found the interruption worth receiving.
+        -- Populated only from this deploy forward; earlier rows stay
+        -- permanently unlabelled and are excluded from the dataset.
+        ALTER TABLE eve_ambient_notice
+          ADD COLUMN IF NOT EXISTS replied_at timestamptz;
+
+        -- Every filter verdict, with the Signal that produced it. Phase 4
+        -- records neither: eve_ambient_seen keeps only (source, key), and
+        -- eve_ambient_notice keeps no signal content, so a replayable
+        -- dataset item cannot be reconstructed from either (design 4.2).
+        CREATE TABLE IF NOT EXISTS eve_ambient_decision (
+          id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          source     text        NOT NULL,
+          key        text        NOT NULL,
+          signal     jsonb       NOT NULL,
+          verdict    jsonb       NOT NULL,
+          decided_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS eve_ambient_decision_decided
+          ON eve_ambient_decision (decided_at DESC);
+
+        -- Local and authoritative. The gate reads this, never Langfuse, so a
+        -- reporting outage cannot block a regression check (design 7.1).
+        -- `scores` is jsonb because the scorer set will change and a
+        -- migration per metric is machinery for a table read by one CLI.
+        CREATE TABLE IF NOT EXISTS eve_eval_run (
+          id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          dataset     text        NOT NULL,
+          arm         text        NOT NULL DEFAULT 'with-rules',
+          git_sha     text,
+          item_count  integer     NOT NULL,
+          scores      jsonb       NOT NULL,
+          created_at  timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS eve_eval_run_dataset_created
+          ON eve_eval_run (dataset, arm, created_at DESC);
         """,
     ),
 ]

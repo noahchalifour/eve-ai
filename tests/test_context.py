@@ -185,3 +185,55 @@ def test_a_bundle_without_a_rules_key_still_renders():
     prompt = build_system_prompt("PERSONA", MEMBER, stale)
 
     assert "How you have learned" not in prompt
+
+
+def test_suppress_rules_omits_the_section():
+    from eve.context import build_system_prompt
+    from eve.state import MemberContext
+
+    member = MemberContext(
+        sub="sub-noah", name="Noah", role="adult", timezone="America/Toronto",
+        permissions=[], local_time="2026-08-27 09:00 EDT",
+    )
+    bundle = _bundle(rules=[_mem("Lead with the number.", "rule")])
+
+    assert "Lead with the number." not in build_system_prompt(
+        "P", member, bundle, suppress_rules=True
+    )
+
+
+def test_suppression_leaves_every_other_layer_intact():
+    """The arms must differ in exactly one thing, or the delta measures noise."""
+    from eve.context import build_system_prompt
+    from eve.state import MemberContext
+
+    member = MemberContext(
+        sub="sub-noah", name="Noah", role="adult", timezone="America/Toronto",
+        permissions=[], local_time="2026-08-27 09:00 EDT",
+    )
+    bundle = _bundle(
+        rules=[_mem("A rule.", "rule")],
+        profile=[_mem("Noah is vegetarian.", "profile")],
+        household=[_mem("Cooper is the dog.", "household")],
+        digest="Talking about dinner.",
+    )
+    suppressed = build_system_prompt("P", member, bundle, suppress_rules=True)
+
+    assert "Noah is vegetarian." in suppressed
+    assert "Cooper is the dog." in suppressed
+    assert "Talking about dinner." in suppressed
+    assert "A rule." not in suppressed
+
+
+def test_rules_render_by_default():
+    """Production must never accidentally get the suppressed arm."""
+    from eve.context import build_system_prompt
+    from eve.state import MemberContext
+
+    member = MemberContext(
+        sub="sub-noah", name="Noah", role="adult", timezone="America/Toronto",
+        permissions=[], local_time="2026-08-27 09:00 EDT",
+    )
+    assert "A rule." in build_system_prompt(
+        "P", member, _bundle(rules=[_mem("A rule.", "rule")])
+    )

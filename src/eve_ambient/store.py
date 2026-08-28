@@ -11,8 +11,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from eve.memory.db import get_pool
+from eve_ambient.types import FilterVerdict, Signal
 
 
 async def _fetchone(sql: str, params: dict) -> dict | None:
@@ -166,3 +168,104 @@ async def notices_since(member_sub: str, since: datetime) -> int:
         {"sub": member_sub, "since": since},
     )
     return int(row["n"]) if row else 0
+
+
+async def record_decision(signal: Signal, verdict: FilterVerdict) -> None:
+    """One row per judged signal, for Phase 5b's dataset.
+
+    The verdict, NOT the eventual outcome: a signal the filter approved and
+    the daily cap then suppressed is still a notify=true decision. Scoring
+    the outcome would measure the gate chain instead of the filter
+    (eval design 4.2).
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict)"
+            " VALUES (%s, %s, %s, %s)",
+            (
+                signal.source,
+                signal.key,
+                Jsonb(
+                    {
+                        "source": signal.source,
+                        "key": signal.key,
+                        "occurred_at": signal.occurred_at.isoformat(),
+                        "member_sub": signal.member_sub,
+                        "summary": signal.summary,
+                        "payload": signal.payload,
+                        "cooldown_hours": signal.cooldown_hours,
+                    }
+                ),
+                Jsonb(verdict.model_dump()),
+            ),
+        )
+
+
+async def decisions_since(since: datetime, limit: int) -> list[dict]:
+    """Newest first, joined to whether the notification earned a reply.
+
+    LEFT JOIN, not INNER: a notify=false decision has no notice row, and
+    dropping those would leave the dataset with only the positives.
+
+    The join is bounded to `[d.decided_at, d.decided_at + 1 hour)`, not open
+    over `(source, key)` alone: that pair is not unique over time - the same
+    key legitimately re-fires after its cooldown window (`already_notified`'s
+    docstring). An unbounded join would let a reply to an OLD notice mark a
+    much LATER, unrelated decision for the same key as `replied=True`, and
+    would count notices from unrelated past occurrences into `notices`. A
+    notice can never precede the decision that produced it, and one that
+    would have followed from this decision is sent promptly if at all - a
+    one-hour window is generous against the poll interval
+    (`ambient_poll_interval_seconds`, five minutes by default) without
+    reaching into the next cooldown-bounded recurrence of the same key.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT d.id, d.source, d.key, d.signal, d.verdict, d.decided_at,
+                       bool_or(n.replied_at IS NOT NULL) AS replied,
+                       count(n.id) AS notices
+                  FROM eve_ambient_decision d
+                  LEFT JOIN eve_ambient_notice n
+                    ON n.source = d.source AND n.key = d.key
+                   AND n.sent_at >= d.decided_at
+                   AND n.sent_at < d.decided_at + interval '1 hour'
+                 WHERE d.decided_at >= %(since)s
+                 GROUP BY d.id
+                 ORDER BY d.decided_at DESC
+                 LIMIT %(limit)s
+                """,
+                {"since": since, "limit": limit},
+            )
+            return list(await cur.fetchall())
+
+
+async def prune_decisions(days: int) -> int:
+    """Retention. One row per judged signal at a five-minute poll across four
+    sources grows without bound, and a year-old signal is not measuring the
+    current filter anyway."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM eve_ambient_decision"
+            f" WHERE decided_at < now() - interval '{int(days)} days'"
+        )
+        return cur.rowcount
+
+
+async def mark_replied(thread_id: str) -> None:
+    """A member speaking in an ambient thread IS the label (eval design 5).
+
+    No lookup first: a thread with no matching row is not an ambient thread,
+    and the UPDATE affects nothing.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_ambient_notice SET replied_at = now()"
+            " WHERE thread_id = %s AND replied_at IS NULL",
+            (thread_id,),
+        )

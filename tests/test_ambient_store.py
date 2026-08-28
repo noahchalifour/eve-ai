@@ -22,7 +22,9 @@ async def pool(monkeypatch):
     await db.migrate()
     p = await db.get_pool()
     async with p.connection() as conn:
-        await conn.execute("TRUNCATE eve_ambient_seen, eve_ambient_notice")
+        await conn.execute(
+            "TRUNCATE eve_ambient_seen, eve_ambient_notice, eve_ambient_decision"
+        )
     yield p
     await db.close_pool()
 
@@ -142,3 +144,104 @@ async def test_has_any_is_false_before_the_first_signal_and_true_after(pool):
     await store.mark_seen("calendar", "uid-1:start:x")
     assert await store.has_any("calendar") is True
     assert await store.has_any("mail") is False
+
+
+async def test_record_and_read_back_a_decision(pool):
+    from datetime import UTC, datetime
+
+    from eve_ambient.store import decisions_since, record_decision
+    from eve_ambient.types import FilterVerdict, Signal
+
+    signal = Signal(
+        source="mail", key="k1", occurred_at=datetime(2026, 8, 27, tzinfo=UTC),
+        member_sub="sub-noah", summary="A package shipped.",
+        payload={"from": "shop"},
+    )
+    await record_decision(signal, FilterVerdict(notify=True, audience=["sub-noah"], why="w"))
+
+    rows = await decisions_since(datetime(2026, 1, 1, tzinfo=UTC), limit=10)
+    assert len(rows) == 1
+    assert rows[0]["signal"]["summary"] == "A package shipped."
+    assert rows[0]["verdict"]["notify"] is True
+
+
+async def test_decisions_since_does_not_join_an_old_unrelated_notice(pool):
+    """`(source, key)` is not unique over time - the same key legitimately
+    re-fires after its cooldown window (`already_notified`'s docstring). A
+    reply to an OLD notice must not mark a much LATER, unrelated decision for
+    the same key as `replied=True`, and that old notice must not be counted
+    into the later decision's `notices` either."""
+    async with pool.connection() as conn:
+        # An old decision, notice, and reply - ten days ago.
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict, decided_at)"
+            " VALUES ('mail', 'k1', '{}', '{}', now() - interval '10 days')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_ambient_notice"
+            " (member_sub, source, key, sent_at, replied_at)"
+            " VALUES ('sub-noah', 'mail', 'k1',"
+            "         now() - interval '10 days', now() - interval '10 days')"
+        )
+        # A brand new, unrelated decision for the SAME (source, key), with no
+        # notice of its own.
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict)"
+            " VALUES ('mail', 'k1', '{}', '{}')"
+        )
+
+    from datetime import UTC, datetime
+
+    from eve_ambient.store import decisions_since
+
+    rows = await decisions_since(datetime(2026, 1, 1, tzinfo=UTC), limit=10)
+    newest = max(rows, key=lambda r: r["decided_at"])
+
+    assert newest["replied"] is False
+    assert newest["notices"] == 0
+
+
+async def test_decisions_since_joins_a_prompt_notice_for_the_same_decision(pool):
+    """The other half of the bound: a notice sent shortly after its decision
+    (the ordinary case) must still join, or the fix would have traded a
+    false positive for a false negative."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict)"
+            " VALUES ('mail', 'k2', '{}', '{}')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_ambient_notice"
+            " (member_sub, source, key, sent_at, replied_at)"
+            " VALUES ('sub-noah', 'mail', 'k2', now(), now())"
+        )
+
+    from datetime import UTC, datetime
+
+    from eve_ambient.store import decisions_since
+
+    rows = await decisions_since(datetime(2026, 1, 1, tzinfo=UTC), limit=10)
+    row = next(r for r in rows if r["key"] == "k2")
+
+    assert row["replied"] is True
+    assert row["notices"] == 1
+
+
+async def test_prune_decisions_respects_the_window(pool):
+    from datetime import UTC, datetime, timedelta
+
+    from eve_ambient.store import prune_decisions
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict, decided_at)"
+            " VALUES ('mail','old','{}','{}', now() - interval '400 days')"
+        )
+        await conn.execute(
+            "INSERT INTO eve_ambient_decision (source, key, signal, verdict)"
+            " VALUES ('mail','new','{}','{}')"
+        )
+    assert await prune_decisions(180) == 1
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) FROM eve_ambient_decision")
+        assert (await cur.fetchone())[0] == 1

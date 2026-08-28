@@ -141,3 +141,27 @@ def test_self_authoring_is_off_by_default():
 
 def test_rule_cap_has_a_default():
     assert Settings().memory_rule_cap == 20
+
+
+def test_eval_defaults():
+    from eve.settings import Settings
+
+    s = Settings()
+    assert s.eval_dataset_limit == 200
+    assert s.eval_voice_call_ceiling == 60
+    assert s.eval_regression_points == 10
+    assert s.eval_dead_rule_days == 90
+    assert s.eval_decision_retention_days == 180
+    assert s.eval_hygiene_apply_enabled is False
+    assert s.eval_turns_file == "tests/eval/turns.yaml"
+
+
+def test_eval_turns_file_is_overridable(monkeypatch):
+    """None of this repo's Dockerfiles copy `tests/`, so the hardcoded
+    default only works from a working directory shaped like this repo.
+    Whoever builds Phase 5c's CronJob image needs to point this somewhere
+    else without a code change."""
+    from eve.settings import Settings
+
+    monkeypatch.setenv("EVE_EVAL_TURNS_FILE", "/data/turns.yaml")
+    assert Settings().eval_turns_file == "/data/turns.yaml"
