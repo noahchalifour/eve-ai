@@ -24,6 +24,7 @@ from eve.settings import get_settings
 from eve.skills.mcp_registry import registered_mcp_tools
 from eve.skills.registry import Skill, load_skills
 from eve.state import EveState
+from eve.tools_authoring.registry import sandbox_specs
 
 
 def _dot(a: list[float], b: list[float]) -> float:
@@ -69,7 +70,18 @@ async def search_skills(
             # A skills search that cannot reach Postgres should still return
             # the filesystem corpus rather than failing the turn.
             authored = []
-    skills = load_skills(mcp_tools=registered_mcp_tools(), authored=authored)
+    # Fail closed on the kill switch: a thread can carry an approved spec in
+    # state from before the flag flipped, and a switch a stale checkpoint can
+    # route around is not a switch (design section 9).
+    sandbox: list = []
+    if get_settings().sandbox_enabled:
+        try:
+            sandbox = await sandbox_specs()
+        except Exception:
+            sandbox = []
+    skills = load_skills(
+        mcp_tools=[*registered_mcp_tools(), *sandbox], authored=authored
+    )
     matches = await rank_skills(query, skills)
     if not matches:
         return Command(

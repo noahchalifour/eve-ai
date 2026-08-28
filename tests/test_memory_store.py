@@ -34,14 +34,34 @@ async def test_migrate_creates_the_table(pool):
         assert (await cur.fetchone())[0] == "eve_memory"
 
 
-async def test_migrate_is_idempotent(pool):
-    """It runs on every pod start. If a second run is not a no-op, a rolling
-    restart is an outage."""
+async def test_alembic_uses_a_private_version_table(pool):
+    """Sharing Aegra's alembic_version is how two independent migration
+    histories corrupt each other."""
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT to_regclass('public.eve_alembic_version')")
+        assert (await cur.fetchone())[0] == "eve_alembic_version"
+
+
+async def test_migrate_is_a_no_op_on_an_already_migrated_database(pool):
+    """A rolling restart runs this on a live database. If revision one is not
+    idempotent, the deploy is an outage."""
+    from eve.memory import db
+
     await db.migrate()
     await db.migrate()
     async with pool.connection() as conn:
-        cur = await conn.execute("SELECT count(*) FROM eve_schema_version")
-        assert (await cur.fetchone())[0] == len(db.MIGRATIONS)
+        cur = await conn.execute("SELECT count(*) FROM eve_memory")
+        assert (await cur.fetchone())[0] >= 0  # no exception is the assertion
+
+
+async def test_every_phase_1_to_5b_object_still_exists(pool):
+    async with pool.connection() as conn:
+        for table in (
+            "eve_memory", "eve_ambient_seen", "eve_ambient_notice", "eve_pat",
+            "eve_ambient_decision", "eve_eval_run",
+        ):
+            cur = await conn.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+            assert (await cur.fetchone())[0] == table, table
 
 
 async def test_the_vector_column_accepts_a_1536_dim_vector(pool):
@@ -577,14 +597,6 @@ async def test_procedure_by_name_ignores_superseded_rows(pool):
     from eve.memory.store import procedure_by_name
 
     assert await procedure_by_name("sub-noah", "a") is None
-
-
-async def test_migration_count_is_five(pool):
-    """Exactly at db.py's stated Alembic threshold. Phase 5c crosses it; this
-    phase folds three changes into one entry to stay here."""
-    from eve.memory import db
-
-    assert len(db.MIGRATIONS) == 5
 
 
 async def test_the_eval_tables_exist(pool):

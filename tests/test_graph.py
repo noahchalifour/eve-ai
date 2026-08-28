@@ -511,6 +511,42 @@ async def test_the_loop_budget_resets_on_the_next_turn(monkeypatch):
     assert len(visits) == after_first_turn * 2
 
 
+def test_live_specs_drops_a_checkpointed_sandbox_spec_when_disabled(monkeypatch):
+    """Pins the one behavior this task exists to guarantee: a thread
+    checkpointed while EVE_SANDBOX_ENABLED was true must not keep offering a
+    sandbox tool once the switch flips off, even though nothing rewrote its
+    already-persisted `dynamic_tools` (design section 9). Exercises
+    `_live_specs` directly, the function both `eve()` and `tools_node()` call
+    to filter `state["dynamic_tools"]` before materializing."""
+    from eve.graph import _live_specs
+    from eve.settings import get_settings
+
+    sandbox_spec = {
+        "server_id": "sandbox", "tool_name": "amortise",
+        "description": "Amortise a loan.", "schema": {"properties": {}},
+    }
+    other_spec = {
+        "server_id": "mock-server", "tool_name": "roll_dice",
+        "description": "Roll a die.", "schema": {"properties": {}},
+    }
+    state = {"dynamic_tools": [sandbox_spec, other_spec]}
+
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "false")
+    get_settings.cache_clear()
+    live = _live_specs(state)
+    assert sandbox_spec not in live
+    assert other_spec in live
+
+    # And the switch actually does something: with it on, the same
+    # checkpointed spec is offered again.
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    get_settings.cache_clear()
+    live = _live_specs(state)
+    assert sandbox_spec in live
+    assert other_spec in live
+
+
 def test_write_skill_is_bound_when_authoring_is_enabled(monkeypatch):
     monkeypatch.setenv("EVE_SELF_AUTHORING_ENABLED", "true")
     from eve.settings import get_settings
@@ -533,3 +569,24 @@ def test_write_skill_is_unbound_by_default(monkeypatch):
     # The Phase 3/4 toolset is untouched.
     assert {"ask_home", "ask_mail", "ask_finances", "search_skills",
             "search_memory"} <= names
+
+
+def test_propose_tool_is_bound_when_the_sandbox_is_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "propose_tool" in {t.name for t in graph_mod._static_tools()}
+
+
+def test_propose_tool_is_unbound_by_default(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "propose_tool" not in {t.name for t in graph_mod._static_tools()}

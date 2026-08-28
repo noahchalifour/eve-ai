@@ -3,7 +3,7 @@ members:
     name: "Noah"
     role: adult
     timezone: "America/Toronto"
-    permissions: [spend, home.control]
+    permissions: [spend, home.control, tools.author]
   - sub: "sub-kid"
     name: "Kid"
     role: child

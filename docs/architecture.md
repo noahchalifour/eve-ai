@@ -1,10 +1,18 @@
 # Architecture
 
-This document describes what exists in this repository today: Phase 5b,
-"Eval harness." For the Phase 5b design rationale and definition of done, see
-[`docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md`](superpowers/specs/2026-08-27-eve-eval-harness-design.md).
+This document describes what exists in this repository today: Phase 5c,
+"Gated tool code." With this phase shipped, the five-phase program described
+in [`README.md`](../README.md) is complete — see "Sandboxed tools" below and
+[ADR 0010](adr/0010-sandboxed-tools-are-pure-functions.md) for what that
+means and what deliberately stays out of scope forever. For the Phase 5c
+design rationale and definition of done, see
+[`docs/superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md`](superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md).
 For the task-by-task build record, see
-[`docs/superpowers/plans/2026-08-27-eve-eval-harness.md`](superpowers/plans/2026-08-27-eve-eval-harness.md).
+[`docs/superpowers/plans/2026-08-27-eve-sandboxed-tools.md`](superpowers/plans/2026-08-27-eve-sandboxed-tools.md).
+The Phase 5b eval harness (datasets, the rule-set A/B, the regression gate)
+predates this phase and is unchanged by it; see
+[`docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md`](superpowers/specs/2026-08-27-eve-eval-harness-design.md)
+for its own design and definition of done.
 
 ## The graph
 
@@ -93,6 +101,19 @@ src/eve/
     publish.py      # best-effort Langfuse dataset + run upload
     hygiene.py      # duplicate/contradiction/dead-rule detection over eve_memory rules
     cli.py          # eve-eval script: build | run | gate | hygiene (Phase 5b)
+  tools_authoring/
+    types.py        # ToolProposal, CheckResult -- shapes only
+    inspect.py      # the AST allowlist: an accident guard, NOT a security boundary
+    propose.py      # propose_tool tool: the interrupt() gate, tools.author-only
+    store.py        # every eve_tool SQL statement; source_hash binds an approval to bytes
+    registry.py     # live_tools() -> DynamicToolSpec, feeding search_skills
+    cli.py          # eve-tool script: list | approve | reject | revoke (Phase 5c)
+
+src/eve_sandbox/
+  settings.py   # EVE_SANDBOX_* only -- no database URL, no model key, no third-party credential
+  runner.py     # the child process: sets its own rlimits, execs the tool's `run`, one JSON line out
+  execute.py    # spawns the child with an empty environment and a tmpfs cwd; enforces the wall-clock timeout and output cap
+  app.py        # the eve-sandbox FastAPI service: POST /invoke, GET /healthz
 
 src/eve_ambient/
   types.py      # Signal, FilterVerdict; tool_result/list_field parsing helpers
@@ -112,8 +133,22 @@ internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 `embed`/`ranking`/`store`/`types` -> `recall`, while `extract` depends on
 `embed`, `store`, `types`, `models`, and `settings`. `context` depends on
 `family`, `settings`, `state`, and memory types; `models` depends on `settings`;
-`graph` depends on `context`, `memory`, `models`, and `state`; `auth` depends on
-`family` and `settings`.
+`graph` depends on `context`, `memory`, `models`, `state`, and, since Phase 5c,
+`eve.tools_authoring.propose` (`propose_tool` is bound alongside the
+specialists and `search_skills`); `auth` depends on `family` and `settings`.
+
+Within `tools_authoring/`, `types` depends on nothing; `inspect` depends only
+on `types`; `store` depends on `eve.memory.db`; `propose` depends on
+`inspect`, `store`, `eve.settings`, `eve.specialists.permissions`, and
+`eve.state`; `registry` depends on `store` and `eve.skills.types`, and is the
+one thing `eve.skills.search` imports from this package, keeping the
+propose/approve machinery out of the discovery path. `src/eve_sandbox` is
+outside this graph entirely and imports nothing from `eve` at all — not
+`eve.settings`, not `eve.memory.db`, nothing — which is what makes it safe to
+hold no credential: there is no import path by which one could reach it even
+by accident. `tests/test_tools_integration.py::test_eve_sandbox_imports_nothing_from_eve`
+asserts this the same way `eve.eval`'s one-way dependency is asserted, by
+import graph rather than by convention.
 
 Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `ntfy`
 depends only on `eve`'s own modules (`eve.settings`) and not on `types` at
@@ -242,6 +277,102 @@ versioned and supersession-chained like any other memory row.
 and revoke authored rules and procedures from the command line without deleting
 the row — a revoked one remains in the audit trail but is excluded from recall.
 See [ADR 0008](adr/0008-authored-behaviour-is-memory.md).
+
+## Sandboxed tools
+
+Phase 5c lets Eve author *executable* code, not just authored prose, for the
+calculations and parses she otherwise does inside a language model, badly and
+unverifiably. Unlike Phase 5a's rules and procedures, this is deliberately
+not a memory layer: an approval binds to exact source bytes, needs a
+uniqueness constraint, and must never be reachable by semantic recall into a
+prompt, so a text `content` column with an embedding is the wrong shape. It
+gets its own table, `eve_tool` (`alembic/versions/0002_eve_tool.py`), and its
+own package, `src/eve/tools_authoring/`.
+
+**The path is propose → interrupt → approve → dispatch.**
+
+1. **Propose.** `propose_tool` (`src/eve/tools_authoring/propose.py`) is a
+   tool bound alongside the specialists and `search_skills` — see the import
+   graph above. It requires `tools.author`, permission-checked the same way
+   every other tool boundary is (`eve.specialists.permissions.permission_denial`),
+   runs the AST check (below), and records the proposal
+   (`eve.tools_authoring.store.propose`) before pausing.
+2. **The gate.** `propose_tool` calls LangGraph's `interrupt()` with the full
+   proposal — name, description, schema, source, and the imports the checker
+   found — so everything the approver needs is in that one payload; reading
+   the source anywhere else is how a wrong version gets approved. Aegra
+   checkpoints the run; a human resumes it with `Command(resume={"approved":
+   bool, "why": str})`. `tools.author` collapsing proposer and approver into
+   one person is deliberate (design §5.1): the interrupt always surfaces in a
+   thread owned by someone entitled to answer it.
+3. **Approve or reject.** The proposal row already carries `source_sha256` =
+   `sha256(source)`, computed at propose time; approving just stamps
+   `approved_by`/`approved_at` on that exact row, so the approval is a
+   statement about those bytes and no other. A partial unique index,
+   `eve_tool_live_name`, allows only one live approved row per name at a
+   time, so re-proposing an existing name leaves the old version serving
+   until the new one is approved. Rejecting stamps `rejected_why` and the
+   proposal never executes — no auto-retry.
+4. **Discover and dispatch.** `eve.tools_authoring.registry.sandbox_specs`
+   turns every live approved row into a `DynamicToolSpec`, read by
+   `search_skills` only when `EVE_SANDBOX_ENABLED` is true (the check lives
+   at that call site, not inside `registry.py`, so the kill switch holds even
+   for a spec a checkpointed thread already carries). `materialize.py` binds
+   it as an ordinary callable tool, and `tools_client.invoke` posts it —
+   source, hash, and arguments together — to `eve-sandbox`'s `/invoke`, the
+   same contract shape `eve-tools` uses with one field added.
+
+**Enforcement is layered, and the layers are not equal** (this is the
+substance of [ADR 0010](adr/0010-sandboxed-tools-are-pure-functions.md)):
+
+1. **The pod is the security boundary.** Default-deny egress `NetworkPolicy`,
+   no ServiceAccount token, no secret mounts, read-only root filesystem,
+   non-root UID — all `infrastructure` work, verified only by the `live`-marked
+   tests in `tests/test_sandbox_live.py` run by hand against the cluster.
+2. **The process** (`src/eve_sandbox/execute.py`, `runner.py`) is defense in
+   depth, not the boundary: one subprocess per call (no pool, no reused
+   interpreter — a warm interpreter is state shared between two tools, the one
+   thing a sandbox tool does not get), started with `python -I` (isolated
+   mode: no `PYTHONPATH`, no user site-packages), an empty environment but for
+   the import path, a tmpfs `cwd`, and rlimits the child sets on itself —
+   `RLIMIT_CPU`, `RLIMIT_AS`, and `RLIMIT_CORE` at zero, because a core dump
+   is the one artefact that could persist tool data outside the call.
+3. **The AST allowlist** (`src/eve/tools_authoring/inspect.py`) is explicitly
+   **not** a security boundary — its own module docstring says so in capital
+   letters. It rejects imports outside a short allowlist (`json`, `re`,
+   `math`, `datetime`, `urllib.parse` but not `urllib.request`, and so on),
+   the names `eval`/`exec`/`compile`/`open`/`__import__`, and dunder attribute
+   access, and requires exactly one module-level `run(arguments: dict) ->
+   dict` function. Its real jobs are to give Eve a specific, actionable error
+   so she can revise before bothering a human, and to make the approver's read
+   short. Every guarantee in this phase must hold with this module assumed
+   defeated — the checker is bypassed outright in
+   `tests/test_tools_integration.py`'s process-constraints test, which imports
+   `os` and reads the environment directly to confirm containment holds
+   without it.
+
+`eve-sandbox` (`src/eve_sandbox/`, `Dockerfile.eve-sandbox`) is the service
+those tools run in. It imports nothing from `eve` — not `eve.settings`, not
+`eve.memory.db`, nothing — and holds no database URL, no model key, and no
+third-party credential of any kind (`src/eve_sandbox/settings.py`); the only
+secret it holds is the shared bearer token that authenticates Eve to it. A
+source-hash mismatch between what the caller sends and what the database
+recorded is refused and logged rather than executed — the database and the
+caller disagreeing about approved bytes is a tampering signal, not a bug to
+retry.
+
+**`eve-tool`** (`src/eve/tools_authoring/cli.py`) is the human-facing side:
+`uv run eve-tool list` (optionally `--source <id>` to print full source),
+`uv run eve-tool approve <id> --as <approver>` (re-runs the AST check against
+these exact bytes before approving — the propose-time check already ran, but
+an approval is a statement about *these* bytes), `uv run eve-tool reject <id>
+--why <reason>`, and `uv run eve-tool revoke <name> --why <reason>`
+(`--all` retires every live tool at once). Revocation takes effect on the
+next `search_skills` call, which rebuilds `sandbox_specs` from the database
+every time — no restart. `EVE_SANDBOX_ENABLED=false` is the wider kill
+switch: `propose_tool` unbinds, no sandbox spec is registered, and a sandbox
+spec a paused thread's checkpoint already carries fails closed to an error
+string rather than dispatching.
 
 ## Aegra and `aegra.json`
 
@@ -420,20 +551,45 @@ the turn continues with always-on memory and lexical episodic results. Episodic
 recency uses true half-life decay,
 `exp(-ln(2) * age_days / half_life_days)`, evaluated at read time.
 
-The schema is installed by the `eve-migrate` console script under a Postgres
-advisory lock. The production Dockerfile runs exactly
-`eve-migrate && exec aegra serve` in its `CMD`, so schema failure prevents
-Aegra from starting. Local `aegra dev` does not execute the container command,
-so run the migration explicitly after starting Postgres.
+The schema is installed by the same `eve-migrate` console script as before,
+under the same Postgres advisory lock, and the production Dockerfile still
+runs exactly `eve-migrate && exec aegra serve` in its `CMD`, so schema failure
+prevents Aegra from starting; `eve-migrate`'s contract is unchanged by what is
+underneath it. Local `aegra dev` does not execute the container command, so
+run the migration explicitly after starting Postgres.
 
-`MIGRATIONS` (`src/eve/memory/db.py`) now holds five entries — `0001_memory`,
-`0002_ambient`, `0003_ambient_notice_window`, `0004_pat`, and Phase 5b's
-`0005_eval`, which folds in `eve_ambient_notice.replied_at`,
-`eve_ambient_decision`, and `eve_eval_run` as one entry rather than three, to
-land exactly on rather than past the threshold below. Five is the number
-`db.py`'s own module docstring names as the point to move to Alembic; Phase 5c
-adds a sixth table and crosses it, so **the Alembic migration is 5c's first
-task**, not deferred maintenance here.
+What changed underneath: `db.py`'s hand-rolled `MIGRATIONS` list reached five
+entries in Phase 5b — the point its own module docstring named as the trigger
+to move to Alembic — and Phase 5c's `eve_tool` table would have been a sixth.
+Rather than add a sixth hand-rolled entry, `eve-migrate` now shells out to
+`alembic upgrade head` (`src/eve/memory/db.py`'s `migrate()`) under the same
+advisory lock the list used, against Eve's own `alembic/` tree
+(`script_location`) and, critically, a *private* `version_table` —
+`eve_alembic_version`, set in `alembic/env.py` — so Aegra's own Alembic
+migrations, which run separately at startup against the default
+`alembic_version` table, can never interleave with Eve's. `MIGRATIONS` itself
+is kept as an empty list rather than deleted, so an old assertion pinning its
+old shape fails loudly instead of silently importing nothing.
+
+Three revisions exist in `alembic/versions/`, not the two originally planned:
+
+- **`0001_baseline`** reproduces the five hand-rolled entries idempotently —
+  every statement is `IF NOT EXISTS` — so it is a no-op against an
+  already-migrated database and a full create against a fresh one.
+  `eve_schema_version` is left in place and unused rather than dropped, so a
+  rollback to the previous image does not fail on a table it still expects.
+- **`0002_eve_tool`** creates the `eve_tool` table (see "Sandboxed tools"
+  below) and its one live-version guarantee, the partial unique index
+  `eve_tool_live_name`.
+- **`0003_eve_tool_pending_dedup`**, added during this branch's own review
+  rather than planned up front, closes a race in `store.propose()`'s
+  interrupt-replay dedup guard: the existence-check-then-insert it uses has no
+  `SELECT ... FOR UPDATE`, so two genuinely concurrent proposals could both
+  pass the check before either commits. This revision adds a second partial
+  unique index, `eve_tool_pending_dedup`, giving the pending case the same
+  backstop the approved case already had. See
+  [ADR 0011](adr/0011-alembic-with-a-private-version-table.md) for the full
+  rationale.
 
 ## Ambient
 
@@ -638,12 +794,15 @@ judgement call for a human, not a flash-lite model unattended.
 The harness is designed to run on demand and, eventually, weekly via a
 `CronJob` in the `infrastructure` repository, never in CI: its calls are paid
 and nondeterministic, so gating merges on it buys flaky builds and a budget
-bill. **That CronJob and its container image do not exist yet** - building
-and shipping them is Phase 5c's packaging work. Today, `eve-eval build`/`run`
-require a working directory that contains `tests/eval/turns.yaml` (or
-whatever `EVE_EVAL_TURNS_FILE` is pointed at instead): none of this repo's
-three Dockerfiles copy `tests/`, so the harness cannot run inside any image
-built from them yet.
+bill. **That CronJob and its container image do not exist yet**, and Phase 5c
+did not build them either — 5c's packaging work was `eve-sandbox`, a
+different service entirely. Today, `eve-eval build`/`run` require a working
+directory that contains `tests/eval/turns.yaml` (or whatever
+`EVE_EVAL_TURNS_FILE` is pointed at instead): none of this repo's four
+Dockerfiles copy `tests/`, so the harness cannot run inside any image built
+from them yet. This remains open past the end of the five-phase program (see
+"Sandboxed tools" above); picking it up is `infrastructure` and packaging
+work, not a gap in what this repository's own code does.
 
 ## Running locally
 
@@ -661,18 +820,25 @@ likely already running. Container-internal ports are standard.
 
 ## Running the tests
 
-Three tiers, matching the pytest markers declared in `pyproject.toml`.
-`addopts` deselects `integration` and `live` by default, so a bare `pytest`
-is the unit tier; an explicit `-m` on the command line replaces that
+Four tiers, matching the pytest markers declared in `pyproject.toml`.
+`addopts` deselects `integration`, `live`, and `docker` by default, so a bare
+`pytest` is the unit tier; an explicit `-m` on the command line replaces that
 expression rather than adding to it.
 
 ```bash
 # Unit — no network, no services (the default; the -m is explicit for clarity)
-uv run pytest -m "not integration and not live"
+uv run pytest -m "not integration and not live and not docker"
 
 # Integration — real Postgres, Redis, and a live `aegra serve`
 docker compose -f docker-compose.test.yml up -d
 uv run pytest -m integration
+
+# Docker — builds the real eve-sandbox image and hits a running container
+# over HTTP (tests/test_sandbox_docker_image.py); the regression coverage
+# for a bug class no in-process test can see, since a dev checkout's
+# editable-install .pth file masks how the built image actually resolves
+# imports
+uv run pytest -m docker
 
 # Live — hits the real LiteLLM proxy and spends real quota
 EVE_LIVE_TESTS=1 uv run pytest -m live
@@ -749,6 +915,22 @@ responsibility ends at building and publishing the image
 (`ghcr.io/noahchalifour/eve-ai`) via `.github/workflows/build.yml`; see spec
 §12 for the full deployment design.
 
+Phase 5c adds `eve-sandbox` to that same `infrastructure` app: a Deployment
+(`automountServiceAccountToken: false`, `readOnlyRootFilesystem: true`,
+`runAsNonRoot`, a tmpfs `emptyDir` at `/tmp`, no `envFrom` beyond the API
+key), a Service, a default-deny-egress `NetworkPolicy`, and a Gatus check on
+`/healthz`. The `NetworkPolicy` is stricter than `eve-tools`': `eve-tools`
+needs egress scoped to the specific external hosts it calls (Home Assistant,
+Gmail, Monarch, CalDAV — ADR 0006), while `eve-sandbox` needs none at all, so
+its policy denies egress outright. **No Ingress**: unlike `eve-ai`,
+`eve-sandbox` is reachable only from `eve` inside the cluster, never from
+outside it, since nothing external ever needs to invoke a sandboxed tool
+directly. This repository's side of that is `Dockerfile.eve-sandbox`, which
+follows `Dockerfile.eve-tools`'s pattern — same base image, `uv sync --frozen
+--no-install-project`, non-root UID — but copies only `src/eve_sandbox`, so
+the built image cannot contain a module that knows how to reach the database
+or a credential even by accident.
+
 ## Decision records
 
 - [ADR 0001 — Specialists are subgraph tools, not separate services](adr/0001-agents-as-subgraph-tools.md)
@@ -760,3 +942,5 @@ responsibility ends at building and publishing the image
 - [ADR 0007 — Ambient runs impersonate family members through one scoped token](adr/0007-ambient-impersonation.md)
 - [ADR 0008 — Eve-authored behaviour is memory, and authorisation never reads memory](adr/0008-authored-behaviour-is-memory.md)
 - [ADR 0009 — Eval inputs come from Postgres, not from Langfuse traces](adr/0009-eval-inputs-from-postgres.md)
+- [ADR 0010 — Sandboxed tools are pure functions, and the pod is the boundary](adr/0010-sandboxed-tools-are-pure-functions.md)
+- [ADR 0011 — Eve's migrations use Alembic with a private version table](adr/0011-alembic-with-a-private-version-table.md)

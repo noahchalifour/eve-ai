@@ -654,6 +654,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aegra-api" },
     { name = "aegra-cli" },
+    { name = "alembic" },
     { name = "caldav" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
@@ -684,6 +685,7 @@ dev = [
 requires-dist = [
     { name = "aegra-api", specifier = ">=0.10.3" },
     { name = "aegra-cli", specifier = ">=0.10.3" },
+    { name = "alembic", specifier = ">=1.14.0" },
     { name = "caldav", specifier = ">=3.2.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "google-api-python-client", specifier = ">=2.199.0" },
