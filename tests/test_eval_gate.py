@@ -92,3 +92,41 @@ def test_an_empty_dataset_is_skipped_not_passed():
     )
     assert code == 0
     assert any("skipped" in r for r in reasons)
+
+
+async def test_a_publish_failure_never_raises(monkeypatch):
+    """The expensive work is already done. Losing it to a reporting outage is
+    absurd - the same posture extract takes."""
+    from eve.eval import publish as publish_mod
+
+    class Boom:
+        def __init__(self, *a, **kw):
+            raise RuntimeError("langfuse unreachable")
+
+    monkeypatch.setattr(publish_mod, "_client", Boom)
+
+    assert await publish_mod.publish_run("d", "with-rules", [], {}, {}) is False
+
+
+async def test_publish_reports_success(monkeypatch):
+    from eve.eval import publish as publish_mod
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def create_dataset(self, **kw):
+            return None
+
+        def create_dataset_item(self, **kw):
+            return None
+
+        def create_score(self, **kw):
+            return None
+
+        def flush(self):
+            return None
+
+    monkeypatch.setattr(publish_mod, "_client", FakeClient)
+
+    assert await publish_mod.publish_run("d", "with-rules", [], {}, {"x": 1.0}) is True
