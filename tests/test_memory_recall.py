@@ -367,3 +367,33 @@ async def test_a_stalled_extraction_does_not_hang_the_turn(monkeypatch, wired):
     result = await memory_recall(_state(), CONFIG)
     assert result["memory"] is not None
     assert result["memory"]["profile"]  # the always-on layers are untouched
+
+
+async def test_a_real_pending_extraction_delays_the_next_turns_read(
+    monkeypatch, wired
+):
+    """The invariant the whole design rests on, with nothing mocked out: a
+    real extraction is in flight and `recall` must not read past it. This is
+    what would catch detaching quietly becoming fire-and-forget."""
+    from eve.memory import pending
+
+    events = []
+
+    async def slow_write():
+        await asyncio.sleep(0.02)
+        events.append("write")
+
+    original = recall_mod.load_always_on
+
+    async def tracking(sub, thread_id, *, include_rules=False):
+        events.append("read")
+        return await original(sub, thread_id, include_rules=include_rules)
+
+    monkeypatch.setattr(recall_mod, "load_always_on", tracking)
+    pending.clear()
+    try:
+        pending.spawn("t1", slow_write())
+        await memory_recall(_state(), CONFIG)
+        assert events == ["write", "read"]
+    finally:
+        pending.clear()

@@ -39,10 +39,15 @@ Five nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
-- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
-  The `REFLEX` model produces structured add, reinforce, supersede, and forget
-  operations; valid writes, digest refresh, embeddings, and cap eviction are
-  applied best-effort so extraction failure cannot erase a completed answer.
+- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed,
+  and hands its work to a background task rather than doing it in the graph — a
+  run is complete only at `END`, so an in-graph extraction held the client's
+  stream open for a model call plus writes. The `REFLEX` model produces
+  structured add, reinforce, supersede, and forget operations; valid writes,
+  digest refresh, embeddings, and cap eviction are applied best-effort so
+  extraction failure cannot erase a completed answer. The next turn on the
+  thread joins the pending task in `recall` before reading memory, so detaching
+  costs no ordering — see [ADR 0010](adr/0010-extraction-is-detached-and-joined.md).
 
 The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
@@ -109,8 +114,10 @@ src/eve_ambient/
 The import graph is acyclic: `settings` and `family` depend on nothing
 internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 -> `db` and `embed`; `db`/`embed`/`types` -> `store`; and
-`embed`/`ranking`/`store`/`types` -> `recall`, while `extract` depends on
-`embed`, `store`, `types`, `models`, and `settings`. `context` depends on
+`embed`/`ranking`/`store`/`types`/`pending` -> `recall`, while `extract` depends
+on `embed`, `store`, `types`, `pending`, `models`, and `settings`. `pending`
+imports nothing internal, which is what lets both `recall` and `extract` depend
+on it without a cycle. `context` depends on
 `family`, `settings`, `state`, and memory types; `models` depends on `settings`;
 `graph` depends on `context`, `memory`, `models`, and `state`; `auth` depends on
 `family` and `settings`.
