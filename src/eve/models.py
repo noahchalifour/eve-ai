@@ -20,9 +20,30 @@ model set, and OpenAI renamed that set for the 5.6 generation:
     replies it has no such tool. Conversational only, so `ocp/*` cannot serve
     as a fallback for any tool-using tier. Phase 3 depends on this.
 
-There is consequently no tool-capable fallback in the instance. Vault holds an
-`anthropic_api_key` that is not wired into any LiteLLM model entry; wiring it
-in is the cheapest way to get one.
+THE FALLBACK IS NOT HERE. It lives in the LiteLLM config (infrastructure repo,
+`kubernetes/apps/litellm`): every `chatgpt/*` entry declares `fallbacks` to
+`anthropic/claude-sonnet-5`, served by the metered `anthropic_api_key` that
+Vault had been holding unused since Phase 1 (ADR 0004 as amended, EVE-2).
+
+Three consequences for anyone reading this file:
+
+  - `TIER_MODELS` names only primaries. A tier does not stop working when its
+    entry 404s or rate-limits; LiteLLM swaps the backend and eve never sees it.
+    Do not add fallback identifiers here - one owner, and it is the proxy, so
+    eve-tools and eve-ambient inherit the same behaviour for free.
+  - One fallback serves all four subscription tiers rather than one per tier.
+    Degraded mode needs to work, not to preserve tier fidelity, and a single
+    entry is a single thing to register, probe, and keep alive.
+  - `REFLEX` deliberately has none. It rides the metered Google key, not the
+    ChatGPT credential, so it does not share the failure mode this guards
+    against; a fallback for it would be speculation.
+
+`use_responses_api` below is the load-bearing detail. LiteLLM translates a
+Responses-API request onto Anthropic's Messages API rather than passing it
+through, so the flag stays keyed to the PRIMARY's prefix and a fallback hop is
+invisible to this client. That translation is verified live, not assumed -
+tests/test_live_models.py::test_fallback_model_emits_tool_calls exists because
+ADR 0004's original fallback plan died on exactly this assumption.
 
 """
 

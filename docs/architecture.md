@@ -134,9 +134,8 @@ this section's acyclicity is asserted, by import graph rather than by
 convention.
 
 `models.py` is a deliberate chokepoint: model identifiers appear nowhere else
-in the codebase, so retiering — or falling back from the ChatGPT proxy to the
-Claude proxy — is a one-file change. The tiers, all served through LiteLLM
-(`settings.litellm_base_url`):
+in the codebase, so retiering is a one-file change. The tiers, all served
+through LiteLLM (`settings.litellm_base_url`):
 
 | Tier | Model | Purpose | First used |
 |---|---|---|---|
@@ -149,6 +148,14 @@ Claude proxy — is a one-file change. The tiers, all served through LiteLLM
 The `chatgpt/*` models are registered in LiteLLM with `mode: responses`, so
 the LangChain client sets `use_responses_api=True` for those tiers. `REFLEX`
 uses the metered Gemini route and the Chat Completions-compatible API instead.
+
+Every `chatgpt/*` tier falls back to `anthropic/claude-sonnet-5` — one model
+covering all four, rather than a fallback per tier — declared as a LiteLLM
+`fallbacks` target in the infrastructure repo, not in `models.py` (ADR 0004
+amendment, EVE-2). `REFLEX` has none: it already runs on the separate,
+metered Gemini key, so it doesn't share the ChatGPT credential's failure
+mode. Because the fallback lives in the proxy config, `TIER_MODELS` never
+changes and eve-tools/eve-ambient inherit it automatically.
 
 One deliberate exception to "model identifiers live only in `models.py`":
 `tests/test_models.py::test_voice_tier_is_the_chatgpt_conversational_model`

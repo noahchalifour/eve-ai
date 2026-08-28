@@ -8,8 +8,10 @@ import os
 import pytest
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 
 from eve.models import Tier, get_model
+from eve.settings import get_settings
 
 pytestmark = [
     pytest.mark.live,
@@ -71,4 +73,23 @@ async def test_mechanical_tier_emits_tool_calls():
     model = get_model(Tier.MECHANICAL).bind_tools([get_weather])
     reply = await model.ainvoke([HumanMessage("What is the weather in Toronto?")])
     assert reply.tool_calls, "proxy did not return tool calls for MECHANICAL tier"
+    assert reply.tool_calls[0]["name"] == "get_weather"
+
+
+async def test_fallback_model_emits_tool_calls():
+    # EVE-2 / ADR 0004 amendment: `anthropic/claude-sonnet-5` is the fallback
+    # LiteLLM swaps in for every chatgpt/* tier. Probed directly (not by
+    # forcing a real outage) because the one thing that killed the original
+    # OCP fallback plan was an untested API-shape assumption - this pins that
+    # `use_responses_api=False` is correct for the fallback model itself.
+    settings = get_settings()
+    model = ChatOpenAI(
+        model="anthropic/claude-sonnet-5",
+        base_url=settings.litellm_base_url,
+        api_key=settings.litellm_api_key or "unset",
+        use_responses_api=False,
+        streaming=True,
+    ).bind_tools([get_weather])
+    reply = await model.ainvoke([HumanMessage("What is the weather in Toronto?")])
+    assert reply.tool_calls, "fallback model did not return tool calls"
     assert reply.tool_calls[0]["name"] == "get_weather"
