@@ -130,3 +130,48 @@ async def test_revoke_all(pool):
         await approve(tool_id, "sub-noah")
     assert await revoke_all("incident") == 2
     assert await live_tools() == []
+
+
+async def test_propose_dedupes_the_interrupt_replay(pool):
+    """LangGraph replays a node's code from the top on every resume from an
+    interrupt, so `propose_tool` calls `store.propose()` twice for the exact
+    same proposal: once before the pause, once again on resume. Both calls
+    carry the same (name, source_sha256, thread_id, run_id), so the second
+    must return the first row's id rather than inserting an orphaned
+    duplicate."""
+    from eve.tools_authoring.store import all_tools, by_id, propose
+
+    first = await propose(
+        name="amortise", description="d", args_schema={"properties": {}},
+        source=SOURCE, proposed_by="sub-noah", thread_id="t1", run_id="r1",
+    )
+    second = await propose(
+        name="amortise", description="d", args_schema={"properties": {}},
+        source=SOURCE, proposed_by="sub-noah", thread_id="t1", run_id="r1",
+    )
+    assert first == second
+    assert (await by_id(first)) is not None
+    assert len(await all_tools()) == 1
+
+    third = await propose(
+        name="amortise", description="d", args_schema={"properties": {}},
+        source=SOURCE + "# v2\n", proposed_by="sub-noah",
+        thread_id="t1", run_id="r1",
+    )
+    assert third != first
+    assert len(await all_tools()) == 2
+
+
+async def test_cli_approve_and_revoke_round_trip(pool):
+    from eve.tools_authoring import cli
+    from eve.tools_authoring.store import live_tools, propose
+
+    tool_id = await propose(
+        name="amortise", description="d", args_schema={}, source=SOURCE,
+        proposed_by="sub-noah", thread_id=None, run_id=None,
+    )
+    assert await cli.approve_one(tool_id, "sub-noah") is True
+    assert [t["name"] for t in await live_tools()] == ["amortise"]
+
+    assert await cli.revoke_one("amortise", "no longer needed") == 1
+    assert await live_tools() == []

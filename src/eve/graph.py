@@ -35,6 +35,7 @@ from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import EveState
+from eve.tools_authoring.propose import propose_tool
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
 
@@ -51,12 +52,16 @@ def _live_specs(state: EveState) -> list:
 
 
 def _static_tools() -> list:
-    """Rebuilt per call rather than fixed at import: EVE_SELF_AUTHORING_ENABLED
-    gates write_skill, and both `eve` and `tools_node` need the same answer
-    within one turn. Settings are lru_cached, so this is a dict lookup."""
-    if get_settings().self_authoring_enabled:
-        return [*_BASE_TOOLS, write_skill]
-    return list(_BASE_TOOLS)
+    """Rebuilt per call rather than fixed at import: two settings gate two
+    tools, and both `eve` and `tools_node` need the same answer within one
+    turn. Settings are lru_cached, so this is a dict lookup."""
+    settings = get_settings()
+    tools = list(_BASE_TOOLS)
+    if settings.self_authoring_enabled:
+        tools.append(write_skill)
+    if settings.sandbox_enabled:
+        tools.append(propose_tool)
+    return tools
 
 
 # The ChatGPT backend refuses system messages outright - verified live on

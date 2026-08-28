@@ -569,3 +569,24 @@ def test_write_skill_is_unbound_by_default(monkeypatch):
     # The Phase 3/4 toolset is untouched.
     assert {"ask_home", "ask_mail", "ask_finances", "search_skills",
             "search_memory"} <= names
+
+
+def test_propose_tool_is_bound_when_the_sandbox_is_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "propose_tool" in {t.name for t in graph_mod._static_tools()}
+
+
+def test_propose_tool_is_unbound_by_default(monkeypatch):
+    monkeypatch.setenv("EVE_SANDBOX_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "propose_tool" not in {t.name for t in graph_mod._static_tools()}

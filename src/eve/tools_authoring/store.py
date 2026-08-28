@@ -26,8 +26,35 @@ async def propose(
     thread_id: str | None,
     run_id: str | None,
 ) -> str:
+    """Insert a new proposal, unless this is an interrupt-resume replay of
+    one already recorded.
+
+    LangGraph replays a node's code from the top on every resume from an
+    `interrupt()`, so `propose_tool` calls this function twice per
+    interactive approval: once before the pause, once again when the human's
+    decision resumes the graph. Both calls carry the same
+    (name, source_sha256, thread_id, run_id), so the second is recognised as
+    the same proposal and returns the first row's id instead of inserting an
+    orphaned duplicate that would sit "pending" forever. A proposal made
+    outside a graph thread (thread_id/run_id both None) cannot replay this
+    way, so it always inserts."""
     pool = await get_pool()
+    sha = source_hash(source)
     async with pool.connection() as conn:
+        if thread_id is not None and run_id is not None:
+            cur = await conn.execute(
+                """
+                SELECT id FROM eve_tool
+                WHERE name = %s AND source_sha256 = %s
+                  AND source_thread = %s AND source_run = %s
+                  AND approved_at IS NULL AND rejected_why IS NULL
+                """,
+                (name, sha, thread_id, run_id),
+            )
+            existing = await cur.fetchone()
+            if existing is not None:
+                return str(existing[0])
+
         cur = await conn.execute(
             """
             INSERT INTO eve_tool
@@ -38,7 +65,7 @@ async def propose(
             """,
             (
                 name, description, Jsonb(args_schema), source,
-                source_hash(source), proposed_by, thread_id, run_id,
+                sha, proposed_by, thread_id, run_id,
             ),
         )
         return str((await cur.fetchone())[0])
