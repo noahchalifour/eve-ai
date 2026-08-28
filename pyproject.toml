@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aegra-api>=0.10.3",
     "aegra-cli>=0.10.3",
+    "alembic>=1.14.0",
     "caldav>=3.2.1",
     "fastapi>=0.141.1",
     # monarchmoney 0.1.15 declares gql>=3.4 but calls the gql 3.x
