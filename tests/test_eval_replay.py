@@ -85,12 +85,25 @@ async def test_replay_turn_never_runs_extract(monkeypatch):
     # Faking the DB calls it makes (the way `search_episodic_lexical`'s own
     # docstring says that arm "CANNOT FAIL") keeps this a unit test: real
     # recall behaviour with a real Postgres is covered by the marked
-    # `integration` tests, not this one.
+    # `integration` tests, not this one. `item.input["message"]` is non-empty,
+    # so `recall()` also starts an embedding task (its vector arm) - leaving
+    # `embed_query`/`search_episodic_vector` real would make the test's
+    # determinism depend on an unmocked call to the real LiteLLM proxy
+    # failing fast rather than, in an environment with valid credentials,
+    # actually succeeding and then hitting the same missing-database error
+    # through the unmocked vector search. Faking all four matches
+    # tests/test_memory_recall.py's `wired` fixture.
     async def fake_load_always_on(sub, thread_id, *, include_rules=False):
         return [], [], None, []
 
     async def fake_search_episodic_lexical(sub, query, limit=20):
         return []
+
+    async def fake_search_episodic_vector(sub, embedding, limit=20):
+        return []
+
+    async def fake_embed_query(text):
+        return [0.0]
 
     # Same shadowing as `eve.memory.extract` above: `eve/memory/__init__.py`
     # does `from eve.memory.recall import recall`, so `eve.memory.recall` (the
@@ -101,6 +114,10 @@ async def test_replay_turn_never_runs_extract(monkeypatch):
     monkeypatch.setattr(
         recall_module, "search_episodic_lexical", fake_search_episodic_lexical
     )
+    monkeypatch.setattr(
+        recall_module, "search_episodic_vector", fake_search_episodic_vector
+    )
+    monkeypatch.setattr(recall_module, "embed_query", fake_embed_query)
 
     monkeypatch.setattr(
         "eve.context.get_family",
