@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -307,3 +308,62 @@ async def test_the_always_on_share_is_only_split_four_ways_when_authoring_is_on(
     # The two divisors must actually differ here, or the assertions above
     # would pass against either one and prove nothing.
     assert len(bundle["profile"]) == {3: 4, 4: 3}[divisor]
+
+
+async def test_recall_joins_the_pending_extraction_before_reading(monkeypatch, wired):
+    """The previous turn's writes must be visible to this turn's reads, or
+    'what did I just tell you' misses the thing it was just told."""
+    order = []
+
+    async def fake_join(thread_id, budget_s):
+        order.append(("join", thread_id))
+        return True
+
+    original = recall_mod.load_always_on
+
+    async def tracking_always_on(sub, thread_id, *, include_rules=False):
+        order.append(("read", thread_id))
+        return await original(sub, thread_id, include_rules=include_rules)
+
+    monkeypatch.setattr(recall_mod.pending, "join", fake_join)
+    monkeypatch.setattr(recall_mod, "load_always_on", tracking_always_on)
+
+    await memory_recall(_state(), CONFIG)
+    assert order == [("join", "t1"), ("read", "t1")]
+
+
+async def test_recall_joins_with_the_configured_budget(monkeypatch, wired):
+    seen = {}
+
+    async def fake_join(thread_id, budget_s):
+        seen["budget"] = budget_s
+        return True
+
+    monkeypatch.setattr(recall_mod.pending, "join", fake_join)
+    monkeypatch.setattr(
+        recall_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            memory_extract_join_budget_ms=2500,
+            memory_token_budget=1200,
+            self_authoring_enabled=False,
+            memory_recall_embed_budget_ms=120,
+        ),
+    )
+
+    await memory_recall(_state(), CONFIG)
+    assert seen["budget"] == 2.5
+
+
+async def test_a_stalled_extraction_does_not_hang_the_turn(monkeypatch, wired):
+    """A degraded turn is a complete turn. If the previous extraction is
+    wedged, this turn ships with slightly stale candidates rather than
+    waiting on it forever."""
+    async def fake_join(thread_id, budget_s):
+        return False
+
+    monkeypatch.setattr(recall_mod.pending, "join", fake_join)
+
+    result = await memory_recall(_state(), CONFIG)
+    assert result["memory"] is not None
+    assert result["memory"]["profile"]  # the always-on layers are untouched
