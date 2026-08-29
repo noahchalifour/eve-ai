@@ -47,10 +47,19 @@ Five nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
-- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
-  The `REFLEX` model produces structured add, reinforce, supersede, and forget
-  operations; valid writes, digest refresh, embeddings, and cap eviction are
-  applied best-effort so extraction failure cannot erase a completed answer.
+- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed,
+  and hands its work to a background task rather than doing it in the graph — a
+  run is complete only at `END`, so an in-graph extraction held the client's
+  stream open for a model call plus writes. The `REFLEX` model produces
+  structured add, reinforce, supersede, and forget operations; valid writes,
+  digest refresh, embeddings, and cap eviction are applied best-effort so
+  extraction failure cannot erase a completed answer. The next turn on the
+  thread joins the pending task in `recall` before reading memory, so detaching
+  costs no ordering — see [ADR 0012](adr/0012-extraction-is-detached-and-joined.md).
+  That guarantee is per-process (the pending-task registry is in-memory, not
+  shared), so it requires `eve` to run as a single instance — a second
+  replica or a rolling deploy can serve one stale-memory turn per replica
+  transition, the same class of risk documented for `eve-ambient` below.
 
 The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
@@ -130,8 +139,10 @@ src/eve_ambient/
 The import graph is acyclic: `settings` and `family` depend on nothing
 internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 -> `db` and `embed`; `db`/`embed`/`types` -> `store`; and
-`embed`/`ranking`/`store`/`types` -> `recall`, while `extract` depends on
-`embed`, `store`, `types`, `models`, and `settings`. `context` depends on
+`embed`/`ranking`/`store`/`types`/`pending` -> `recall`, while `extract` depends
+on `embed`, `store`, `types`, `pending`, `models`, and `settings`. `pending`
+imports nothing internal, which is what lets both `recall` and `extract` depend
+on it without a cycle. `context` depends on
 `family`, `settings`, `state`, and memory types; `models` depends on `settings`;
 `graph` depends on `context`, `memory`, `models`, `state`, and, since Phase 5c,
 `eve.tools_authoring.propose` (`propose_tool` is bound alongside the
@@ -944,3 +955,4 @@ or a credential even by accident.
 - [ADR 0009 — Eval inputs come from Postgres, not from Langfuse traces](adr/0009-eval-inputs-from-postgres.md)
 - [ADR 0010 — Sandboxed tools are pure functions, and the pod is the boundary](adr/0010-sandboxed-tools-are-pure-functions.md)
 - [ADR 0011 — Eve's migrations use Alembic with a private version table](adr/0011-alembic-with-a-private-version-table.md)
+- [ADR 0012 — Memory extraction is detached from the turn and joined by the next one](adr/0012-extraction-is-detached-and-joined.md)

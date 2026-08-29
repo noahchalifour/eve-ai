@@ -77,6 +77,17 @@ class Settings(BaseSettings):
     memory_profile_cap: int = 40
     memory_household_cap: int = 60
     memory_digest_every_n_turns: int = 6
+    # Extraction runs after Eve's last token, so its latency never delays a
+    # word she says - but it does delay the turn ENDING, because the run is
+    # only complete when the graph reaches END. That holds the SSE stream and
+    # the client's "done" open for a REFLEX call plus writes. Backgrounding it
+    # moves that wait into the gap where the member is typing (ADR 0012).
+    memory_extract_background: bool = True
+    # How long the next turn waits for the previous turn's extraction before
+    # reading memory anyway. Generous next to the 120ms embed budget because
+    # it is normally already satisfied - a human had to type in between. When
+    # it is not, the degrade is one turn of slightly stale candidates.
+    memory_extract_join_budget_ms: int = 5000
 
     # Phase 4 (Ambient). See docs/superpowers/specs/
     # 2026-08-23-eve-ambient-design.md sections 5 and 8.2.
