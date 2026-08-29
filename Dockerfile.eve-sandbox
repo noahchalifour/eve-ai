@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# --no-install-project: eve-sandbox is never "the project" uv_build packages
+# (that's "eve", src/eve). PYTHONPATH below makes src/eve_sandbox importable.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+# ONLY eve_sandbox. Not src/eve, not src/eve_tools: this image must not
+# contain a module that knows how to reach the database or a credential.
+COPY src/eve_sandbox ./src/eve_sandbox
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PORT=8091
+
+EXPOSE 8091
+
+RUN useradd --system --uid 10003 --no-create-home eve-sandbox \
+    && chown -R eve-sandbox:eve-sandbox /app
+USER 10003
+
+CMD ["uvicorn", "eve_sandbox.app:app", "--host", "0.0.0.0", "--port", "8091"]

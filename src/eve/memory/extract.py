@@ -204,7 +204,7 @@ async def extract(state: dict, config: RunnableConfig) -> dict:
     an in-graph extraction holds the SSE stream, and so the client's "done",
     open for a REFLEX call plus embeddings plus writes. `recall` joins this
     task on the next turn before it reads memory, so detaching costs no
-    ordering (ADR 0010).
+    ordering (ADR 0012).
     """
     if not get_settings().memory_extract_background:
         await _run_extraction(state, config)

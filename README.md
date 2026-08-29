@@ -18,17 +18,39 @@ independently useful and gets its own design document:
 | **2** | **Memory** | Four memory layers, post-stream extraction, hybrid recall. **Eve remembers.** |
 | **3** | **Specialists + Skills** | Supervisor topology, permission enforcement, skills registry, the v1 specialists. **Eve does things.** |
 | **4** | **Ambient** | Signal ingestion, relevance filtering, proactive notifications. **Eve speaks first.** |
-| 5a | Self-improvement | Eve authors her own behavioural rules and multi-step procedures, stored as memory layers, revocable from a CLI. **Eve gets better.** |
+| **5a** | **Self-improvement** | Eve authors her own behavioural rules and multi-step procedures, stored as memory layers, revocable from a CLI. **Eve gets better.** |
 | **5b** | **Eval harness** | Datasets built from Eve's own tables; an A/B measuring what the rule set is worth; a regression gate that never depends on Langfuse. **Now we can tell.** |
-| 5c | Gated tool code | Eve proposes executable tool code behind a human approval, run in a sandbox with no network and no credentials. |
+| **5c** | **Gated tool code** | Eve proposes executable Python tools behind a human approval; approved tools run in `eve-sandbox`, a separate credential-free service with no network access. **Eve computes, safely.** |
 
-This repository is Phase 5b: an `eve-eval` command builds evaluation datasets
-from Eve's own Postgres tables, replays them through the real filter and the
-real graph, measures the effect of Phase 5a's self-authored rules with an
-A/B, and gates on a regression — all without depending on Langfuse being
-reachable. See
-[`docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md`](docs/superpowers/specs/2026-08-27-eve-eval-harness-design.md)
-for the Phase 5b design and definition of done.
+This repository is Phase 5c, and with it **the five-phase program is
+complete**. Eve proposes a small Python tool through `propose_tool`; the run
+pauses on LangGraph's `interrupt()` until a human with `tools.author` approves
+or rejects the exact source bytes; an approved tool is discovered by
+`search_skills` and dispatched to `eve-sandbox`, which runs it with no
+network, no filesystem beyond a per-call tmpfs, no environment variables, and
+no credentials of any kind. See [ADR 0010](docs/adr/0010-sandboxed-tools-are-pure-functions.md)
+for why the pod, not the approval or the AST check, is the actual security
+boundary, and
+[`docs/superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md`](docs/superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md)
+for the Phase 5c design and definition of done.
+
+### Where the program ends
+
+Four boundaries are permanent, not phases yet to come:
+
+- **Eve does not approve her own code.** There is no path, no setting, and no
+  "trusted tool" tier. The one human gate in the program stays.
+- **Eve does not author credentialed capability.** A tool needing a secret is
+  an `eve-tools` handler in a pull request, forever. The self-improvement
+  boundary is drawn at "computation Eve can verify," not "actions Eve can
+  take."
+- **Eve does not rewrite her own persona.** `prompts/eve.md` is
+  human-authored. Phase 5a lets her write rules *under* it; nothing lets her
+  edit it.
+- **Eve does not learn unsupervised.** Rules come from a specific turn with a
+  specific member, hygiene never auto-resolves a contradiction, and code needs
+  a human. The reflection loop this program deferred early on is deferred
+  permanently, not pending.
 
 ## Quick start
 
@@ -42,7 +64,7 @@ uv run aegra dev
 Run the unit tests (no network, no services required):
 
 ```bash
-uv run pytest -m "not integration and not live"
+uv run pytest -m "not integration and not live and not docker"
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the graph, the module

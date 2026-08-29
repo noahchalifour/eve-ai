@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aegra-api>=0.10.3",
     "aegra-cli>=0.10.3",
+    "alembic>=1.14.0",
     "caldav>=3.2.1",
     "fastapi>=0.141.1",
     # monarchmoney 0.1.15 declares gql>=3.4 but calls the gql 3.x
@@ -43,6 +44,7 @@ eve-eval = "eve.eval.cli:main"
 eve-migrate = "eve.memory.db:main"
 eve-pat = "eve.pat:main"
 eve-skill = "eve.skills.cli:main"
+eve-tool = "eve.tools_authoring.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
@@ -58,11 +60,12 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# The default run is the unit tier. `-m integration` / `-m live` on the
-# command line replace this expression rather than adding to it, so the
-# other two tiers stay selectable exactly as documented.
-addopts = ["-m", "not integration and not live"]
+# The default run is the unit tier. `-m integration` / `-m live` / `-m
+# docker` on the command line replace this expression rather than adding to
+# it, so the other tiers stay selectable exactly as documented.
+addopts = ["-m", "not integration and not live and not docker"]
 markers = [
     "integration: requires docker-compose.test.yml services",
-    "live: hits the real LiteLLM proxy; requires EVE_LIVE_TESTS=1",
+    "live: requires real external infrastructure (the real LiteLLM proxy, or kubectl against a real cluster for tests/test_sandbox_live.py); requires EVE_LIVE_TESTS=1",
+    "docker: builds and runs a real container image with the `docker` CLI (slow - a cold build is on the order of a minute); skips itself if docker is unavailable",
 ]

@@ -196,7 +196,7 @@ def _record_span(
     # turn may be reading slightly stale candidates; if ever non-zero in
     # practice, the join budget is too tight or extraction is too slow.
     # "empty": nothing was pending IN THIS PROCESS - either genuinely nothing
-    # to wait for, or (see ADR 0010) a different replica handled turn N's
+    # to wait for, or (see ADR 0012) a different replica handled turn N's
     # extraction and this process never knew about it. The three are kept
     # distinct so a multi-replica deployment silently serving stale reads
     # cannot hide behind a bool that reads identically to "all clear".

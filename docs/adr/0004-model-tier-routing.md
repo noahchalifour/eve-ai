@@ -66,3 +66,24 @@ for `ocp/*`.
 
 If the proxy proves unreliable, reverting to OCP Claude is a one-file change,
 which is why `models.py` is the sole owner of model identifiers.
+
+## Amendment (2026-08-28, EVE-2)
+
+The unused `anthropic_api_key` this ADR flagged is now wired into LiteLLM as
+`anthropic/claude-sonnet-5`. Every `chatgpt/*` model entry declares it as a
+`fallbacks` target (infrastructure repo, `kubernetes/apps/litellm`) - one
+fallback for all four subscription tiers, not a per-tier OCP-style matrix.
+Degraded mode needs to work, not preserve tier fidelity, and this credential
+is independent of both the ChatGPT sign-in and the Gemini key REFLEX/embedding
+already depend on, so it doesn't share either's failure mode. `REFLEX` still
+gets no fallback, for the same reason it already stands apart.
+
+This is proxy-side config, not a `models.py` change: `TIER_MODELS` continues
+to name only primaries, and eve, eve-tools, and eve-ambient all inherit the
+fallback for free by asking LiteLLM for the same model names as before.
+
+The one thing this amendment does not get to assume: that LiteLLM translates
+a Responses-API request onto the fallback's Messages API correctly. That is
+exactly the kind of untested API-shape assumption that sank the original OCP
+fallback plan above, so it is probed live, not inferred -
+`tests/test_live_models.py::test_fallback_model_emits_tool_calls`.

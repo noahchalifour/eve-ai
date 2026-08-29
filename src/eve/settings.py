@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     # word she says - but it does delay the turn ENDING, because the run is
     # only complete when the graph reaches END. That holds the SSE stream and
     # the client's "done" open for a REFLEX call plus writes. Backgrounding it
-    # moves that wait into the gap where the member is typing (ADR 0010).
+    # moves that wait into the gap where the member is typing (ADR 0012).
     memory_extract_background: bool = True
     # How long the next turn waits for the previous turn's extraction before
     # reading memory anyway. Generous next to the 120ms embed budget because
@@ -146,6 +146,16 @@ class Settings(BaseSettings):
     # packaging detail Phase 5c owns, not this one.
     eval_turns_file: str = "tests/eval/turns.yaml"
 
+    # Phase 5c (Gated tool code). See docs/superpowers/specs/
+    # 2026-08-27-eve-sandboxed-tools-design.md section 10.
+    sandbox_enabled: bool = False
+    sandbox_base_url: str = "http://eve-sandbox:8091"
+    sandbox_api_key: str = ""
+    sandbox_timeout_seconds: int = 5
+    sandbox_memory_mb: int = 256
+    sandbox_max_output_bytes: int = 65536
+    sandbox_max_concurrency: int = 4
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
@@ -182,6 +192,16 @@ class Settings(BaseSettings):
             # subsystem can have. Refuse at startup instead.
             raise ValueError(
                 "EVE_AMBIENT_TOKEN is required when EVE_AMBIENT_ENABLED=true"
+            )
+        if self.sandbox_api_key and len(self.sandbox_api_key) < 32:
+            raise ValueError(
+                "EVE_SANDBOX_API_KEY must be at least 32 characters: it "
+                "authenticates a service that executes code, so a guessable "
+                "value fails open"
+            )
+        if self.sandbox_enabled and not self.sandbox_api_key:
+            raise ValueError(
+                "EVE_SANDBOX_API_KEY is required when EVE_SANDBOX_ENABLED=true"
             )
 
 

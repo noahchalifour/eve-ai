@@ -28,6 +28,8 @@ members:
       - mail.send
       - finances
       - memory.write_shared
+      # Phase 5c: reviewing and approving Eve-authored tool code.
+      - tools.author
 
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"

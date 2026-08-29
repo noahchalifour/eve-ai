@@ -200,7 +200,7 @@ async def test_a_turn_executes_our_graph_under_aegra(aegra_server):
 
     assert values["member"]["sub"] == "sub-noah"
     assert values["member"]["name"] == "Noah"
-    assert values["member"]["permissions"] == ["home.control", "spend"]
+    assert values["member"]["permissions"] == ["home.control", "spend", "tools.author"]
     assert values["member"]["local_time"]
     assert "You are Eve" in values["system_prompt"]
     assert "Noah" in values["system_prompt"]

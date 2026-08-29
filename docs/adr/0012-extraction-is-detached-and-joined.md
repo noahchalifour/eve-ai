@@ -1,4 +1,4 @@
-# 10. Memory extraction is detached from the turn and joined by the next one
+# 12. Memory extraction is detached from the turn and joined by the next one
 
 **Status:** Accepted
 **Date:** 2026-08-28

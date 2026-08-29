@@ -6,7 +6,7 @@
 bends: a single bounded, cancellable embedding call, which ships lexical-only
 if it misses its budget. `extract` runs after the answer has streamed and hands its
 work to a background task, so it delays neither the answer nor the end of the
-turn; the next turn on the thread joins it before reading memory (ADR 0010).
+turn; the next turn on the thread joins it before reading memory (ADR 0012).
 Phase 3 (this file) adds the `eve <-> tools` cycle:
 `eve` binds the static specialist/skill tools plus any dynamically-discovered
 ones (freshly materialized from state on every call) and either answers,
@@ -37,17 +37,33 @@ from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import EveState
+from eve.tools_authoring.propose import propose_tool
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
 
 
+def _live_specs(state: EveState) -> list:
+    """Drop sandbox specs when the kill switch is off, wherever they came
+    from - including a thread checkpointed while it was on."""
+    enabled = get_settings().sandbox_enabled
+    return [
+        spec
+        for spec in state.get("dynamic_tools", [])
+        if enabled or spec.get("server_id") != "sandbox"
+    ]
+
+
 def _static_tools() -> list:
-    """Rebuilt per call rather than fixed at import: EVE_SELF_AUTHORING_ENABLED
-    gates write_skill, and both `eve` and `tools_node` need the same answer
-    within one turn. Settings are lru_cached, so this is a dict lookup."""
-    if get_settings().self_authoring_enabled:
-        return [*_BASE_TOOLS, write_skill]
-    return list(_BASE_TOOLS)
+    """Rebuilt per call rather than fixed at import: two settings gate two
+    tools, and both `eve` and `tools_node` need the same answer within one
+    turn. Settings are lru_cached, so this is a dict lookup."""
+    settings = get_settings()
+    tools = list(_BASE_TOOLS)
+    if settings.self_authoring_enabled:
+        tools.append(write_skill)
+    if settings.sandbox_enabled:
+        tools.append(propose_tool)
+    return tools
 
 
 # The ChatGPT backend refuses system messages outright - verified live on
@@ -117,7 +133,7 @@ def build_graph(
             # of an exception.
             return {"messages": [AIMessage(_LOOP_EXHAUSTED)]}
         model = model_factory(Tier.VOICE)
-        dynamic = [materialize(spec) for spec in state.get("dynamic_tools", [])]
+        dynamic = [materialize(spec) for spec in _live_specs(state)]
         bound_model = model.bind_tools([*_static_tools(), *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
@@ -131,7 +147,7 @@ def build_graph(
         return {"messages": [await bound_model.ainvoke(messages, config)]}
 
     async def tools_node(state: EveState, config: RunnableConfig) -> dict:
-        dynamic = [materialize(spec) for spec in state.get("dynamic_tools", [])]
+        dynamic = [materialize(spec) for spec in _live_specs(state)]
         # Rebuilt fresh, not cached on the module: a spec discovered by
         # search_skills two turns ago must still resolve to a live tool now,
         # and EveState is the only thing that survives between them.
