@@ -771,21 +771,60 @@ rules have turned on themselves — the signal to reach for `eve-skill revoke`
 or Phase 5b's own hygiene pass. Suppression is a parameter the eval package
 passes to `build_system_prompt`; production code paths never set it.
 
-**The judge runs on `REFLEX`**, not `DEEP` or `VOICE`. `assertion_pass`
-needs a model to grade a natural-language assertion against a response, and
-every tier except `REFLEX` is a subscription proxy sharing one `max_budget`
-with Noah's own work (see the tier table above) — a judge on any of them
-would make the harness the most expensive thing in the deployment for a
-narrow classification task flash-lite is already good at. Every other
-scorer (`notify_agreement`, `notify_precision`, `audience_exact`) is an
-exact comparison against a recorded verdict or a recorded reply and costs
-nothing. `eve-eval run` prints a spot-check of ten judged assertions with
-the judge's one-sentence reason so a human can read them; the tier decision —
+**The judge runs on `DEEP`**, not `REFLEX` or `VOICE`. `assertion_pass`
+needs a model to grade a natural-language assertion against a response.
+`REFLEX` — the metered, free-tier Gemini route — was the original choice,
+since every other tier is a subscription proxy sharing one `max_budget` with
+Noah's own work (see the tier table above) and a judge on any of them would
+make the harness the most expensive thing in the deployment for a narrow
+classification task flash-lite is already good at. Every other scorer
+(`notify_agreement`, `notify_precision`, `audience_exact`) is an exact
+comparison against a recorded verdict or a recorded reply and costs nothing.
+
+`eve-eval run` prints a spot-check of up to ten judged assertions with the
+judge's one-sentence reason so a human can read them; the tier decision —
 move to `DEEP` in `scorers.py` if agreement falls below ~85% — is made from
-that reading. **This has not happened yet**: `eve-eval run` has never been
-run against production data, so there is no recorded agreement figure here.
-The first real run's spot-check should be read by hand and the resulting
-percentage recorded in this paragraph.
+that reading. **The first real runs happened on 2026-08-31**, against
+production data via the `eve` pod, in three attempts:
+
+1. On `REFLEX`: of the 9 spot-checked lines (`turns.yaml` has 8 non-canary
+   assertions + 1 canary, so `min(10, len(spot))` capped it there), 4 came
+   back `[FAIL] ...: judge unavailable` — `REFLEX`'s free-tier Gemini quota
+   (15 requests/minute) rate-limited outright, with no fallback model group
+   configured for it. The other 5 produced real verdicts a human agreed
+   with, but 5/9 (56%) is already below the ~85% bar once the rate-limited
+   lines count as failed spot-checks, and a judge that cannot reliably
+   answer at all is disqualifying regardless of accuracy on the calls that
+   land. `rule_delta` that run was `-37.5`, but confounded: the same 4
+   `judge unavailable` calls default to `passed=False`, and excluding them
+   the assertions that *were* judged scored identically to `without-rules`
+   (75%) — the number was mostly measuring `REFLEX`'s rate limit, not the
+   rule set.
+2. Moved the judge to `Tier.DEEP` and re-ran: every one of the 16
+   `judge_assertion` calls failed with `judge returned an unusable
+   response: Structured Output response does not have a 'parsed' field nor
+   a 'refusal' field` — `with_structured_output`'s default `method=
+   "json_schema"` doesn't work through this LiteLLM proxy for a
+   `use_responses_api=True` model (`models.py`); every other
+   `with_structured_output` caller in the codebase runs on `REFLEX`
+   (chat-completions, not responses), so this combination had never been
+   exercised before. `assertion_pass` was 0.0% on both arms and `rule_delta`
+   a meaningless `+0.0`.
+3. Added `method="function_calling"` to the `with_structured_output` call
+   (verified first with a standalone call before spending another full run)
+   and re-ran: clean, no judge errors. **Spot-check agreement: 8/9 (89%)** —
+   a human agreed with 8 of the judge's 9 verdicts on the reasoning given;
+   the one debatable call marked `the-other-member-gets-the-same-treatment`
+   FAIL for citing a technical reason (data source needs reauthorization)
+   rather than a policy refusal, which a stricter reading of the assertion
+   ("does not refuse to answer or treat the question as forbidden") could
+   call PASS. 89% clears the ~85% bar, so `DEEP` + `function_calling`
+   stands. **`rule_delta`: -12.5** (`with-rules` 62.5% vs `without-rules`
+   75%, both /8, a one-assertion swing) — a real, uncounfounded number this
+   time, but thin: `turns.yaml` has only 8 non-canary assertions, so this is
+   not yet strong evidence either way on Phase 5a's rule set. Re-run
+   periodically as the dataset grows before treating a negative `rule_delta`
+   as a verdict on the rules.
 
 **The gate never calls Langfuse.** `eve-eval run` writes every score to
 `eve_eval_run` in Postgres first; publishing a Langfuse dataset run is

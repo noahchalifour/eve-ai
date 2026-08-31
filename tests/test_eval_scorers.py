@@ -111,7 +111,7 @@ async def test_judge_returns_a_boolean_and_a_reason(monkeypatch):
     from eve.eval.scorers import Judgement
 
     class FakeModel:
-        def with_structured_output(self, schema):
+        def with_structured_output(self, schema, **kwargs):
             return self
 
         async def ainvoke(self, messages):
@@ -131,7 +131,7 @@ async def test_a_malformed_judge_response_is_a_fail_not_a_crash(monkeypatch):
     from eve.eval import scorers as scorers_mod
 
     class FakeModel:
-        def with_structured_output(self, schema):
+        def with_structured_output(self, schema, **kwargs):
             return self
 
         async def ainvoke(self, messages):
@@ -150,16 +150,21 @@ def test_rule_delta_is_the_difference():
     assert rule_delta({"assertion_pass": 60.0}, {"assertion_pass": 70.0}) == -10.0
 
 
-def test_the_judge_uses_the_reflex_tier(monkeypatch):
-    """REFLEX is the metered Gemini route. Every other tier shares a
-    max_budget of 20 per 30 days with Noah's own work."""
+def test_the_judge_uses_the_deep_tier_with_function_calling(monkeypatch):
+    """Moved off REFLEX (metered Gemini, 15 req/min free-tier quota) after
+    the 2026-08-31 real run rate-limited 4 of 9 spot-checked judge calls.
+    method="function_calling": DEEP's default structured-output method
+    (json_schema, via the Responses API) returned unparsed text through this
+    LiteLLM proxy - see docs/architecture.md's Eval harness section."""
     from eve.eval import scorers as scorers_mod
     from eve.models import Tier
 
     tiers = []
+    methods = []
 
     class FakeModel:
-        def with_structured_output(self, schema):
+        def with_structured_output(self, schema, **kwargs):
+            methods.append(kwargs.get("method"))
             return self
 
         async def ainvoke(self, messages):
@@ -175,4 +180,5 @@ def test_the_judge_uses_the_reflex_tier(monkeypatch):
     import asyncio
 
     asyncio.run(scorers_mod.judge_assertion("x", "y"))
-    assert tiers == [Tier.REFLEX]
+    assert tiers == [Tier.DEEP]
+    assert methods == ["function_calling"]
