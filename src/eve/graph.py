@@ -1,12 +1,15 @@
 """Eve's graph.
 
-    START -> load_context -> recall -> eve <-> tools -> extract -> END
+    START -> load_context -> recall -> eve <-> tools -> extract -> suggest -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
 if it misses its budget. `extract` runs after the answer has streamed and hands its
 work to a background task, so it delays neither the answer nor the end of the
 turn; the next turn on the thread joins it before reading memory (ADR 0012).
+`suggest` runs last, making one bounded REFLEX call to produce reply chips
+for the member to tap; any failure degrades to an empty list rather than
+delaying or losing the answer (ADR 0013).
 Phase 3 (this file) adds the `eve <-> tools` cycle:
 `eve` binds the static specialist/skill tools plus any dynamically-discovered
 ones (freshly materialized from state on every call) and either answers,

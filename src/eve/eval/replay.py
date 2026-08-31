@@ -1,8 +1,11 @@
 """Running one dataset item through the real code path.
 
 Real, not reconstructed: shape 1 calls eve_ambient.filter.judge and shape 2
-invokes a compiled Eve graph. The one substitution is `extract`, replaced by a
-no-op - an eval run that writes memory corrupts the behaviour it is measuring.
+invokes a compiled Eve graph. Two substitutions are made, both no-ops:
+`extract`, because an eval run that writes memory corrupts the behaviour it
+is measuring, and `suggest`, because reply chips are not part of what this
+harness scores - substituting it saves a REFLEX call per replayed item
+without changing the answer being evaluated.
 """
 
 from __future__ import annotations
