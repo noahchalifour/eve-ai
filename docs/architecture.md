@@ -17,10 +17,12 @@ for its own design and definition of done.
 ## The graph
 
 ```
-START -> load_context -> recall -> eve <-> tools -> extract -> END
+                          ┌─> ui_action ────────────────────────────────> END
+START -> load_context ────┤
+                          └─> recall -> eve <-> tools -> persist_ui -> extract -> END
 ```
 
-Five nodes, wired in `src/eve/graph.py`:
+Seven nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
@@ -47,6 +49,22 @@ Five nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
+- **`ui_action`** (`src/eve/ui/actions.py`) answers a tap on a rendered
+  dynamic surface. The client re-runs the turn with the user message's content
+  replaced by an `<assistant-ui-action>` envelope, so `load_context` routes it
+  here instead of to `recall`: the branch calls no model, re-reads the
+  forecast from Home Assistant rather than trusting the envelope's `data`,
+  emits one `patch` on the `custom` stream, and replaces the raw envelope in
+  the transcript with a readable sentence. It is the one place in Eve where a
+  failed external call raises rather than returning a string — see
+  [ADR 0013](adr/0013-dynamic-ui-is-server-built.md).
+- **`persist_ui`** (`src/eve/ui/persist.py`) copies whatever surfaces the turn
+  emitted into the final AI message as a portable `<assistant-ui>` frame.
+  `custom` frames are streamed and never stored, and the client replays a
+  reopened session from `values.messages` alone, so without this a card
+  vanishes on relaunch. The frame text is never streamed live (a node's
+  message update is not an LLM token event) and is stripped from what the
+  member sees and from TTS on every path.
 - **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed,
   and hands its work to a background task rather than doing it in the graph — a
   run is complete only at `END`, so an in-graph extraction held the client's
@@ -101,6 +119,13 @@ src/eve/
     materialize.py  # turn DynamicToolSpec into callable tool at model call time
     authoring.py    # write_skill tool (Phase 5a)
     cli.py          # eve-skill script (Phase 5a)
+  ui/
+    protocol.py     # the assistant-ui/1.0 contract, its validator, the portable frame
+    stream.py       # client capabilities in, custom-mode frames out
+    weather.py      # the weather surface, built from HA's forecast; no model output
+    tools.py        # show_weather: the model's whole share of the feature
+    actions.py      # inbound action envelope + the model-free ui_action node
+    persist.py      # copy this turn's surfaces into the AI message for history
   eval/
     types.py        # DatasetItem, ItemResult, RunScore -- shapes only
     datasets.py     # build the two dataset shapes from Postgres and the golden file
@@ -1001,3 +1026,4 @@ or a credential even by accident.
 - [ADR 0010 — Sandboxed tools are pure functions, and the pod is the boundary](adr/0010-sandboxed-tools-are-pure-functions.md)
 - [ADR 0011 — Eve's migrations use Alembic with a private version table](adr/0011-alembic-with-a-private-version-table.md)
 - [ADR 0012 — Memory extraction is detached from the turn and joined by the next one](adr/0012-extraction-is-detached-and-joined.md)
+- [ADR 0013 — Dynamic UI surfaces are built server-side and only triggered by the model](adr/0013-dynamic-ui-is-server-built.md)
