@@ -29,12 +29,19 @@ async def _no_extract(state, config):
     return {}
 
 
+async def _no_suggest(state, config):
+    return {"suggestions": []}
+
+
 async def test_graph_answers_and_appends_one_message(monkeypatch):
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
 
     app = build_graph(
-        model_factory=_fake_factory, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -47,7 +54,10 @@ async def test_graph_puts_member_context_into_state(monkeypatch):
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
 
     app = build_graph(
-        model_factory=_fake_factory, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -72,7 +82,10 @@ async def test_the_graph_streams_tokens_rather_than_one_blob(monkeypatch):
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
 
     app = build_graph(
-        model_factory=_fake_factory, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     chunks = [
         chunk
@@ -102,6 +115,7 @@ async def test_system_prompt_is_sent_to_the_model_and_not_stored_in_messages(
         model_factory=lambda _t: RecordingModel(messages=iter([])),
         recall_fn=_no_recall,
         extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -135,6 +149,7 @@ async def test_persona_is_sent_as_a_developer_message_not_a_system_message(
         model_factory=lambda _t: RecordingModel(messages=iter([])),
         recall_fn=_no_recall,
         extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -162,7 +177,10 @@ async def test_the_graph_runs_recall_before_eve_and_extract_after(monkeypatch):
         return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
 
     app = build_graph(
-        model_factory=factory, recall_fn=recall, extract_fn=extract
+        model_factory=factory,
+        recall_fn=recall,
+        extract_fn=extract,
+        suggest_fn=_no_suggest,
     ).compile()
     await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -216,6 +234,7 @@ async def test_memory_reaches_the_system_prompt(monkeypatch):
         model_factory=lambda _t: RecordingModel(messages=iter([])),
         recall_fn=recall,
         extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
 
@@ -256,7 +275,10 @@ async def test_eve_calls_a_tool_and_returns_the_final_answer(monkeypatch):
         return fake_model
 
     app = build_graph(
-        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("what's the widget?")]}, CONFIG)
 
@@ -328,7 +350,10 @@ async def test_a_dynamically_bound_tool_is_callable_the_turn_it_is_discovered(mo
         return fake_model
 
     app = build_graph(
-        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("roll a die")]}, CONFIG)
 
@@ -372,7 +397,10 @@ async def test_a_static_tool_works_on_a_fresh_thread(monkeypatch):
     )
 
     app = build_graph(
-        model_factory=lambda _t: fake_model, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=lambda _t: fake_model,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("go")]}, CONFIG)
 
@@ -411,7 +439,10 @@ async def test_a_raising_tool_degrades_to_an_error_message(monkeypatch):
     )
 
     app = build_graph(
-        model_factory=lambda _t: fake_model, recall_fn=_no_recall, extract_fn=_no_extract
+        model_factory=lambda _t: fake_model,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("do it")]}, CONFIG)
 
@@ -457,6 +488,7 @@ async def test_the_tool_loop_is_bounded_when_the_model_never_answers(monkeypatch
         model_factory=lambda _t: NeverAnswers(messages=iter([])),
         recall_fn=_no_recall,
         extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("loop forever")]}, CONFIG)
 
@@ -499,6 +531,7 @@ async def test_the_loop_budget_resets_on_the_next_turn(monkeypatch):
         model_factory=lambda _t: NeverAnswers(messages=iter([])),
         recall_fn=_no_recall,
         extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
     ).compile()
     first = await app.ainvoke({"messages": [HumanMessage("loop forever")]}, CONFIG)
     assert first["messages"][-1].content == _LOOP_EXHAUSTED
@@ -590,3 +623,80 @@ def test_propose_tool_is_unbound_by_default(monkeypatch):
     from eve import graph as graph_mod
 
     assert "propose_tool" not in {t.name for t in graph_mod._static_tools()}
+
+
+async def test_suggestions_reach_final_state(monkeypatch):
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def fake_suggest(state, config):
+        return {"suggestions": ["Just the kitchen"]}
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=fake_suggest,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert result["suggestions"] == ["Just the kitchen"]
+
+
+async def test_suggest_runs_after_extract(monkeypatch):
+    """Deliberate ordering: with background extraction (the default),
+    `extract` returns as soon as it registers its task, so its REFLEX call
+    and the suggestion call overlap. Reversing these serialises them for no
+    gain (ADR 0012, ADR 0013)."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    order = []
+
+    async def recording_extract(state, config):
+        order.append("extract")
+        return {}
+
+    async def recording_suggest(state, config):
+        order.append("suggest")
+        return {"suggestions": []}
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=recording_extract,
+        suggest_fn=recording_suggest,
+    ).compile()
+    await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert order == ["extract", "suggest"]
+
+
+async def test_suggestions_default_to_empty_on_a_fresh_thread(monkeypatch):
+    """The reducer is what gives the channel a default. Without it the key is
+    absent and every tool taking InjectedState fails pydantic validation
+    (graph.py's own comment on `_last_write_wins`)."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def reads_state(state, config):
+        assert state["suggestions"] == []
+        return {"suggestions": []}
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=reads_state,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert result["suggestions"] == []
+
+
+async def test_the_suggestion_node_is_wired_by_default(monkeypatch):
+    """The seam exists for tests and eval. The DEFAULT must be the real node,
+    or the feature ships wired to nothing."""
+    from eve.graph import build_graph as real_build_graph
+
+    graph = real_build_graph()
+    assert "suggest" in graph.nodes

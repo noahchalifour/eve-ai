@@ -63,6 +63,12 @@ async def _no_extract(state: dict, config) -> dict:
     return {}
 
 
+async def _no_suggest(state, config):
+    """Eval replays score Eve's answer, not her chips. Same reason
+    `_no_extract` exists: a replay must not pay for work nothing scores."""
+    return {"suggestions": []}
+
+
 async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     """Invoke the real graph for one member message and return the final text.
 
@@ -86,7 +92,9 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     context.build_system_prompt = patched
     try:
         app = build_graph(
-            model_factory=_model_factory, extract_fn=_no_extract
+            model_factory=_model_factory,
+            extract_fn=_no_extract,
+            suggest_fn=_no_suggest,
         ).compile()
         result = await app.ainvoke(
             {"messages": [HumanMessage(item.input["message"])]},

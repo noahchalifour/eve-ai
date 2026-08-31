@@ -37,6 +37,7 @@ from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
+from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
@@ -116,7 +117,10 @@ def _tool_rounds_this_turn(messages: list) -> int:
 
 
 def build_graph(
-    model_factory=get_model, recall_fn=memory_recall, extract_fn=memory_extract
+    model_factory=get_model,
+    recall_fn=memory_recall,
+    extract_fn=memory_extract,
+    suggest_fn=suggest_node,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         if _tool_rounds_this_turn(state["messages"]) >= (
@@ -167,7 +171,14 @@ def build_graph(
     # platform, a confused model burns thousands of paid calls per turn.
     builder.add_conditional_edges("eve", tools_condition, {"tools": "tools", END: "extract"})
     builder.add_edge("tools", "eve")
-    builder.add_edge("extract", END)
+    builder.add_node("suggest", suggest_fn)
+    # AFTER extract, not before. With EVE_MEMORY_EXTRACT_BACKGROUND=true (the
+    # default) `extract` returns as soon as it registers its task, so
+    # extraction's REFLEX call and the suggestion call overlap and the turn
+    # pays max() rather than sum(). Reversing them serialises two calls for
+    # no gain. See ADR 0013.
+    builder.add_edge("extract", "suggest")
+    builder.add_edge("suggest", END)
     return builder
 
 
