@@ -77,12 +77,24 @@ class UiActionError(RuntimeError):
     """
 
 
+# The range's human name - one owner, so the envelope-replacement label
+# below and the tap's own reply in `ui_action` always name the range the
+# same way instead of each hardcoding a sentence per range independently.
+_RANGE_NAMES = {"hourly": "hourly", "daily": "7-day"}
+
+
+def _range_name(value: str) -> str:
+    """`value`'s human name, or `value` itself if `weather.RANGES` ever grows
+    a third entry with no name registered above - never a bare `KeyError`
+    from a node whose whole error contract is `UiActionError`."""
+    return _RANGE_NAMES.get(value, value)
+
+
 # What the raw envelope is replaced with in the transcript. One owner for the
 # literal: a reopened session renders these as the member's own words.
-ACTION_LABELS = {
-    "hourly": "Show the hourly forecast.",
-    "daily": "Show the 7-day forecast.",
-}
+# Derived from `weather.RANGES`, not hand-maintained in parallel, so a range
+# added there can never be missing here either.
+ACTION_LABELS = {value: f"Show the {_range_name(value)} forecast." for value in weather.RANGES}
 
 
 async def ui_action(state: EveState, config: RunnableConfig) -> dict:
@@ -108,7 +120,10 @@ async def ui_action(state: EveState, config: RunnableConfig) -> dict:
         raise UiActionError("the weather could not be read")
 
     operation = weather.build_range_patch(
-        envelope["surfaceId"], value, forecast, state["member"]["timezone"]
+        envelope["surfaceId"],
+        value,
+        forecast,
+        state["member"].get("timezone") or "UTC",
     )
     if operation is None:
         raise UiActionError("no forecast for that range")
@@ -122,13 +137,23 @@ async def ui_action(state: EveState, config: RunnableConfig) -> dict:
             # on reopen, since `loadHistory` renders every non-empty human
             # message it finds.
             HumanMessage(content=ACTION_LABELS[value], id=last.id),
-            # The patch, again, as a portable frame. `custom` frames are
-            # streamed and never stored, and the client replays a reopened
-            # session from `values.messages` alone. A node's message update is
-            # not an LLM stream event, so this text is never emitted on
-            # `messages` mode - the live client renders from the `custom`
+            # The patch, as a portable frame, with a one-line reply ahead of
+            # it - never a bare frame. `custom` frames are streamed and never
+            # stored, and the client replays a reopened session from
+            # `values.messages` alone, so this text is never emitted on
+            # `messages` mode; the live client renders from the `custom`
             # frame and only ever sees this through history, where it is
-            # stripped from the visible text and from TTS.
-            AIMessage(content=protocol.frame([operation])),
+            # stripped from the visible text and from TTS. But history is
+            # also what gets replayed to the VOICE model on the NEXT ordinary
+            # turn, after `_stripped_for_model` strips the frame back out -
+            # and a bare frame strips to `content=""`, which Anthropic's
+            # Messages API (the proxy's fallback tier) rejects outright on a
+            # non-final assistant message. The reply fixes that and also
+            # answers the member's tap, which a bare frame never did either.
+            AIMessage(
+                content=protocol.append_frame(
+                    f"Here's the {_range_name(value)} forecast.", [operation]
+                )
+            ),
         ]
     }

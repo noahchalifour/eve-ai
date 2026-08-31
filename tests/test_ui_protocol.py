@@ -280,3 +280,33 @@ def test_strip_frames_from_content_drops_the_whole_block_for_list_content():
 def test_strip_frames_from_content_is_a_no_op_on_a_frameless_list():
     blocks = [{"type": "text", "text": "Nice out."}]
     assert protocol.strip_frames_from_content(blocks) == blocks
+
+
+def test_append_frame_prepends_nothing_to_falsy_content():
+    """`eve.ui.actions.ui_action` and `eve.ui.persist.persist_ui` share this
+    builder now; falsy content (nothing to say ahead of the frame) gets the
+    frame back bare - the shape `strip_frames`'s `\\A` branch exists for."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    assert protocol.append_frame("", [operation]) == protocol.frame([operation])
+    assert protocol.strip_frames(protocol.append_frame("", [operation])) == ""
+
+
+def test_append_frame_joins_non_empty_string_content_with_a_newline():
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    result = protocol.append_frame("Nice out there.", [operation])
+    assert result == f"Nice out there.\n{protocol.frame([operation])}"
+    assert protocol.strip_frames(result) == "Nice out there."
+
+
+def test_append_frame_appends_a_new_block_to_list_content():
+    """Reasoning-capable models return `content` as a list of typed blocks;
+    concatenating a string onto that list would corrupt the message, so this
+    always adds a whole new block instead."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    blocks = [{"type": "text", "text": "Nice out."}]
+    result = protocol.append_frame(blocks, [operation])
+    assert result == [
+        {"type": "text", "text": "Nice out."},
+        {"type": "text", "text": f"\n{protocol.frame([operation])}"},
+    ]
+    assert protocol.strip_frames_from_content(result) == blocks

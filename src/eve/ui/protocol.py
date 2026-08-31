@@ -91,9 +91,31 @@ def frame(operations: list[dict]) -> str:
     return f"{OPENING_MARKER}{body}{CLOSING_MARKER}"
 
 
-# `persist.py._with_frame` only ever appends this exact shape - a leading
-# "\n", then the markers `frame` returns, anchored at the very end of the
-# content it was appended to. Matching that literal suffix, rather than the
+def append_frame(content: str | list, operations: list[dict]) -> str | list:
+    """The one builder both frame producers share: `eve.ui.persist.persist_ui`
+    (a model's own final answer plus this turn's `create` operations) and
+    `eve.ui.actions.ui_action` (a one-line reply plus the tap's `patch`). One
+    contract rather than two conventions for the same shape, so
+    `strip_frames`/`strip_frames_from_content` only ever have to invert what
+    THIS function produces.
+
+    Falsy `content` (there is no reply to put ahead of the frame) gets the
+    frame back with nothing prepended - the bare shape `_FRAME_SUFFIX`'s
+    `\\A` branch below exists to still recognize. Non-empty string content
+    gets a leading "\\n" before the frame. List content (reasoning-capable
+    models return typed content blocks) always gets a whole new text block
+    appended, never merged into an existing one - concatenating a string
+    onto a list would corrupt the message.
+    """
+    text = frame(operations)
+    if isinstance(content, list):
+        return [*content, {"type": "text", "text": f"\n{text}"}]
+    return text if not content else f"{content}\n{text}"
+
+
+# The prefix a frame appended by `append_frame` can have: "start-of-string"
+# when it was appended to falsy content, or a literal "\n" when it was
+# appended to something. Matching that literal suffix, rather than the
 # markers wherever they occur, is the tolerant-but-conservative reading: a
 # message that merely mentions "<assistant-ui>" in passing - with no
 # "</assistant-ui>" at the true end of the string - is left untouched.
@@ -102,10 +124,9 @@ _NOT_ANOTHER_OPEN = r"(?:(?!" + re.escape(OPENING_MARKER) + r").)*"
 # Two things this has to get right, both reproduced against a naive first cut:
 #
 # 1. The prefix is "start-of-string OR a literal newline", not just a literal
-#    newline. `persist.py._with_frame` always appends "\n" + `frame(...)`,
-#    but `eve.ui.actions.ui_action` writes `AIMessage(content=frame([op]))`
-#    directly - a BARE frame with nothing before it. Requiring a leading
-#    "\n" made that shape invisible to this function entirely.
+#    newline - see `append_frame` just above for why both shapes are legal.
+#    Requiring a leading "\n" would make the bare shape invisible to this
+#    function entirely.
 # 2. The body between the markers must not be allowed to contain another
 #    occurrence of the opening marker. A plain `.*` (greedy or not) will
 #    happily span PAST an earlier, unrelated "<assistant-ui>\n" - e.g. text

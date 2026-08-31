@@ -147,8 +147,9 @@ async def test_the_turn_leaves_a_readable_transcript_behind(monkeypatch, written
     """Two things at once. The raw envelope is replaced in place (same message
     id, so `add_messages` overwrites rather than appends) so a reopened session
     does not show a user bubble full of JSON. And the patch is written into an
-    AI message as a portable frame, because `custom` frames are streamed and
-    never stored - `loadHistory` replays `values.messages` and nothing else."""
+    AI message as a portable frame - preceded by a one-line reply, never bare
+    - because `custom` frames are streamed and never stored - `loadHistory`
+    replays `values.messages` and nothing else."""
     _serve(monkeypatch, PAYLOAD)
 
     result = await actions_module.ui_action(_state(_encoded()), {})
@@ -158,9 +159,25 @@ async def test_the_turn_leaves_a_readable_transcript_behind(monkeypatch, written
     assert human.id == "h1"
     assert human.content == "Show the 7-day forecast."
     assert isinstance(ai, AIMessage)
-    assert ai.content.startswith("<assistant-ui>\n")
+    assert ai.content.startswith("Here's the 7-day forecast.\n<assistant-ui>\n")
     assert ai.content.endswith("\n</assistant-ui>")
-    assert json.loads(ai.content.splitlines()[1])["op"] == "patch"
+    assert json.loads(ai.content.splitlines()[2])["op"] == "patch"
+
+
+async def test_the_ai_messages_content_is_never_bare(monkeypatch, written):
+    """Anthropic's Messages API (the proxy's fallback tier) rejects an empty
+    non-final assistant message. `ui_action` used to write a bare frame
+    directly as the AIMessage's whole content - `_stripped_for_model` then
+    strips that down to `content=""` on the next ordinary turn. The one-line
+    reply ahead of the frame is what keeps this message non-empty end to
+    end."""
+    _serve(monkeypatch, PAYLOAD)
+
+    result = await actions_module.ui_action(_state(_encoded()), {})
+
+    _, ai = result["messages"]
+    assert ai.content.strip() != ""
+    assert not ai.content.startswith("<assistant-ui>")
 
 
 async def test_an_unsupported_range_raises(monkeypatch, written):

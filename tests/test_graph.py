@@ -968,3 +968,16 @@ async def test_a_ui_actions_persisted_frame_never_reaches_a_later_turns_model(
     )
 
     assert all("<assistant-ui>" not in (m.content or "") for m in seen["messages"])
+    # Finding 1: frame-free is not the same as non-empty. `ui_action` used to
+    # write the tap's AIMessage as a bare frame with nothing else in it, so
+    # stripping the frame back out left `content=""` - a message that
+    # survives round-tripping through `<assistant-ui>` markers but is still
+    # illegal on replay: Anthropic's Messages API (the proxy's own fallback
+    # tier) rejects an empty non-final assistant message, and dropping the
+    # message instead would leave two `HumanMessage`s adjacent, which
+    # Anthropic is equally strict about. Both invariants, once, end to end.
+    assert all((m.content or "") != "" for m in seen["messages"])
+    for previous, current in zip(seen["messages"], seen["messages"][1:]):
+        assert not (
+            isinstance(previous, HumanMessage) and isinstance(current, HumanMessage)
+        )

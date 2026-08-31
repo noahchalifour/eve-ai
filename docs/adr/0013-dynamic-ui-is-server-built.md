@@ -76,9 +76,18 @@ bounded to `EVE_MAX_TOOL_LOOP_ITERATIONS` (6) rounds, which is below the
 8-surface ceiling; one action turn emits one patch and requires one human tap,
 which cannot reach 30 updates a minute. `eve.ui.persist` enforces the
 8-surface cap explicitly, and says so in a log line, because the ninth create
-in one frame makes the client reject the whole frame. If a future surface type
-emits in a loop, that reasoning stops holding and a real per-run counter is
-what to add.
+in one frame makes the client reject the whole frame. That "6 rounds is below
+8 surfaces" argument counts ROUNDS, and quietly assumes one tool call per
+round; a round can in principle carry PARALLEL tool calls, so nine or more
+`show_weather` calls returned in a single round - and so nine or more creates
+in one turn - is reachable even today, just very unlikely with one
+no-argument tool that a model has no reason to call more than once. Worth
+naming rather than fixing in code: only the persisted frame is trimmed to the
+cap (`persist.py`'s own 8-surface slice); the live `custom` stream that
+renders the cards is uncapped, so a client could briefly render more surfaces
+live than a reopened transcript ever shows. If a future surface type emits in
+a loop, or a model starts calling `show_weather` more than once a turn, that
+reasoning stops holding and a real per-run counter is what to add.
 
 **`ui_action` raises where the rest of Eve returns a string.** Every other
 external call in this codebase degrades to a returned error string, because

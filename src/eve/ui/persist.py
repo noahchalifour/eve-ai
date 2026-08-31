@@ -60,25 +60,29 @@ async def persist_ui(state: EveState) -> dict:
             len(operations) - protocol.MAX_SURFACES_PER_TURN,
         )
         operations = operations[: protocol.MAX_SURFACES_PER_TURN]
-    return {"messages": [_with_frame(final, protocol.frame(operations))]}
+    return {"messages": [_with_frame(final, operations)]}
 
 
 def _is_operation(artifact: object) -> bool:
     """A dynamically-materialized tool may set an artifact for its own
-    reasons; only an `assistant-ui/1.0` operation belongs in a frame."""
-    return isinstance(artifact, dict) and artifact.get("protocol") == protocol.PROTOCOL
+    reasons; only a STRUCTURALLY VALID `assistant-ui/1.0` operation belongs
+    in a frame. Checking just the protocol key would let one malformed
+    operation - e.g. `{"protocol": "assistant-ui/1.0", "op": "nonsense"}` -
+    into the frame, and the client rejects the WHOLE frame on one invalid
+    operation, silently taking every valid surface in it down with it."""
+    return protocol.validate_operation(artifact) is None
 
 
-def _with_frame(message: AIMessage, text: str) -> AIMessage:
+def _with_frame(message: AIMessage, operations: list[dict]) -> AIMessage:
     """`model_copy`, not a freshly-built `AIMessage`: `add_messages` replaces
     by id, it does not merge fields, so constructing a new message here
     would silently discard `response_metadata`, `usage_metadata`,
     `additional_kwargs`, `name` and `tool_calls` off the final message of
-    every surface turn - the same id is not enough on its own."""
-    if isinstance(message.content, list):
-        # Reasoning-capable models return typed content blocks; concatenating
-        # a string onto that list would corrupt the message.
-        content = [*message.content, {"type": "text", "text": f"\n{text}"}]
-    else:
-        content = f"{message.content}\n{text}"
-    return message.model_copy(update={"content": content})
+    every surface turn - the same id is not enough on its own.
+
+    `protocol.append_frame` is the one builder this shares with
+    `eve.ui.actions.ui_action`, so `strip_frames`/`strip_frames_from_content`
+    only ever have one shape to invert."""
+    return message.model_copy(
+        update={"content": protocol.append_frame(message.content, operations)}
+    )
