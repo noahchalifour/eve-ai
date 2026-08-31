@@ -27,6 +27,7 @@ from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
 from eve.state import is_ambient_text, may_author
+from eve.ui import protocol
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("eve.memory.extract")
@@ -147,11 +148,27 @@ def _render_candidates(memories: list) -> str:
     )
 
 
+def _visible_content(message: HumanMessage | AIMessage) -> object:
+    """What REFLEX and the digest summarizer are allowed to read as
+    something a party to the conversation said. `persist_ui`
+    (`eve.ui.persist`) writes this turn's `<assistant-ui>` frame into the
+    final AIMessage so a reopened session still has the card - not so a
+    later model can read it back. Left in, REFLEX can mint junk memories
+    out of the surface JSON ("temperature 20", "condition sunny") as if Eve
+    had said them, and a digest refresh would summarise a card as prose. A
+    `HumanMessage` never carries a frame, so it passes through untouched."""
+    if isinstance(message, AIMessage):
+        return protocol.strip_frames_from_content(message.content)
+    return message.content
+
+
 def _last_exchange(messages: list) -> tuple[str, str]:
     human = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
     )
-    ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "")
+    ai = next(
+        (_visible_content(m) for m in reversed(messages) if isinstance(m, AIMessage)), ""
+    )
     return str(human), str(ai)
 
 
@@ -297,7 +314,7 @@ async def _maybe_refresh_digest(state: dict, thread_id: str | None) -> None:
         if turns == 0 or turns % cadence != 0:
             return
         transcript = "\n".join(
-            f"{'Them' if isinstance(m, HumanMessage) else 'Eve'}: {m.content}"
+            f"{'Them' if isinstance(m, HumanMessage) else 'Eve'}: {_visible_content(m)}"
             for m in state["messages"]
             if isinstance(m, HumanMessage | AIMessage)
         )

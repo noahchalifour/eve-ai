@@ -115,6 +115,10 @@ async def test_no_more_than_eight_surfaces_are_written_into_one_turn():
 
     body = result["messages"][0].content
     assert body.count('"op":"create"') == protocol.MAX_SURFACES_PER_TURN
+    # Which eight, not just how many: a reversal bug that kept the LAST
+    # eight instead of the first eight would still pass the count assertion
+    # above.
+    assert "wx-0" in body and "wx-9" not in body
 
 
 async def test_a_list_shaped_ai_content_gets_a_text_block_not_a_string():

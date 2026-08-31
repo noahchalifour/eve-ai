@@ -792,3 +792,103 @@ async def test_a_detached_extraction_records_its_own_span(monkeypatch, recorded)
     await pending.drain()
     assert ("span.name", "eve.extract") in spans
     assert ("eve.authoring.rules_written", 0) in spans
+
+
+async def test_the_extraction_prompt_strips_a_persisted_frame(monkeypatch, recorded):
+    """`persist_ui` (`eve.ui.persist`) writes this turn's `<assistant-ui>`
+    frame into Eve's own final AIMessage so a reopened session still has the
+    card - not so REFLEX reads the surface JSON back as something Eve said.
+    Left unstripped, REFLEX can mint junk memories out of the JSON
+    ("temperature 20", "condition sunny") as if Eve had spoken them."""
+    from eve.ui import protocol
+
+    seen = {}
+
+    async def overlapping(sub, subjects, embedding, limit=10):
+        return []
+
+    class Recording:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            seen["prompt"] = messages[0].content
+            return Extraction(operations=[])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda _tier: Recording())
+
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    persisted = AIMessage(content=f"Lovely out there.\n{protocol.frame([operation])}")
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("what's the weather?"), persisted],
+    }
+    await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    await pending.drain()
+
+    assert "<assistant-ui>" not in seen["prompt"]
+    assert "Eve: Lovely out there.\n" in seen["prompt"]
+
+
+async def test_the_digest_transcript_strips_a_persisted_frame(monkeypatch, recorded):
+    """The thread digest summarises the WHOLE transcript, not just the last
+    exchange - a card from any turn must not be read back as prose Eve
+    spoke."""
+    from eve.ui import protocol
+
+    seen = {}
+    digested = {}
+
+    async def overlapping(sub, subjects, embedding, limit=10):
+        return []
+
+    class ExtractionModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[])
+
+    class DigestModel:
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            seen["digest_prompt"] = messages[0].content
+            return SimpleNamespace(content="a summary")
+
+    tiers = iter([ExtractionModel(), DigestModel()])
+
+    async def upsert_digest(thread_id, content):
+        digested["thread_id"] = thread_id
+        digested["content"] = content
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda _tier: next(tiers))
+    monkeypatch.setattr(extract_mod, "upsert_digest", upsert_digest)
+    monkeypatch.setattr(
+        extract_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            memory_extract_background=False, memory_digest_every_n_turns=1
+        ),
+    )
+
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    persisted = AIMessage(content=f"Lovely out there.\n{protocol.frame([operation])}")
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("what's the weather?"), persisted],
+    }
+    await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+
+    assert "<assistant-ui>" not in seen["digest_prompt"]
+    assert "Eve: Lovely out there." in seen["digest_prompt"]
+    assert digested["content"] == "a summary"

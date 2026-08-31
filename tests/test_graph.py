@@ -841,3 +841,50 @@ async def test_a_weather_turn_ends_with_the_surface_in_the_transcript(monkeypatc
     final = result["messages"][-1]
     assert final.content.startswith("Lovely out there.\n<assistant-ui>\n")
     assert '"op":"create"' in final.content
+
+
+async def test_the_voice_model_never_sees_a_previous_turns_persisted_frame(monkeypatch):
+    """The plan's own invariant, restated: `persist_ui` writes the frame into
+    `messages` for the client's benefit only - a reopened session replays
+    `values.messages`, never the model's own context. From turn two on,
+    that persisted AIMessage is ordinary history fed straight to
+    `bound_model.ainvoke`, and unstripped, the model would have a worked
+    example of the frame syntax in its own prior turn to imitate. A frame it
+    composed itself would reach the client having passed through none of
+    `protocol.validate_operation`, unlike a real one, which `stream.emit`
+    gates."""
+    from eve.ui import protocol as ui_protocol
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    operation = {"protocol": ui_protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    persisted = AIMessage(
+        content=f"Lovely out there.\n{ui_protocol.frame([operation])}", id="a1"
+    )
+
+    seen = {}
+
+    class RecordingModel(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            seen["messages"] = input
+            return AIMessage(content="You're welcome.")
+
+    app = build_graph(
+        model_factory=lambda _t: RecordingModel(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+    ).compile()
+    await app.ainvoke(
+        {
+            "messages": [
+                HumanMessage("what's the weather?", id="h1"),
+                persisted,
+                HumanMessage("thanks", id="h2"),
+            ]
+        },
+        CONFIG,
+    )
+
+    replayed = next(m for m in seen["messages"] if m.id == "a1")
+    assert replayed.content == "Lovely out there."

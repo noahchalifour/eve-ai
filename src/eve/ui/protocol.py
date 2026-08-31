@@ -91,6 +91,68 @@ def frame(operations: list[dict]) -> str:
     return f"{OPENING_MARKER}{body}{CLOSING_MARKER}"
 
 
+# `persist.py._with_frame` only ever appends this exact shape - a leading
+# "\n", then the markers `frame` returns, anchored at the very end of the
+# content it was appended to. Matching that literal suffix, rather than the
+# markers wherever they occur, is the tolerant-but-conservative reading: a
+# message that merely mentions "<assistant-ui>" in passing - with no
+# "</assistant-ui>" at the true end of the string - is left untouched.
+_FRAME_SUFFIX = re.compile(
+    r"\n" + re.escape(OPENING_MARKER) + r".*" + re.escape(CLOSING_MARKER) + r"$",
+    re.DOTALL,
+)
+
+
+def strip_frames(text: str) -> str:
+    """Undo what `persist_ui` did to an AIMessage's content, for every place
+    a persisted message is fed back into a prompt rather than shown to the
+    member.
+
+    `persist_ui` (`eve.ui.persist`) exists to make a card survive a session
+    reopen, by writing the turn's surface into `messages` - text the client
+    strips before it ever reaches the member or TTS. But `messages` is also
+    what both the VOICE model (`eve.graph`) and REFLEX
+    (`eve.memory.extract`, for extraction and for the thread digest) read
+    back as conversation history on every later turn. Left unstripped, a
+    surface that can be multiple KiB (the protocol's own ceiling is 48 KiB)
+    is fed into every subsequent prompt, REFLEX can mint memories out of the
+    JSON, and the VOICE model gets a worked example of the frame syntax in
+    its own prior output to imitate - a self-composed frame in `content`
+    would reach the client having passed through none of
+    `validate_operation`, unlike a real one which is gated by `stream.emit`.
+
+    A no-op on the near-totality of turns that carry no frame at all.
+    """
+    return _FRAME_SUFFIX.sub("", text)
+
+
+def strip_frames_from_content(content: object) -> object:
+    """`strip_frames` operates on a plain string; `AIMessage.content` is
+    sometimes instead a list of typed blocks (reasoning-capable models), the
+    same split `persist.py._with_frame` has to handle when it APPENDS a
+    frame. For the list shape, `_with_frame` always adds a whole new
+    `{"type": "text", "text": ...}` block whose text is nothing but the
+    frame - so stripping that block's text down to "" means the block itself
+    must be dropped, not left behind as an empty one. Any other value
+    (a non-list, non-str content, or a block missing a string `text`) passes
+    through unchanged."""
+    if isinstance(content, str):
+        return strip_frames(content)
+    if not isinstance(content, list):
+        return content
+    kept = []
+    for block in content:
+        text = block.get("text") if isinstance(block, dict) else None
+        if isinstance(text, str):
+            stripped = strip_frames(text)
+            if stripped == "" and text != "":
+                continue
+            if stripped != text:
+                block = {**block, "text": stripped}
+        kept.append(block)
+    return kept
+
+
 def validate_operation(operation: object) -> str | None:
     """`None` when `operation` is a legal create/patch/delete, otherwise the
     same structural diagnostic code the client would have logged."""

@@ -204,3 +204,51 @@ def test_frame_uses_the_exact_markers_the_client_parser_matches():
     assert text.endswith("\n</assistant-ui>")
     body = text[len("<assistant-ui>\n") : -len("\n</assistant-ui>")]
     assert [json.loads(line) for line in body.split("\n")] == [first, second]
+
+
+def test_strip_frames_is_exactly_inverse_to_frame():
+    """`persist.py._with_frame` appends `f"{content}\\n{frame(...)}"`. What
+    `strip_frames` removes must be byte-identical to the frame, so the
+    original content survives the round trip untouched."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    original = "Nice out there."
+    appended = f"{original}\n{protocol.frame([operation])}"
+
+    assert protocol.strip_frames(appended) == original
+
+
+def test_strip_frames_is_a_no_op_on_content_with_no_frame():
+    """The near-totality of turns. Must be byte-identical - not just
+    "shorter" or "frameless" - after stripping."""
+    text = "Just an ordinary answer, no card involved."
+    assert protocol.strip_frames(text) == text
+
+
+def test_strip_frames_does_not_eat_a_passing_mention_of_the_markers():
+    """Tolerant-but-conservative reading: only the exact trailing shape
+    `_with_frame` produces - a frame anchored at the true end of the string -
+    counts. Text that merely contains the words, with no matching close
+    marker at the end, is untouched."""
+    text = "The docs say a message can contain <assistant-ui> markup."
+    assert protocol.strip_frames(text) == text
+
+
+def test_strip_frames_from_content_drops_the_whole_block_for_list_content():
+    """Reasoning-capable models return `content` as a list of typed blocks;
+    `_with_frame` appends a WHOLE new block for the frame rather than
+    editing an existing one, so stripping it must remove the block, not
+    leave an empty `{"type": "text", "text": ""}` behind."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    blocks = [
+        {"type": "text", "text": "Nice out."},
+        {"type": "text", "text": f"\n{protocol.frame([operation])}"},
+    ]
+
+    assert protocol.strip_frames_from_content(blocks) == [
+        {"type": "text", "text": "Nice out."}
+    ]
+
+
+def test_strip_frames_from_content_is_a_no_op_on_a_frameless_list():
+    blocks = [{"type": "text", "text": "Nice out."}]
+    assert protocol.strip_frames_from_content(blocks) == blocks

@@ -51,6 +51,7 @@ from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import EveState
 from eve.tools_authoring.propose import propose_tool
+from eve.ui import protocol as ui_protocol
 from eve.ui import stream as ui_stream
 from eve.ui.actions import parse_action, ui_action
 from eve.ui.persist import persist_ui
@@ -108,6 +109,30 @@ _OPENAI_DEVELOPER_ROLE = {"__openai_role__": "developer"}
 
 def _persona_message(system_prompt: str) -> SystemMessage:
     return SystemMessage(system_prompt, additional_kwargs=_OPENAI_DEVELOPER_ROLE)
+
+
+def _stripped_for_model(messages: list) -> list:
+    """`persist_ui` writes this turn's `<assistant-ui>` frame into the final
+    AIMessage so a reopened session still has the card - but from the next
+    turn on, that same message is exactly what gets replayed back into
+    `bound_model.ainvoke` below as history. The plan's own invariant is that
+    the model never sees the surface JSON in its own context: unstripped,
+    the VOICE model would have a worked example of the frame syntax in its
+    own prior turn to imitate, and a frame it composed itself would reach
+    the client having passed through none of `protocol.validate_operation` -
+    unlike a real one, which `stream.emit` gates.
+
+    Only `AIMessage.content` needs stripping - `persist_ui` never touches
+    any other message type - and only when it changes, so a turn that never
+    carried a frame allocates nothing new."""
+    stripped = []
+    for message in messages:
+        if isinstance(message, AIMessage):
+            content = ui_protocol.strip_frames_from_content(message.content)
+            if content != message.content:
+                message = message.model_copy(update={"content": content})
+        stripped.append(message)
+    return stripped
 
 
 def _handle_tool_error(error: Exception) -> str:
@@ -201,7 +226,7 @@ def build_graph(
         prompt = context.build_system_prompt(
             context.load_persona(), state["member"], state.get("memory")
         )
-        messages = [_persona_message(prompt), *state["messages"]]
+        messages = [_persona_message(prompt), *_stripped_for_model(state["messages"])]
         return {"messages": [await bound_model.ainvoke(messages, config)]}
 
     async def tools_node(state: EveState, config: RunnableConfig) -> dict:

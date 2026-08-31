@@ -70,13 +70,15 @@ def _is_operation(artifact: object) -> bool:
 
 
 def _with_frame(message: AIMessage, text: str) -> AIMessage:
-    """Same id, so `add_messages` replaces the message rather than appending
-    a second one."""
+    """`model_copy`, not a freshly-built `AIMessage`: `add_messages` replaces
+    by id, it does not merge fields, so constructing a new message here
+    would silently discard `response_metadata`, `usage_metadata`,
+    `additional_kwargs`, `name` and `tool_calls` off the final message of
+    every surface turn - the same id is not enough on its own."""
     if isinstance(message.content, list):
         # Reasoning-capable models return typed content blocks; concatenating
         # a string onto that list would corrupt the message.
-        return AIMessage(
-            content=[*message.content, {"type": "text", "text": f"\n{text}"}],
-            id=message.id,
-        )
-    return AIMessage(content=f"{message.content}\n{text}", id=message.id)
+        content = [*message.content, {"type": "text", "text": f"\n{text}"}]
+    else:
+        content = f"{message.content}\n{text}"
+    return message.model_copy(update={"content": content})
