@@ -1,0 +1,206 @@
+"""The server side of `assistant-ui/1.0`, tested against the shapes the
+client's own Dart validators accept and reject
+(flutter-open-assistant, lib/data/services/agent/dynamic_surface_protocol.dart
+and lib/domain/models/dynamic_ui/dynamic_surface.dart).
+"""
+
+from __future__ import annotations
+
+import json
+
+from eve.ui import protocol
+
+
+def _surface(**overrides) -> dict:
+    surface = {
+        "surfaceId": "wx-1",
+        "catalogId": "weather",
+        "catalogVersion": "1",
+        "components": [
+            {
+                "id": "weather",
+                "type": "weather",
+                "properties": {
+                    "location": "$data.location",
+                    "condition": "$data.condition",
+                    "temperature": "$data.temperature",
+                },
+                "children": [],
+            }
+        ],
+        "data": {"location": "Home", "condition": "Sunny", "temperature": 21},
+        "localState": {},
+    }
+    surface.update(overrides)
+    return {"protocol": protocol.PROTOCOL, "op": "create", "surface": surface}
+
+
+def test_a_well_formed_weather_create_is_accepted():
+    assert protocol.validate_operation(_surface()) is None
+
+
+def test_the_protocol_string_must_match_exactly():
+    operation = _surface()
+    operation["protocol"] = "assistant-ui/1.1"
+    assert protocol.validate_operation(operation) == "protocol"
+
+
+def test_an_unknown_operation_is_rejected():
+    operation = _surface()
+    operation["op"] = "replace"
+    assert protocol.validate_operation(operation) == "operation"
+
+
+def test_a_catalog_id_outside_the_closed_v1_set_is_rejected():
+    assert protocol.validate_operation(_surface(catalogId="thermostat")) == "catalog"
+
+
+def test_a_catalog_version_other_than_1_is_rejected():
+    assert (
+        protocol.validate_operation(_surface(catalogVersion="2")) == "catalog-version"
+    )
+
+
+def test_a_component_type_outside_the_closed_v1_set_is_rejected():
+    components = [{"id": "x", "type": "thermostat", "properties": {}, "children": []}]
+    assert protocol.validate_operation(_surface(components=components)) == "component-type"
+
+
+def test_a_property_the_component_type_does_not_declare_is_rejected():
+    components = [
+        {"id": "t", "type": "text", "properties": {"label": "hi"}, "children": []}
+    ]
+    assert (
+        protocol.validate_operation(_surface(components=components))
+        == "component-schema"
+    )
+
+
+def test_a_malformed_data_binding_is_rejected_as_a_binding_error():
+    """A `$`-prefixed string that is not a legal binding is a `binding`
+    error, not a generic schema error - the client distinguishes them and so
+    must the diagnostic we log."""
+    components = [
+        {"id": "t", "type": "text", "properties": {"text": "$data"}, "children": []}
+    ]
+    assert protocol.validate_operation(_surface(components=components)) == "binding"
+
+
+def test_a_numeric_path_segment_is_not_a_legal_binding():
+    """The provider guide's `$data.forecast.0.label` example contradicts the
+    client regex, which requires every segment to start with a letter or an
+    underscore. The regex wins."""
+    components = [
+        {
+            "id": "t",
+            "type": "text",
+            "properties": {"text": "$data.forecast.0.label"},
+            "children": [],
+        }
+    ]
+    assert protocol.validate_operation(_surface(components=components)) == "binding"
+
+
+def test_grid_columns_must_be_an_int_between_one_and_six():
+    def grid(columns):
+        return [{"id": "g", "type": "grid", "properties": {"columns": columns}, "children": []}]
+
+    assert protocol.validate_operation(_surface(components=grid(3))) is None
+    assert protocol.validate_operation(_surface(components=grid(7))) == "component-schema"
+    assert protocol.validate_operation(_surface(components=grid(True))) == "component-schema"
+
+
+def test_only_weather_rangechanged_is_a_legal_action_id():
+    def button(action_id):
+        return [
+            {
+                "id": "b",
+                "type": "button",
+                "properties": {"label": "Go", "actionId": action_id},
+                "children": [],
+            }
+        ]
+
+    assert protocol.validate_operation(_surface(components=button("weather.rangeChanged"))) is None
+    assert protocol.validate_operation(_surface(components=button("lights.toggle"))) == "action-schema"
+
+
+def test_more_than_sixty_four_components_is_rejected():
+    components = [
+        {"id": f"t{index}", "type": "text", "properties": {}, "children": []}
+        for index in range(65)
+    ]
+    assert protocol.validate_operation(_surface(components=components)) == "component-limit"
+
+
+def test_a_tree_deeper_than_eight_is_rejected():
+    node = {"id": "leaf", "type": "text", "properties": {}, "children": []}
+    for index in range(8):
+        node = {"id": f"c{index}", "type": "column", "properties": {}, "children": [node]}
+    assert protocol.validate_operation(_surface(components=[node])) == "depth-limit"
+
+
+def test_a_string_longer_than_the_limit_is_rejected():
+    data = {"location": "x" * (protocol.MAX_STRING + 1)}
+    assert protocol.validate_operation(_surface(data=data)) == "string-limit"
+
+
+def test_a_definition_over_forty_eight_kibibytes_is_rejected():
+    data = {"blob": ["x" * 2000 for _ in range(30)]}
+    assert protocol.validate_operation(_surface(data=data)) == "definition-size-limit"
+
+
+def test_a_well_formed_patch_is_accepted():
+    operation = {
+        "protocol": protocol.PROTOCOL,
+        "op": "patch",
+        "surfaceId": "wx-1",
+        "patch": {"dataPatch": {"selectedRange": "daily", "daily": []}},
+    }
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_patch_without_a_surface_id_is_rejected():
+    operation = {
+        "protocol": protocol.PROTOCOL,
+        "op": "patch",
+        "patch": {"dataPatch": {}},
+    }
+    assert protocol.validate_operation(operation) == "surface-id"
+
+
+def test_a_patch_over_sixteen_kibibytes_is_rejected():
+    operation = {
+        "protocol": protocol.PROTOCOL,
+        "op": "patch",
+        "surfaceId": "wx-1",
+        "patch": {"dataPatch": {"blob": ["x" * 2000 for _ in range(10)]}},
+    }
+    assert protocol.validate_operation(operation) == "patch-size-limit"
+
+
+def test_a_delete_needs_only_a_surface_id():
+    assert (
+        protocol.validate_operation(
+            {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+        )
+        is None
+    )
+
+
+def test_anything_that_is_not_an_object_is_a_malformed_frame():
+    assert protocol.validate_operation("wx-1") == "malformed-frame"
+
+
+def test_frame_uses_the_exact_markers_the_client_parser_matches():
+    """`FramedDynamicSurfaceParser` matches the literal markers
+    `'<assistant-ui>\\n'` and `'\\n</assistant-ui>'`, one JSON object per
+    line in between. An extra newline before the close breaks the match."""
+    first = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "a"}
+    second = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "b"}
+    text = protocol.frame([first, second])
+
+    assert text.startswith("<assistant-ui>\n")
+    assert text.endswith("\n</assistant-ui>")
+    body = text[len("<assistant-ui>\n") : -len("\n</assistant-ui>")]
+    assert [json.loads(line) for line in body.split("\n")] == [first, second]
