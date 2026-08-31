@@ -1,8 +1,8 @@
 """Eve's graph.
 
-                          +-> ui_action -----------------------------> END
+                          +-> ui_action ------------------------------------> END
     START -> load_context-+
-                          +-> recall -> eve <-> tools -> extract -> END
+                          +-> recall -> eve <-> tools -> persist_ui -> extract -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
@@ -12,13 +12,18 @@ turn; the next turn on the thread joins it before reading memory (ADR 0012).
 Phase 3 (this file) adds the `eve <-> tools` cycle:
 `eve` binds the static specialist/skill tools plus any dynamically-discovered
 ones (freshly materialized from state on every call) and either answers,
-routing to `extract`, or emits tool calls, routing to `tools` and back.
+routing to `persist_ui`, or emits tool calls, routing to `tools` and back.
+`persist_ui` copies this turn's `create` operations - streamed live on
+`custom` and never stored - into the final AI message, so a card survives a
+reopened session; see `eve.ui.persist` for why.
 
 `ui_action` is the other branch out of `load_context`: a tap on a rendered
 surface calls no model. It re-reads the tapped range from Home Assistant,
 emits one patch, and ends the turn - see `_route_after_context` for why it
 sits after `load_context` rather than at START, and why it skips both
-`recall` and `extract`.
+`recall` and `extract` (and so also skips `persist_ui`: `ui_action` writes
+its own `<assistant-ui>` frame inline into the AIMessage it returns, see
+`eve.ui.actions.ui_action`).
 
 The system prompt is rebuilt from scratch every turn and passed to the model
 without being appended to `messages`, so persona, member-context and memory
@@ -48,6 +53,7 @@ from eve.state import EveState
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import stream as ui_stream
 from eve.ui.actions import parse_action, ui_action
+from eve.ui.persist import persist_ui
 from eve.ui.tools import show_weather
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
@@ -214,6 +220,7 @@ def build_graph(
     builder.add_node("recall", recall_fn)
     builder.add_node("eve", eve)
     builder.add_node("tools", tools_node)
+    builder.add_node("persist_ui", persist_ui)
     builder.add_node("extract", extract_fn)
     builder.add_edge(START, "load_context")
     builder.add_conditional_edges(
@@ -229,8 +236,11 @@ def build_graph(
     # takes no recursion_limit, and Aegra supplies its own invoke-time config
     # that would override a `.with_config()` here anyway. Left to the
     # platform, a confused model burns thousands of paid calls per turn.
-    builder.add_conditional_edges("eve", tools_condition, {"tools": "tools", END: "extract"})
+    builder.add_conditional_edges(
+        "eve", tools_condition, {"tools": "tools", END: "persist_ui"}
+    )
     builder.add_edge("tools", "eve")
+    builder.add_edge("persist_ui", "extract")
     builder.add_edge("extract", END)
     return builder
 

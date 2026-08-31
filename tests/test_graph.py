@@ -775,3 +775,69 @@ async def test_ordinary_speech_still_routes_through_recall(monkeypatch):
 
     assert called["recall"] is True
     assert result["messages"][-1].content == "Hi Noah."
+
+
+async def test_a_weather_turn_ends_with_the_surface_in_the_transcript(monkeypatch):
+    """End to end for the durability guarantee: the card is streamed live on
+    `custom` AND left in the persisted AI message, because the client replays
+    a reopened session from `values.messages` alone."""
+    import json
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def fake_invoke(tool, arguments, **kwargs):
+        return json.dumps(
+            {
+                "location": "Home",
+                "condition": "sunny",
+                "temperature": 20,
+                "hourly": [
+                    {
+                        "datetime": "2026-08-31T18:00:00+00:00",
+                        "condition": "sunny",
+                        "temperature": 22,
+                    }
+                ],
+                "daily": [],
+            }
+        )
+
+    monkeypatch.setattr("eve.ui.tools.invoke", fake_invoke)
+
+    call = {"name": "show_weather", "args": {}, "id": "call-wx", "type": "tool_call"}
+
+    # See the comment in test_eve_calls_a_tool_and_returns_the_final_answer:
+    # one shared instance across revisits, mirroring `get_model`'s caching -
+    # a plain factory would hand back a freshly-reset iterator on the second
+    # visit to `eve` and replay the tool call forever.
+    fake_model = FakeToolCallingModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[call]),
+                AIMessage(content="Lovely out there."),
+            ]
+        )
+    )
+
+    def factory(_tier):
+        return fake_model
+
+    config = {
+        "configurable": {
+            **CONFIG["configurable"],
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["weather"],
+            },
+        }
+    }
+    app = build_graph(
+        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("what's the weather?")]}, config)
+
+    final = result["messages"][-1]
+    assert final.content.startswith("Lovely out there.\n<assistant-ui>\n")
+    assert '"op":"create"' in final.content
