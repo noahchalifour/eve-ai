@@ -42,6 +42,7 @@ async def test_search_skills_returns_a_procedure_directly(monkeypatch):
         "system_prompt": "",
         "memory": None,
         "dynamic_tools": [],
+        "suggestions": [],
     }
     command = await search_skills.ainvoke(
         {
@@ -83,6 +84,7 @@ async def test_search_skills_adds_an_mcp_match_to_dynamic_tools(monkeypatch):
         "system_prompt": "",
         "memory": None,
         "dynamic_tools": [],
+        "suggestions": [],
     }
     command = await search_skills.ainvoke(
         {
@@ -122,6 +124,7 @@ async def test_search_skills_caps_dynamic_tools(monkeypatch):
         "system_prompt": "",
         "memory": None,
         "dynamic_tools": [existing],
+        "suggestions": [],
     }
     command = await search_skills.ainvoke(
         {
@@ -171,6 +174,7 @@ async def test_search_skills_returns_an_authored_procedure(monkeypatch, tmp_path
         "system_prompt": "",
         "memory": None,
         "dynamic_tools": [],
+        "suggestions": [],
     }
     command = await search_mod.search_skills.ainvoke(
         {
@@ -230,6 +234,7 @@ async def test_search_skills_omits_authored_procedures_when_disabled(
         "system_prompt": "",
         "memory": None,
         "dynamic_tools": [],
+        "suggestions": [],
     }
     command = await search_mod.search_skills.ainvoke(
         {
