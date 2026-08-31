@@ -193,3 +193,5 @@ async def test_a_range_the_home_publishes_nothing_for_raises(monkeypatch, writte
 
     with pytest.raises(actions_module.UiActionError):
         await actions_module.ui_action(_state(_encoded()), {})
+
+    assert written == []

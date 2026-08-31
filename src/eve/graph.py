@@ -144,7 +144,7 @@ _LOOP_EXHAUSTED = (
 )
 
 
-def _route_after_context(state: EveState) -> str:
+def _route_after_context(state: EveState, config: RunnableConfig) -> str:
     """A UI tap arrives as ordinary user text, because the client re-runs the
     turn with the user message's content replaced by an action envelope. It
     carries no question for a model to answer, so it skips `recall` (an
@@ -154,11 +154,23 @@ def _route_after_context(state: EveState) -> str:
     Branching after `load_context` rather than at START is deliberate -
     `load_context` is pure local computation (ADR 0002), and the member
     timezone the forecast labels need comes from it.
+
+    Gated on `ui_stream.supports`, not just `parse_action`, because the plan's
+    global fail-closed constraint ("no declaration ... emit nothing and answer
+    in prose") has to be satisfied somewhere, and `ui_action` cannot satisfy
+    it: it has no model to answer in prose with, so it could only raise (wrong
+    - an undeclared client cannot interpret an SSE error) or return silently
+    (wrong - the member gets no answer at all). Routing an undeclared client's
+    envelope to `recall` instead makes it ordinary member speech: no frame
+    emitted, nothing persisted beyond the envelope text itself, and a normal
+    model answer.
     """
     messages = state["messages"]
     if not messages or not isinstance(messages[-1], HumanMessage):
         return "recall"
-    return "ui_action" if parse_action(messages[-1].content) else "recall"
+    if not parse_action(messages[-1].content):
+        return "recall"
+    return "ui_action" if ui_stream.supports(config, "weather") else "recall"
 
 
 def build_graph(

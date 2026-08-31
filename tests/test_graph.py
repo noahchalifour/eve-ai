@@ -16,6 +16,20 @@ NOAH = Member(
 )
 CONFIG = {"configurable": {"langgraph_auth_user": {"identity": "sub-noah"}}}
 
+# A client that declared the `weather` catalog - the only config under which
+# `_route_after_context` may route an action envelope to `ui_action` rather
+# than falling it through to `recall` as ordinary member speech.
+UI_CAPABLE_CONFIG = {
+    "configurable": {
+        "langgraph_auth_user": {"identity": "sub-noah"},
+        "assistant_ui": {
+            "protocol": "assistant-ui/1.0",
+            "catalogVersion": "1",
+            "catalogIds": ["weather"],
+        },
+    }
+}
+
 
 def _fake_factory(_tier):
     return FakeToolCallingModel(messages=iter([AIMessage(content="Hi Noah.")]))
@@ -672,13 +686,76 @@ async def test_a_ui_action_turn_skips_recall_the_model_and_extraction(monkeypatc
     frames = []
     async for mode, chunk in app.astream(
         {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
-        CONFIG,
+        UI_CAPABLE_CONFIG,
         stream_mode=["custom"],
     ):
         frames.append(chunk)
 
     assert [frame["assistant_ui"]["op"] for frame in frames] == ["patch"]
     assert called == {"recall": False, "model": False, "extract": False}
+
+
+async def test_an_action_envelope_falls_through_to_recall_when_the_client_declared_nothing(
+    monkeypatch,
+):
+    """The plan's fail-closed constraint - no declaration, wrong protocol,
+    wrong catalog version, or catalog id absent => emit nothing and answer in
+    prose - has to be enforced at the route, not inside `ui_action`: that node
+    has no model to answer in prose with, so it could only raise (wrong for a
+    client that cannot interpret an SSE error) or return silently (wrong - no
+    answer at all). `CONFIG` here declares no `assistant_ui` capability at
+    all, so the same envelope that reaches `ui_action` under
+    `UI_CAPABLE_CONFIG` above must instead be treated as ordinary member
+    speech: no custom frame, no patch, and a normal model answer."""
+    import json
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    called = {"recall": False}
+
+    async def spy_recall(state, config):
+        called["recall"] = True
+        return {"memory": None}
+
+    async def fail_invoke(tool, arguments, **kwargs):
+        raise AssertionError("home.weather must not be called when routed to recall")
+
+    monkeypatch.setattr("eve.ui.actions.invoke", fail_invoke)
+
+    envelope = json.dumps(
+        {
+            "protocol": "assistant-ui/1.0",
+            "sessionId": "s1",
+            "surfaceId": "wx-1",
+            "actionId": "weather.rangeChanged",
+            "value": "daily",
+            "data": {},
+        }
+    )
+    app = build_graph(
+        model_factory=_fake_factory, recall_fn=spy_recall, extract_fn=_no_extract
+    ).compile()
+
+    frames = []
+    async for mode, chunk in app.astream(
+        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
+        CONFIG,
+        stream_mode=["custom"],
+    ):
+        frames.append(chunk)
+
+    assert frames == []
+    assert called["recall"] is True
+
+    # And no `<assistant-ui>` frame was persisted into the transcript either -
+    # the raw envelope is untouched, exactly as an ordinary member message
+    # would be.
+    result = await app.ainvoke(
+        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
+        CONFIG,
+    )
+    assert all("<assistant-ui>" not in (m.content or "") for m in result["messages"])
 
 
 async def test_ordinary_speech_still_routes_through_recall(monkeypatch):
