@@ -38,6 +38,8 @@ from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.state import EveState
 from eve.tools_authoring.propose import propose_tool
+from eve.ui import stream as ui_stream
+from eve.ui.tools import show_weather
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
 
@@ -53,16 +55,28 @@ def _live_specs(state: EveState) -> list:
     ]
 
 
-def _static_tools() -> list:
-    """Rebuilt per call rather than fixed at import: two settings gate two
+def _static_tools(config: RunnableConfig | None = None) -> list:
+    """Rebuilt per call rather than fixed at import: three switches gate three
     tools, and both `eve` and `tools_node` need the same answer within one
-    turn. Settings are lru_cached, so this is a dict lookup."""
+    turn. Settings are lru_cached, so this is a dict lookup.
+
+    `show_weather`'s switch is not a setting but the connected client's own
+    capability declaration (`config.configurable.assistant_ui`). A second
+    setting for the same question would be a second thing to keep in step, and
+    a surface emitted at a client that cannot render it goes into that
+    thread's transcript permanently.
+
+    `config` defaults to None so a caller with no run config - and the tests
+    that predate this parameter - get the pre-dynamic-UI tool list.
+    """
     settings = get_settings()
     tools = list(_BASE_TOOLS)
     if settings.self_authoring_enabled:
         tools.append(write_skill)
     if settings.sandbox_enabled:
         tools.append(propose_tool)
+    if ui_stream.supports(config, "weather"):
+        tools.append(show_weather)
     return tools
 
 
@@ -134,7 +148,7 @@ def build_graph(
             return {"messages": [AIMessage(_LOOP_EXHAUSTED)]}
         model = model_factory(Tier.VOICE)
         dynamic = [materialize(spec) for spec in _live_specs(state)]
-        bound_model = model.bind_tools([*_static_tools(), *dynamic])
+        bound_model = model.bind_tools([*_static_tools(config), *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
         # `from eve.context import load_persona` here would bind the real
@@ -152,7 +166,7 @@ def build_graph(
         # search_skills two turns ago must still resolve to a live tool now,
         # and EveState is the only thing that survives between them.
         node = ToolNode(
-            [*_static_tools(), *dynamic], handle_tool_errors=_handle_tool_error
+            [*_static_tools(config), *dynamic], handle_tool_errors=_handle_tool_error
         )
         return await node.ainvoke(state, config)
 

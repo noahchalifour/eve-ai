@@ -590,3 +590,24 @@ def test_propose_tool_is_unbound_by_default(monkeypatch):
     from eve import graph as graph_mod
 
     assert "propose_tool" not in {t.name for t in graph_mod._static_tools()}
+
+
+def test_show_weather_is_bound_only_when_the_client_declared_the_catalog():
+    """Binding it unconditionally would put a tool in front of the model that
+    can only ever answer "your app can't render this" - and would let a
+    surface into a transcript no client will ever replay."""
+    from eve.graph import _static_tools
+
+    declared = {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["weather"],
+            }
+        }
+    }
+
+    assert "show_weather" in {tool.name for tool in _static_tools(declared)}
+    assert "show_weather" not in {tool.name for tool in _static_tools(None)}
+    assert "show_weather" not in {tool.name for tool in _static_tools()}
