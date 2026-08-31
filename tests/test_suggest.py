@@ -241,3 +241,68 @@ async def test_the_node_is_safe_without_a_custom_stream_consumer(monkeypatch):
         result=suggest_mod.Suggestions(suggestions=["Yes"])
     ))
     assert await suggest_mod.suggest(_state(), {}) == {"suggestions": ["Yes"]}
+
+
+async def test_an_ambient_turn_gets_no_chips(monkeypatch):
+    """An ambient turn is not a member speaking, and its reply goes to a push
+    notification, not a chat surface. Asserting no call was made is the point:
+    this also saves a REFLEX call per household signal."""
+    from eve.state import ambient_marker
+
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    state = _state(human=f"{ambient_marker('Noah')} the garage door opened")
+
+    assert await suggest_mod.suggest(state, {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_the_loop_exhausted_reply_gets_no_chips(monkeypatch):
+    """The tools loop gave up. That is not a conversation to offer
+    continuations of."""
+    from eve.state import LOOP_EXHAUSTED
+
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+
+    assert await suggest_mod.suggest(_state(ai=LOOP_EXHAUSTED), {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_the_kill_switch_makes_no_call(monkeypatch):
+    monkeypatch.setenv("EVE_SUGGEST_ENABLED", "false")
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_a_turn_with_nothing_said_gets_no_chips(monkeypatch):
+    """No human message means there is no member utterance to continue -
+    the same guard `_run_extraction` applies before extracting."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    state = _state()
+    state["messages"] = [AIMessage("Hello.")]
+
+    assert await suggest_mod.suggest(state, {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_a_skip_still_clears_the_previous_turns_chips(monkeypatch):
+    """The failure this prevents: a client rendering chips that were
+    plausible continuations of a conversation that has since moved on."""
+    written = []
+    monkeypatch.setattr(suggest_mod, "get_stream_writer", lambda: written.append)
+    monkeypatch.setenv("EVE_SUGGEST_ENABLED", "false")
+    _install(monkeypatch, FakeModel(result=suggest_mod.Suggestions(suggestions=["Yes"])))
+
+    result = await suggest_mod.suggest(_state(), {})
+
+    assert result == {"suggestions": []}
+    assert written == [{"suggestions": []}]

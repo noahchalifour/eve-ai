@@ -26,7 +26,7 @@ from eve.memory.extract import last_exchange
 from eve.memory.types import MemoryBundle
 from eve.models import Tier, get_model
 from eve.settings import get_settings
-from eve.state import EveState
+from eve.state import LOOP_EXHAUSTED, EveState, is_ambient_text
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("eve.suggest")
@@ -131,6 +131,22 @@ async def suggest(state: EveState, config: RunnableConfig) -> dict:
     with _tracer.start_as_current_span("eve.suggest") as span:
         human, ai = last_exchange(state["messages"])
         member = state["member"]
+
+        # Ordered cheapest-first, and all before the model is even
+        # constructed: each of these saves a REFLEX call, and the ambient one
+        # fires on every household signal.
+        if not get_settings().suggest_enabled:
+            span.set_attribute("eve.suggest.outcome", "disabled")
+            return _emit([], span)
+        if not human or is_ambient_text(human):
+            # No human message: nothing to continue. Ambient-marked: not a
+            # member speaking, and the reply goes to ntfy, not a chat
+            # surface. Both are "no member utterance here", so one branch.
+            span.set_attribute("eve.suggest.outcome", "skipped")
+            return _emit([], span)
+        if ai == LOOP_EXHAUSTED:
+            span.set_attribute("eve.suggest.outcome", "skipped")
+            return _emit([], span)
 
         try:
             model = get_model(Tier.REFLEX).with_structured_output(Suggestions)
