@@ -47,18 +47,30 @@ async def main() -> None:
             break
 
         print("eve> ", end="", flush=True)
+        chips: list[str] = []
         async for chunk in client.runs.stream(
             thread_id,
             _ASSISTANT,
             input={"messages": [{"role": "user", "content": text}]},
-            stream_mode="messages-tuple",
+            stream_mode=["messages-tuple", "custom"],
         ):
+            if chunk.event == "custom":
+                # The same frame the Flutter client reads (OPENA-14). Printed
+                # after the reply rather than inline: it arrives once the
+                # answer has finished streaming.
+                suggestions = (chunk.data or {}).get("suggestions")
+                if isinstance(suggestions, list):
+                    chips = [s for s in suggestions if isinstance(s, str)]
+                continue
             if chunk.event != "messages":
                 continue
             message, _metadata = chunk.data
             if message.get("type") == "AIMessageChunk":
                 print(message.get("content", ""), end="", flush=True)
-        print("\n")
+        print()
+        if chips:
+            print("  " + "   ".join(f"[{chip}]" for chip in chips))
+        print()
 
 
 if __name__ == "__main__":
