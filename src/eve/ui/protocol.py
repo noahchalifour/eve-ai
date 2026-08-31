@@ -97,28 +97,52 @@ def frame(operations: list[dict]) -> str:
 # markers wherever they occur, is the tolerant-but-conservative reading: a
 # message that merely mentions "<assistant-ui>" in passing - with no
 # "</assistant-ui>" at the true end of the string - is left untouched.
+_NOT_ANOTHER_OPEN = r"(?:(?!" + re.escape(OPENING_MARKER) + r").)*"
+
+# Two things this has to get right, both reproduced against a naive first cut:
+#
+# 1. The prefix is "start-of-string OR a literal newline", not just a literal
+#    newline. `persist.py._with_frame` always appends "\n" + `frame(...)`,
+#    but `eve.ui.actions.ui_action` writes `AIMessage(content=frame([op]))`
+#    directly - a BARE frame with nothing before it. Requiring a leading
+#    "\n" made that shape invisible to this function entirely.
+# 2. The body between the markers must not be allowed to contain another
+#    occurrence of the opening marker. A plain `.*` (greedy or not) will
+#    happily span PAST an earlier, unrelated "<assistant-ui>\n" - e.g. text
+#    that merely mentions the marker before a real frame later in the same
+#    message - and eat everything in between as if it were frame body.
+#    `(?!OPENING_MARKER).` repeated is "any character, as long as a frame
+#    does not start here": it forces the match to resolve against the LAST
+#    opening marker that is followed by a well-formed close at the true end
+#    of the string, leaving any earlier lookalike untouched.
 _FRAME_SUFFIX = re.compile(
-    r"\n" + re.escape(OPENING_MARKER) + r".*" + re.escape(CLOSING_MARKER) + r"$",
+    r"(?:\A|\n)"
+    + re.escape(OPENING_MARKER)
+    + _NOT_ANOTHER_OPEN
+    + re.escape(CLOSING_MARKER)
+    + r"\Z",
     re.DOTALL,
 )
 
 
 def strip_frames(text: str) -> str:
-    """Undo what `persist_ui` did to an AIMessage's content, for every place
-    a persisted message is fed back into a prompt rather than shown to the
-    member.
+    """Undo what `persist_ui` (and `ui_action`) did to an AIMessage's
+    content, for every place a persisted message is fed back into a prompt
+    rather than shown to the member.
 
     `persist_ui` (`eve.ui.persist`) exists to make a card survive a session
     reopen, by writing the turn's surface into `messages` - text the client
-    strips before it ever reaches the member or TTS. But `messages` is also
-    what both the VOICE model (`eve.graph`) and REFLEX
-    (`eve.memory.extract`, for extraction and for the thread digest) read
-    back as conversation history on every later turn. Left unstripped, a
-    surface that can be multiple KiB (the protocol's own ceiling is 48 KiB)
-    is fed into every subsequent prompt, REFLEX can mint memories out of the
-    JSON, and the VOICE model gets a worked example of the frame syntax in
-    its own prior output to imitate - a self-composed frame in `content`
-    would reach the client having passed through none of
+    strips before it ever reaches the member or TTS. `ui_action`
+    (`eve.ui.actions`) writes the same shape for a different reason: a tap
+    on a rendered surface answers with a bare frame and no prose at all.
+    Either way `messages` is also what both the VOICE model (`eve.graph`)
+    and REFLEX (`eve.memory.extract`, for extraction and for the thread
+    digest) read back as conversation history on every later turn. Left
+    unstripped, a surface that can be multiple KiB (the protocol's own
+    ceiling is 48 KiB) is fed into every subsequent prompt, REFLEX can mint
+    memories out of the JSON, and the VOICE model gets a worked example of
+    the frame syntax in its own prior output to imitate - a self-composed
+    frame in `content` would reach the client having passed through none of
     `validate_operation`, unlike a real one which is gated by `stream.emit`.
 
     A no-op on the near-totality of turns that carry no frame at all.

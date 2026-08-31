@@ -217,6 +217,34 @@ def test_strip_frames_is_exactly_inverse_to_frame():
     assert protocol.strip_frames(appended) == original
 
 
+def test_strip_frames_strips_a_bare_frame_with_nothing_before_it():
+    """`eve.ui.actions.ui_action` writes `AIMessage(content=frame([op]))`
+    directly - a tap on a rendered surface answers with a bare frame and no
+    prose at all, so content position 0 IS the opening marker. A stripper
+    that only recognized a frame preceded by a literal "\\n" would leave
+    this shape - which reaches `values.messages` on `ui_action -> END` just
+    like any other turn - completely untouched."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    bare = protocol.frame([operation])
+
+    assert protocol.strip_frames(bare) == ""
+
+
+def test_strip_frames_does_not_span_an_earlier_lookalike_opening_marker():
+    """A greedy body reaching from the FIRST opening marker to the LAST
+    closing marker would eat everything in between, including real text
+    that merely mentions the marker before an actual frame later in the same
+    message. Only the true frame - anchored at the end of the string - may
+    be removed."""
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    text = (
+        "start\n<assistant-ui>\nnot json\nreal text here\n"
+        + protocol.frame([operation])
+    )
+
+    assert protocol.strip_frames(text) == "start\n<assistant-ui>\nnot json\nreal text here"
+
+
 def test_strip_frames_is_a_no_op_on_content_with_no_frame():
     """The near-totality of turns. Must be byte-identical - not just
     "shorter" or "frameless" - after stripping."""

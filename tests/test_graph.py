@@ -888,3 +888,83 @@ async def test_the_voice_model_never_sees_a_previous_turns_persisted_frame(monke
 
     replayed = next(m for m in seen["messages"] if m.id == "a1")
     assert replayed.content == "Lovely out there."
+
+
+async def test_a_ui_actions_persisted_frame_never_reaches_a_later_turns_model(
+    monkeypatch,
+):
+    """End to end for the tap path finding 1 was about. `ui_action` writes a
+    BARE frame straight into `values.messages` (`AIMessage(content=
+    protocol.frame([operation]))` - content position 0 IS the opening
+    marker, no leading newline, nothing before it), via `ui_action -> END`.
+    A stripper that only recognized a frame preceded by a literal "\\n"
+    would leave this shape untouched, and the next ORDINARY turn on the same
+    thread would replay the raw patch JSON into the VOICE model's own
+    context. A unit test on `strip_frames` alone would not catch that gap -
+    only driving the real tap turn, then a real second turn, does."""
+    import json
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def fake_invoke(tool, arguments, **kwargs):
+        return json.dumps(
+            {
+                "location": "Home",
+                "condition": "sunny",
+                "temperature": 20,
+                "hourly": [],
+                "daily": [
+                    {
+                        "datetime": "2026-09-05T12:00:00+00:00",
+                        "condition": "rainy",
+                        "temperature": 17,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("eve.ui.actions.invoke", fake_invoke)
+
+    envelope = json.dumps(
+        {
+            "protocol": "assistant-ui/1.0",
+            "sessionId": "s1",
+            "surfaceId": "wx-1",
+            "actionId": "weather.rangeChanged",
+            "value": "daily",
+            "data": {},
+        }
+    )
+    tap_app = build_graph(
+        model_factory=_fake_factory, recall_fn=_no_recall, extract_fn=_no_extract
+    ).compile()
+    tap_result = await tap_app.ainvoke(
+        {
+            "messages": [
+                HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")
+            ]
+        },
+        UI_CAPABLE_CONFIG,
+    )
+    # Confirms the setup: the tap turn really did leave a bare frame in
+    # `values.messages` - the shape finding 1a was about.
+    assert any("<assistant-ui>" in (m.content or "") for m in tap_result["messages"])
+
+    seen = {}
+
+    class RecordingModel(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            seen["messages"] = input
+            return AIMessage(content="Sure thing.")
+
+    ordinary_app = build_graph(
+        model_factory=lambda _t: RecordingModel(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+    ).compile()
+    await ordinary_app.ainvoke(
+        {"messages": [*tap_result["messages"], HumanMessage("thanks")]}, CONFIG
+    )
+
+    assert all("<assistant-ui>" not in (m.content or "") for m in seen["messages"])
