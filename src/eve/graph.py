@@ -1,6 +1,8 @@
 """Eve's graph.
 
-    START -> load_context -> recall -> eve <-> tools -> extract -> END
+                          +-> ui_action -----------------------------> END
+    START -> load_context-+
+                          +-> recall -> eve <-> tools -> extract -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
@@ -11,6 +13,12 @@ Phase 3 (this file) adds the `eve <-> tools` cycle:
 `eve` binds the static specialist/skill tools plus any dynamically-discovered
 ones (freshly materialized from state on every call) and either answers,
 routing to `extract`, or emits tool calls, routing to `tools` and back.
+
+`ui_action` is the other branch out of `load_context`: a tap on a rendered
+surface calls no model. It re-reads the tapped range from Home Assistant,
+emits one patch, and ends the turn - see `_route_after_context` for why it
+sits after `load_context` rather than at START, and why it skips both
+`recall` and `extract`.
 
 The system prompt is rebuilt from scratch every turn and passed to the model
 without being appended to `messages`, so persona, member-context and memory
@@ -39,6 +47,7 @@ from eve.specialists.mail import ask_mail
 from eve.state import EveState
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import stream as ui_stream
+from eve.ui.actions import parse_action, ui_action
 from eve.ui.tools import show_weather
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
@@ -135,6 +144,23 @@ _LOOP_EXHAUSTED = (
 )
 
 
+def _route_after_context(state: EveState) -> str:
+    """A UI tap arrives as ordinary user text, because the client re-runs the
+    turn with the user message's content replaced by an action envelope. It
+    carries no question for a model to answer, so it skips `recall` (an
+    embedding call and a Postgres read for nothing) and `extract` (whose input
+    would be a JSON envelope): the whole turn is one HTTP call and one frame.
+
+    Branching after `load_context` rather than at START is deliberate -
+    `load_context` is pure local computation (ADR 0002), and the member
+    timezone the forecast labels need comes from it.
+    """
+    messages = state["messages"]
+    if not messages or not isinstance(messages[-1], HumanMessage):
+        return "recall"
+    return "ui_action" if parse_action(messages[-1].content) else "recall"
+
+
 def build_graph(
     model_factory=get_model, recall_fn=memory_recall, extract_fn=memory_extract
 ) -> StateGraph:
@@ -172,12 +198,18 @@ def build_graph(
 
     builder = StateGraph(EveState)
     builder.add_node("load_context", load_context)
+    builder.add_node("ui_action", ui_action)
     builder.add_node("recall", recall_fn)
     builder.add_node("eve", eve)
     builder.add_node("tools", tools_node)
     builder.add_node("extract", extract_fn)
     builder.add_edge(START, "load_context")
-    builder.add_edge("load_context", "recall")
+    builder.add_conditional_edges(
+        "load_context",
+        _route_after_context,
+        {"ui_action": "ui_action", "recall": "recall"},
+    )
+    builder.add_edge("ui_action", END)
     builder.add_edge("recall", "eve")
     # Bounded by `eve`'s own `_tool_rounds_this_turn` check, not by
     # LangGraph's recursion_limit: that default is 10007

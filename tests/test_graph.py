@@ -611,3 +611,90 @@ def test_show_weather_is_bound_only_when_the_client_declared_the_catalog():
     assert "show_weather" in {tool.name for tool in _static_tools(declared)}
     assert "show_weather" not in {tool.name for tool in _static_tools(None)}
     assert "show_weather" not in {tool.name for tool in _static_tools()}
+
+
+async def test_a_ui_action_turn_skips_recall_the_model_and_extraction(monkeypatch):
+    """An action turn has no question in it. Routing it through `recall` would
+    spend an embedding call and a Postgres read on a tap, and routing it
+    through `extract` would feed a JSON envelope to the extractor."""
+    import json
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    called = {"recall": False, "model": False, "extract": False}
+
+    async def spy_recall(state, config):
+        called["recall"] = True
+        return {"memory": None}
+
+    async def spy_extract(state, config):
+        called["extract"] = True
+        return {}
+
+    def spy_factory(_tier):
+        called["model"] = True
+        return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
+
+    async def fake_invoke(tool, arguments, **kwargs):
+        return json.dumps(
+            {
+                "location": "Home",
+                "condition": "sunny",
+                "temperature": 20,
+                "hourly": [],
+                "daily": [
+                    {
+                        "datetime": "2026-09-05T12:00:00+00:00",
+                        "condition": "rainy",
+                        "temperature": 17,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("eve.ui.actions.invoke", fake_invoke)
+
+    envelope = json.dumps(
+        {
+            "protocol": "assistant-ui/1.0",
+            "sessionId": "s1",
+            "surfaceId": "wx-1",
+            "actionId": "weather.rangeChanged",
+            "value": "daily",
+            "data": {},
+        }
+    )
+    app = build_graph(
+        model_factory=spy_factory, recall_fn=spy_recall, extract_fn=spy_extract
+    ).compile()
+
+    frames = []
+    async for mode, chunk in app.astream(
+        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
+        CONFIG,
+        stream_mode=["custom"],
+    ):
+        frames.append(chunk)
+
+    assert [frame["assistant_ui"]["op"] for frame in frames] == ["patch"]
+    assert called == {"recall": False, "model": False, "extract": False}
+
+
+async def test_ordinary_speech_still_routes_through_recall(monkeypatch):
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    called = {"recall": False}
+
+    async def spy_recall(state, config):
+        called["recall"] = True
+        return {"memory": None}
+
+    app = build_graph(
+        model_factory=_fake_factory, recall_fn=spy_recall, extract_fn=_no_extract
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert called["recall"] is True
+    assert result["messages"][-1].content == "Hi Noah."
