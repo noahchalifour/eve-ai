@@ -36,7 +36,7 @@ from eve.skills.search import search_skills
 from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
-from eve.state import EveState
+from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.tools_authoring.propose import propose_tool
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
@@ -103,7 +103,7 @@ def _tool_rounds_this_turn(messages: list) -> int:
     EveState field on purpose: every field of EveState is a required field of
     the pydantic schema `InjectedState` validates, so adding one would make
     every tool taking injected state fail wherever the new key is missing -
-    the same failure mode `_replace_dynamic_tools` exists to prevent. Reading
+    the same failure mode `_last_write_wins` exists to prevent. Reading
     backwards to the last HumanMessage also resets the budget per turn for
     free, which a checkpointed counter would have to be told to do."""
     rounds = 0
@@ -113,12 +113,6 @@ def _tool_rounds_this_turn(messages: list) -> int:
         if isinstance(message, AIMessage) and message.tool_calls:
             rounds += 1
     return rounds
-
-
-_LOOP_EXHAUSTED = (
-    "I wasn't able to finish that - I kept going back and forth with my tools "
-    "without getting anywhere. Could you try asking me a different way?"
-)
 
 
 def build_graph(

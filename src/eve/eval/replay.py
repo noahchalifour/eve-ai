@@ -70,7 +70,7 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     module attribute rather than a graph parameter: the graph builds its prompt
     internally and adding an arm parameter to EveState would make every tool
     taking InjectedState fail validation wherever the key is absent - the same
-    failure mode eve/state.py's _replace_dynamic_tools exists to prevent.
+    failure mode eve/state.py's _last_write_wins exists to prevent.
 
     Mirrors replay_ambient's posture: any failure (an unknown `member` sub, a
     model outage, ...) is reported as `{"error": True}` rather than raised, so
