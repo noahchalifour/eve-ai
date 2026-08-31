@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from functools import lru_cache
 
 from langchain_core.exceptions import OutputParserException
@@ -116,19 +117,30 @@ def _emit(chips: list[str], span: trace.Span) -> dict:
     runnable context - which is exactly what a direct `await suggest(...)` in
     a test does - `get_stream_writer()` raises `RuntimeError`, which is
     caught below and logged quietly rather than as a warning.
+
+    The two `RuntimeError`s are NOT the same failure and are caught
+    separately: `get_stream_writer()` raising means there is no runnable
+    context (expected, benign - e.g. a direct call in a test). The writer it
+    returns raising - for any exception, including a second `RuntimeError`
+    from something like a closed Aegra queue - means delivery itself broke,
+    which is worth a warning.
     """
     span.set_attribute("eve.suggest.count", len(chips))
     try:
-        get_stream_writer()({"suggestions": chips})
+        writer = get_stream_writer()
     except RuntimeError:
         # No runnable context (e.g. a direct call in a test). Expected, not
         # a bug - the state channel is still written below.
+        writer = None
         logger.debug("no runnable context to emit the suggestions frame")
-    except Exception:
-        # Delivering chips must not be able to fail a turn. A writer that
-        # raises for some other reason (a future langgraph change) still
-        # leaves the state channel written below.
-        logger.warning("could not emit the suggestions frame", exc_info=True)
+    if writer is not None:
+        try:
+            writer({"suggestions": chips})
+        except Exception:
+            # Delivering chips must not be able to fail a turn. A writer that
+            # raises (e.g. a closed Aegra queue) still leaves the state
+            # channel written below.
+            logger.warning("could not emit the suggestions frame", exc_info=True)
     return {"suggestions": chips}
 
 
@@ -168,6 +180,7 @@ async def suggest(state: EveState, config: RunnableConfig) -> dict:
             span.set_attribute("eve.suggest.outcome", "error")
             return _emit([], span)
 
+        started = time.perf_counter()
         try:
             async with asyncio.timeout(_budget_seconds()):
                 result = await model.with_config(tags=[TAG_NOSTREAM]).ainvoke(
@@ -178,6 +191,9 @@ async def suggest(state: EveState, config: RunnableConfig) -> dict:
             # slow REFLEX call. If this fires often, the budget is too tight
             # or the tier is too slow - `eve.suggest.outcome` is how that
             # becomes visible rather than folklore.
+            span.set_attribute(
+                "eve.suggest.latency_ms", round((time.perf_counter() - started) * 1000, 1)
+            )
             span.set_attribute("eve.suggest.outcome", "budget")
             return _emit([], span)
         except (ValidationError, ValueError, OutputParserException) as exc:
@@ -185,13 +201,22 @@ async def suggest(state: EveState, config: RunnableConfig) -> dict:
             # category, and the same three exception types, as
             # eve_ambient/filter.py's malformed branch.
             logger.warning("suggestions came back unusable: %s", exc)
+            span.set_attribute(
+                "eve.suggest.latency_ms", round((time.perf_counter() - started) * 1000, 1)
+            )
             span.set_attribute("eve.suggest.outcome", "malformed")
             return _emit([], span)
         except Exception:
             logger.warning("suggestions failed", exc_info=True)
+            span.set_attribute(
+                "eve.suggest.latency_ms", round((time.perf_counter() - started) * 1000, 1)
+            )
             span.set_attribute("eve.suggest.outcome", "error")
             return _emit([], span)
 
+        span.set_attribute(
+            "eve.suggest.latency_ms", round((time.perf_counter() - started) * 1000, 1)
+        )
         chips = clean(getattr(result, "suggestions", None))
         span.set_attribute("eve.suggest.outcome", "ok" if chips else "empty")
         return _emit(chips, span)

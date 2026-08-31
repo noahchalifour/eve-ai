@@ -163,6 +163,7 @@ def build_graph(
     builder.add_node("eve", eve)
     builder.add_node("tools", tools_node)
     builder.add_node("extract", extract_fn)
+    builder.add_node("suggest", suggest_fn)
     builder.add_edge(START, "load_context")
     builder.add_edge("load_context", "recall")
     builder.add_edge("recall", "eve")
@@ -174,7 +175,6 @@ def build_graph(
     # platform, a confused model burns thousands of paid calls per turn.
     builder.add_conditional_edges("eve", tools_condition, {"tools": "tools", END: "extract"})
     builder.add_edge("tools", "eve")
-    builder.add_node("suggest", suggest_fn)
     # AFTER extract, not before. With EVE_MEMORY_EXTRACT_BACKGROUND=true (the
     # default) `extract` returns as soon as it registers its task, so
     # extraction's REFLEX call and the suggestion call overlap and the turn

@@ -71,6 +71,13 @@ Every REFLEX call here carries `TAG_NOSTREAM`. Without it the suggestion
 model's tokens go out on the `messages` channel and clients render them as
 Eve's reply.
 
+The prompt-injection surface is the whole rendered exchange `_render` builds,
+not just the memory bundle: the raw human text and Eve's own reply are
+inlined too, and Eve's reply can itself carry specialist tool output (an
+email body via `ask_mail`, for one). The mitigation is unchanged regardless
+of which of those an attacker reaches - a chip is text the member sees and
+chooses to send, and ambient-marked turns are skipped outright.
+
 **The feature is invisible to the Flutter client until that client changes**
 (Linear OPENA-14). It requests only `messages` and `custom` stream modes,
 reads only `values.messages` on restore, and its `custom` handler accepts only

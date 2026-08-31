@@ -794,10 +794,13 @@ human message. All three are checked before the model is constructed.
 
 **Observability.** `eve.suggest.outcome` is the one number to look at:
 `ok` / `empty` / `budget` / `malformed` / `error` / `skipped` / `disabled`,
-plus `eve.suggest.count`. Because every failure degrades to an empty list,
-total failure is invisible without this attribute - chips simply stop
-appearing and nothing raises. A rising `budget` fraction means the budget is
-too tight or the tier too slow.
+plus `eve.suggest.count` and `eve.suggest.latency_ms` (set on every path
+where the model call actually happened, including `budget` and the failure
+outcomes). Because every failure degrades to an empty list, total failure is
+invisible without this attribute - chips simply stop appearing and nothing
+raises. A rising `budget` fraction means the budget is too tight or the tier
+too slow; `eve.suggest.latency_ms` is what shows that *before* `outcome`
+turns to `budget`, not after.
 
 **Eval.** `eve/eval/replay.py` injects a no-op through `build_graph`'s
 `suggest_fn` seam, so replays neither pay for chips nor score them.

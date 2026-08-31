@@ -697,6 +697,81 @@ async def test_the_suggestion_node_is_wired_by_default(monkeypatch):
     """The seam exists for tests and eval. The DEFAULT must be the real node,
     or the feature ships wired to nothing."""
     from eve.graph import build_graph as real_build_graph
+    from eve.suggest import suggest
 
     graph = real_build_graph()
-    assert "suggest" in graph.nodes
+    assert graph.nodes["suggest"].runnable.afunc is suggest
+
+
+async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(monkeypatch):
+    """The one test that runs the REAL `suggest` node (no `suggest_fn`
+    override) inside a compiled graph, end to end. Every other graph test in
+    this file injects a fake suggest node, which is right for pinning
+    ordering/wiring but leaves the biggest gap in this branch: nothing proves
+    that, wired for real, the suggestion call's output reaches the `custom`
+    frame and the `suggestions` state channel WITHOUT any of its tokens
+    reaching `messages` - the channel a client renders as Eve's own reply.
+    Without `TAG_NOSTREAM` actually taking effect, a chip could render as
+    part of Eve's visible answer; this test is what would catch that."""
+    from langgraph.constants import TAG_NOSTREAM
+
+    import eve.suggest as suggest_mod
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    class FakeSuggestModel:
+        """Mirrors tests/test_suggest.py's FakeModel: with_structured_output,
+        with_config (recording tags), ainvoke."""
+
+        def __init__(self):
+            self.tags = None
+
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **kwargs):
+            self.tags = kwargs.get("tags")
+            return self
+
+        async def ainvoke(self, messages):
+            return suggest_mod.Suggestions(suggestions=["Just the kitchen", "All of them"])
+
+    fake_suggest_model = FakeSuggestModel()
+    monkeypatch.setattr(suggest_mod, "get_model", lambda _tier: fake_suggest_model)
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        # Deliberately no `suggest_fn`: the default must be the real node.
+    ).compile()
+
+    custom_frames = []
+    message_texts = []
+    async for mode, chunk in app.astream(
+        {"messages": [HumanMessage("hello")]}, CONFIG, stream_mode=["custom", "messages"]
+    ):
+        if mode == "custom":
+            custom_frames.append(chunk)
+        elif mode == "messages":
+            message, _meta = chunk
+            if message.content:
+                message_texts.append(message.content)
+
+    # 1. The custom frame carries exactly the chips the fake model returned.
+    assert custom_frames == [{"suggestions": ["Just the kitchen", "All of them"]}]
+
+    # 2. The suggestion call was REFLEX-tier and non-streaming.
+    assert fake_suggest_model.tags == [TAG_NOSTREAM]
+    assert fake_suggest_model.tags == ["nostream"]
+
+    # 3. The final state's `suggestions` channel carries the same list.
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+    assert result["suggestions"] == ["Just the kitchen", "All of them"]
+
+    # 4. `messages` carries ONLY Eve's own reply - no suggestion tokens.
+    assert "".join(message_texts) == "Hi Noah."
+    for text in message_texts:
+        assert "kitchen" not in text
+        assert "All of them" not in text
