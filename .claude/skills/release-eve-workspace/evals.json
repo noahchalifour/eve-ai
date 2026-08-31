@@ -1,0 +1,51 @@
+{
+  "skill_name": "release-eve",
+  "note": "All prompts are read-only by construction. This skill deploys to a live home lab; eval runs must never tag, push, open PRs, or mutate the cluster.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "diagnose-version-drift",
+      "prompt": "eve-ambient seems to be running an older version than eve and eve-tools in my cluster. What's going on there and what's the right way to fix it? Don't change anything yet, just tell me.",
+      "expected_output": "Identifies the drift concretely (eve-ambient v0.2.0 vs v0.2.4), explains why skew is dangerous (shared src/eve code), and prescribes a single release bumping all three together rather than bumping eve-ambient alone.",
+      "files": [],
+      "assertions": [
+        "Names the actual drifted versions: eve-ambient on v0.2.0 vs eve and eve-tools on v0.2.4",
+        "Locates the pin in home-lab-infrastructure at kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml",
+        "Explains why the skew is dangerous (the three images share src/eve code and the eve-tools HTTP contract)",
+        "Prescribes one release bumping all three images together, not an eve-ambient-only bump",
+        "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "plan-full-release",
+      "prompt": "I just merged a fix to eve's main branch and I need it running in the home lab. Walk me through every step to get it deployed. Don't execute anything - I want to read the plan first.",
+      "expected_output": "Full plan: bump pyproject, tag eve-ai, wait for the 3-way GHCR matrix build, one PR bumping all three kustomize overlays in home-lab-infrastructure, ArgoCD auto-sync, verify running image tags.",
+      "files": [],
+      "assertions": [
+        "States all three images (eve-ai, eve-tools, eve-ambient) build from one tag and must be bumped together",
+        "States the GHCR build fires only on pushing a v* git tag, not on merge to main",
+        "Includes bumping pyproject.toml to the release version",
+        "Says the infra change is a PR in home-lab-infrastructure updating all three overlay newTags",
+        "States ArgoCD auto-syncs on merge, so no manual deploy step is needed",
+        "Includes a verification step comparing running image tags against the release version",
+        "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "check-sync-status",
+      "prompt": "Is eve fully in sync right now - repo, manifests and what's actually running? Read-only please.",
+      "expected_output": "Reports the version at every pin point (pyproject, git tag, 3 overlays, 3 live deployments) and flags that pyproject is 0.1.0 and eve-ambient is v0.2.0 while the rest are v0.2.4.",
+      "files": [],
+      "assertions": [
+        "Reports the pyproject.toml version (0.1.0)",
+        "Reports the latest eve-ai git tag (v0.2.4)",
+        "Reports the newTag from all three kustomize overlays",
+        "Reports the live image tag of all three running deployments from the cluster",
+        "Concludes NOT in sync, flagging both eve-ambient v0.2.0 and the stale pyproject 0.1.0",
+        "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+      ]
+    }
+  ]
+}

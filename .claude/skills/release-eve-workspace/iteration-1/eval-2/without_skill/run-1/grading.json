@@ -1,0 +1,46 @@
+{
+  "run_id": "eval-2-without_skill",
+  "expectations": [
+    {
+      "text": "Reports the pyproject.toml version (0.1.0)",
+      "passed": false,
+      "evidence": "Neither 'pyproject' nor '0.1.0' appears anywhere in the answer (verified by grep, no matches). The repo layer is analysed purely as 'four merged PRs' worth of work ... sit on main untagged', never as a version-string pin."
+    },
+    {
+      "text": "Reports the latest eve-ai git tag (v0.2.4)",
+      "passed": true,
+      "evidence": "'The last release tag is **v0.2.4** (9ab31c4)'. Matches ground truth."
+    },
+    {
+      "text": "Reports the newTag from all three kustomize overlays",
+      "passed": true,
+      "evidence": "'Manifest pin' column of the workload table: eve v0.2.4, eve-tools v0.2.4, eve-ambient v0.2.0; restated as 'eve-ambient is pinned v0.2.0 while the other two are v0.2.4'."
+    },
+    {
+      "text": "Reports the live image tag of all three running deployments from the cluster",
+      "passed": true,
+      "evidence": "'Running image' column: 'ghcr.io/noahchalifour/eve-ai:v0.2.4', 'ghcr.io/noahchalifour/eve-tools:v0.2.4', 'ghcr.io/noahchalifour/eve-ambient:v0.2.0', with pod age/restart counts, plus the ArgoCD Synced/Healthy table at revision dec36f0."
+    },
+    {
+      "text": "Concludes NOT in sync, flagging both eve-ambient v0.2.0 and the stale pyproject 0.1.0",
+      "passed": false,
+      "evidence": "Correctly concludes not in sync overall ('the cluster is, the repo isn't'; 'Layer 2: repo <-> manifests - significantly out of sync') and flags eve-ambient, though it downgrades it: 'a minor, low-risk pin drift ... So it's cosmetic rather than a real behavioural lag'. The stale pyproject 0.1.0 is never mentioned at all, so the 'both' requirement is not met."
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "Reported operations are all reads: kubectl get applications/deploy/pods/events, git log and diff across the two checkouts, git ls-remote to confirm 06d4985 is unpushed, and gh run/PR listings. Recommendations ('pull/rebase your diverged local main', 'author eve-sandbox manifests') are stated as things that need doing, not done."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 2,
+    "total": 6,
+    "pass_rate": 0.6667
+  },
+  "timing": {
+    "total_tokens": 69764,
+    "duration_ms": 258760,
+    "total_duration_seconds": 258.8
+  }
+}

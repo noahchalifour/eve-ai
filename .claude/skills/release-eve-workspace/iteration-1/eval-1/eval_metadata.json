@@ -1,0 +1,14 @@
+{
+  "eval_id": 1,
+  "eval_name": "plan-full-release",
+  "prompt": "I just merged a fix to eve's main branch and I need it running in the home lab. Walk me through every step to get it deployed. Don't execute anything - I want to read the plan first.",
+  "assertions": [
+    "States all three images (eve-ai, eve-tools, eve-ambient) build from one tag and must be bumped together",
+    "States the GHCR build fires only on pushing a v* git tag, not on merge to main",
+    "Includes bumping pyproject.toml to the release version",
+    "Says the infra change is a PR in home-lab-infrastructure updating all three overlay newTags",
+    "States ArgoCD auto-syncs on merge, so no manual deploy step is needed",
+    "Includes a verification step comparing running image tags against the release version",
+    "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "run_id": "eval-1-with_skill",
+  "expectations": [
+    {
+      "text": "States all three images (eve-ai, eve-tools, eve-ambient) build from one tag and must be bumped together",
+      "passed": true,
+      "evidence": "'One green run means all four images exist at v0.3.0 from the same commit.' Step 3 is 'One PR, all three pins' with a loop over 'eve eve-tools eve-ambient'. Reinforced by 'If only one component breaks, do not bump just that one. That's how the ambient drift got there. Cut v0.3.1 across all three.' Also correctly notes the matrix is now four images (eve-sandbox), matching origin/main."
+    },
+    {
+      "text": "States the GHCR build fires only on pushing a v* git tag, not on merge to main",
+      "passed": true,
+      "evidence": "'Run the tests before the tag. The tag is what triggers publishing, and CI runs the same tiers - catching a failure locally saves a build and a dead tag.' The build-watch step (Step 2) follows the tag push, and 'A moved tag means GHCR and the cluster disagree'. The merge-to-main case is implicitly excluded but never spelled out as literally as the baseline run does."
+    },
+    {
+      "text": "Includes bumping pyproject.toml to the release version",
+      "passed": true,
+      "evidence": "Step 1: \"sed -i '' 's/^version = \\\".*\\\"/version = \\\"0.3.0\\\"/' pyproject.toml\", prefaced by 'pyproject.toml version tracks the release and currently says 0.1.0; this is where that drift gets fixed. Note the tag carries the v, pyproject does not.'"
+    },
+    {
+      "text": "Says the infra change is a PR in home-lab-infrastructure updating all three overlay newTags",
+      "passed": true,
+      "evidence": "Step 3 in ~/GitHub/home/lab/infrastructure: 'git checkout -b eve-release-v0.3.0' then a for loop rewriting newTag in kubernetes/apps/{eve,eve-tools,eve-ambient}/overlays/homelab/kustomization.yaml, followed by 'gh pr create --fill-first'. Also warns against separate per-app branches."
+    },
+    {
+      "text": "States ArgoCD auto-syncs on merge, so no manual deploy step is needed",
+      "passed": true,
+      "evidence": "'ArgoCD tracks HEAD of main with automated sync and selfHeal, so the merge is the deploy. Nothing else to trigger.' The kubectl patch sync is offered only as a fallback if it hasn't picked up in a couple of minutes."
+    },
+    {
+      "text": "Includes a verification step comparing running image tags against the release version",
+      "passed": true,
+      "evidence": "Step 4: 'kubectl -n eve rollout status deploy/eve deploy/eve-ambient' plus 'check-sync.sh v0.3.0' with 'check-sync.sh passing on all eight rows is the definition of done', and 'Synced is not healthy, and healthy is not \"running what you shipped\"'."
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "'nothing executed' in the title; all findings come from reads (check-sync.sh, git rev-list --left-right --count, git status, gh, kubectl get). Every mutating command appears inside plan code blocks, and the answer ends asking for three confirmations before Step 0."
+    }
+  ],
+  "summary": {
+    "passed": 7,
+    "failed": 0,
+    "total": 7,
+    "pass_rate": 1.0
+  },
+  "timing": {
+    "total_tokens": 70819,
+    "duration_ms": 262824,
+    "total_duration_seconds": 262.8
+  }
+}
