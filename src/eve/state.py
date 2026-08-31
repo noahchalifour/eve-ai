@@ -49,17 +49,31 @@ def may_author(human: str) -> bool:
     return get_settings().self_authoring_enabled and not is_ambient_text(human)
 
 
-def _replace_dynamic_tools(
-    _old: list[DynamicToolSpec], new: list[DynamicToolSpec]
-) -> list[DynamicToolSpec]:
-    """Last-write-wins. A reducer is what gives a channel a default: without
-    one LangGraph uses `LastValue`, which holds no value at all until
-    something writes it, so on a fresh thread the key is simply absent from
-    state and every tool taking `Annotated[EveState, InjectedState]` fails
-    pydantic validation of the injected state before its body ever runs.
-    Not `operator.add`: `search_skills` already merges against the existing
-    list and caps it, then returns the whole new list."""
+def _last_write_wins(_old: list, new: list) -> list:
+    """Last-write-wins, shared by `dynamic_tools` and `suggestions`.
+
+    A reducer is what gives a channel a default: without one LangGraph uses
+    `LastValue`, which holds no value at all until something writes it, so on
+    a fresh thread the key is simply absent from state and every tool taking
+    `Annotated[EveState, InjectedState]` fails pydantic validation of the
+    injected state before its body ever runs.
+
+    Not `operator.add`, for both channels and for different reasons.
+    `search_skills` already merges against the existing list and caps it, then
+    returns the whole new list. `suggestions` describes ONE turn: appending
+    would accumulate every turn's chips and a client would render
+    continuations of a conversation that has moved on.
+    """
     return new
+
+
+# Owned here rather than in graph.py because `suggest` must recognise this
+# reply to skip chip generation for it, and graph.py imports `suggest` - the
+# same one-owner-for-a-shared-literal reason as AMBIENT_MARKER_PREFIX above.
+LOOP_EXHAUSTED = (
+    "I wasn't able to finish that - I kept going back and forth with my tools "
+    "without getting anywhere. Could you try asking me a different way?"
+)
 
 
 class MemberContext(TypedDict):
@@ -84,4 +98,13 @@ class EveState(TypedDict):
     # Specs only - see eve.skills.types.DynamicToolSpec. Materialized into
     # real callables fresh on every model call (eve.skills.materialize,
     # Task 11), never stored as one.
-    dynamic_tools: Annotated[list[DynamicToolSpec], _replace_dynamic_tools]
+    dynamic_tools: Annotated[list[DynamicToolSpec], _last_write_wins]
+    # Written by `suggest` (eve/suggest.py) after the answer has streamed;
+    # read by any client on `stream_mode="values"`/`"updates"` or from
+    # `GET /threads/{id}/state`. The same list also goes out on the `custom`
+    # stream channel, which is what the Flutter client actually consumes -
+    # see the design doc section 6.
+    #
+    # ALWAYS written, including as `[]`: a turn that skips chip generation
+    # must clear the previous turn's chips rather than leave them standing.
+    suggestions: Annotated[list[str], _last_write_wins]

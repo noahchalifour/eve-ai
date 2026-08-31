@@ -430,7 +430,7 @@ async def test_a_procedure_op_is_never_accepted_from_extraction(monkeypatch, rec
 
 
 async def test_tool_messages_never_reach_the_extraction_prompt(monkeypatch, recorded):
-    """Currently incidental - _last_exchange reads only Human and AI
+    """Currently incidental - last_exchange reads only Human and AI
     messages. This phase makes it load-bearing: an email body in a
     ToolMessage must not be authoring input."""
     from langchain_core.messages import ToolMessage
@@ -792,3 +792,23 @@ async def test_a_detached_extraction_records_its_own_span(monkeypatch, recorded)
     await pending.drain()
     assert ("span.name", "eve.extract") in spans
     assert ("eve.authoring.rules_written", 0) in spans
+
+
+def test_last_exchange_is_importable_under_a_public_name():
+    """`eve.suggest` imports this. A leading underscore across a module
+    boundary is a lie about the name's audience."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.memory.extract import last_exchange
+
+    human, ai = last_exchange([HumanMessage("hi"), AIMessage("hello")])
+    assert (human, ai) == ("hi", "hello")
+
+
+def test_last_exchange_returns_empty_strings_when_a_side_is_missing():
+    from langchain_core.messages import HumanMessage
+
+    from eve.memory.extract import last_exchange
+
+    assert last_exchange([HumanMessage("hi")]) == ("hi", "")
+    assert last_exchange([]) == ("", "")
