@@ -116,3 +116,123 @@ async def test_list_entities_sends_the_bearer_token():
     )
     await home_assistant.list_entities()
     assert route.calls.last.request.headers["authorization"] == "Bearer ha-token"
+
+
+@respx.mock
+async def test_weather_returns_current_conditions_and_both_ranges():
+    respx.get("http://ha.test/api/states/weather.home").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "entity_id": "weather.home",
+                "state": "partlycloudy",
+                "attributes": {"friendly_name": "Home", "temperature": 21.4},
+            },
+        )
+    )
+    respx.post("http://ha.test/api/services/weather/get_forecasts").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "service_response": {
+                    "weather.home": {
+                        "forecast": [
+                            {
+                                "datetime": "2026-08-31T14:00:00+00:00",
+                                "condition": "sunny",
+                                "temperature": 22,
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    )
+
+    result = await home_assistant.weather("weather.home")
+
+    assert result["entity_id"] == "weather.home"
+    assert result["location"] == "Home"
+    assert result["condition"] == "partlycloudy"
+    assert result["temperature"] == 21.4
+    # Both ranges come back, from one relay call: the card needs the hourly
+    # strip now and `ui_action` needs the daily one on the next turn.
+    assert result["hourly"][0]["temperature"] == 22
+    assert result["daily"][0]["temperature"] == 22
+
+
+@respx.mock
+async def test_weather_asks_for_the_response_body():
+    """Without `?return_response` HA answers 200 with an empty body and the
+    forecast is silently lost. This assertion is the whole reason this
+    function exists instead of a `call_service` call."""
+    respx.get("http://ha.test/api/states/weather.home").mock(
+        return_value=httpx.Response(
+            200, json={"state": "sunny", "attributes": {"temperature": 20}}
+        )
+    )
+    route = respx.post("http://ha.test/api/services/weather/get_forecasts").mock(
+        return_value=httpx.Response(200, json={"service_response": {}})
+    )
+
+    await home_assistant.weather("weather.home")
+
+    assert "return_response" in str(route.calls[0].request.url)
+
+
+@respx.mock
+async def test_weather_discovers_the_entity_when_none_is_named():
+    respx.get("http://ha.test/api/states").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"entity_id": "light.kitchen", "state": "on", "attributes": {}},
+                {"entity_id": "weather.cottage", "state": "rainy", "attributes": {}},
+            ],
+        )
+    )
+    respx.get("http://ha.test/api/states/weather.cottage").mock(
+        return_value=httpx.Response(
+            200, json={"state": "rainy", "attributes": {"temperature": 12}}
+        )
+    )
+    respx.post("http://ha.test/api/services/weather/get_forecasts").mock(
+        return_value=httpx.Response(200, json={"service_response": {}})
+    )
+
+    result = await home_assistant.weather()
+
+    assert result["entity_id"] == "weather.cottage"
+
+
+@respx.mock
+async def test_weather_survives_a_range_the_entity_does_not_publish():
+    """Plenty of HA weather integrations have no hourly forecast. That is an
+    empty range, not a failed call - the card still renders, and the client
+    dispatches a remote action for whichever range is absent."""
+    respx.get("http://ha.test/api/states/weather.home").mock(
+        return_value=httpx.Response(
+            200, json={"state": "sunny", "attributes": {"temperature": 20}}
+        )
+    )
+    respx.post("http://ha.test/api/services/weather/get_forecasts").mock(
+        return_value=httpx.Response(500, json={"message": "not supported"})
+    )
+
+    result = await home_assistant.weather("weather.home")
+
+    assert result["hourly"] == []
+    assert result["daily"] == []
+
+
+@respx.mock
+async def test_weather_raises_when_the_home_has_no_weather_entity():
+    """`eve_tools.app.invoke_tool` turns a raised exception into
+    `{"error": ...}` with a 200, which `eve.tools_client.invoke` hands back as
+    an `error: ...` string. Raising is how this reaches the caller."""
+    respx.get("http://ha.test/api/states").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with pytest.raises(ValueError):
+        await home_assistant.weather()

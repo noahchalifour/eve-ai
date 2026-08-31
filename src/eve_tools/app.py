@@ -28,6 +28,7 @@ _HANDLERS = {
     "home.call_service": lambda a: home_assistant.call_service(
         a["domain"], a["service"], a["entity_id"], a.get("data") or {}
     ),
+    "home.weather": lambda a: home_assistant.weather(a.get("entity_id")),
     "calendar.list_events": lambda a: caldav_client.list_events(
         a["member_sub"], a.get("lookahead_minutes", 90), a.get("horizon_days", 14)
     ),
