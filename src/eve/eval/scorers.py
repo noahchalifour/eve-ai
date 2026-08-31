@@ -1,13 +1,13 @@
 """Scoring one replayed item.
 
 Three of the five scorers are exact comparisons and cost nothing. The fourth
-needs a model, and it runs on REFLEX - the metered Gemini route - because every
-other tier is a subscription proxy sharing a max_budget of 20 per 30 days with
-Noah's own work (eval design 6.1).
-
-    ponytail: REFLEX-tier judge, a weak model on a narrow question. If the
-    spot-check agreement in `eve-eval run`'s output falls below ~85%, move the
-    tier below to DEEP and accept the budget cost.
+needs a model, and it runs on DEEP - a subscription-proxy ChatGPT route
+sharing a 30-day budget with Noah's own work - because REFLEX's free-tier
+Gemini quota (15 requests/minute) could not survive one real `eve-eval run`:
+the 2026-08-31 run rate-limited 4 of 9 spot-checked judge calls outright
+(`judge unavailable`, see docs/architecture.md's Eval harness section), well
+under the ~85% agreement bar. Moved per eval design 6.1's own contingency;
+accept the budget cost.
 """
 
 from __future__ import annotations
@@ -48,7 +48,15 @@ async def judge_assertion(assertion: str, response: str) -> Judgement:
     posture eve_ambient/filter.py takes for the same reason: retrying a
     response that will never come back different costs the same outage twice."""
     try:
-        model = get_model(Tier.REFLEX).with_structured_output(Judgement)
+        # method="function_calling": DEEP is a `chatgpt/*` model, so get_model
+        # builds it with use_responses_api=True (models.py); the default
+        # method="json_schema" structured-output path returns a bare text
+        # message with no `parsed` field through this LiteLLM proxy (verified
+        # 2026-08-31), so every judge call failed the same way. Tool-calling
+        # goes through a different, working code path.
+        model = get_model(Tier.DEEP).with_structured_output(
+            Judgement, method="function_calling"
+        )
         result = await model.ainvoke(
             [HumanMessage(_JUDGE_PROMPT.format(assertion=assertion, response=response))]
         )
