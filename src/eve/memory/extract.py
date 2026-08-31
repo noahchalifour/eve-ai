@@ -147,7 +147,10 @@ def _render_candidates(memories: list) -> str:
     )
 
 
-def _last_exchange(messages: list) -> tuple[str, str]:
+def last_exchange(messages: list) -> tuple[str, str]:
+    """The last thing the member said and the last thing Eve said, as plain
+    strings. Public because `eve.suggest` reads the same pair; one owner so
+    the two cannot drift."""
     human = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
     )
@@ -226,7 +229,7 @@ async def _run_extraction(state: dict, config: RunnableConfig) -> None:
     member = state["member"]
     thread_id = config.get("configurable", {}).get("thread_id")
     run_id = config.get("configurable", {}).get("run_id")
-    human, ai = _last_exchange(state["messages"])
+    human, ai = last_exchange(state["messages"])
     if not human:
         return
 
