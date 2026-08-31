@@ -15,11 +15,13 @@ It is an observability signal read in Langfuse, not a behavioural contract.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage
 
 from eve import suggest as suggest_mod
+from eve.memory.types import Memory, MemoryBundle
 
 
 def test_clean_keeps_good_suggestions_in_order():
@@ -234,9 +236,13 @@ async def test_an_empty_result_still_emits_a_frame(monkeypatch):
 
 
 async def test_the_node_is_safe_without_a_custom_stream_consumer(monkeypatch):
-    """`stream_writer` defaults to `_no_op_stream_writer`
-    (langgraph/runtime.py:206), so the node needs no branch - but the graph
-    calls it under plain `ainvoke` in eval and in tests, so pin it."""
+    """A direct call outside a runnable context - exactly what this test
+    does - makes `get_stream_writer()` raise `RuntimeError` (it calls
+    `get_config()`, which raises outside a runnable context). `_emit` catches
+    that and still returns the state channel value, so the node needs no
+    branch of its own. Inside a real graph node the writer instead defaults
+    to `_no_op_stream_writer` (langgraph/runtime.py:206) when there is no
+    `custom` stream consumer."""
     _install(monkeypatch, FakeModel(
         result=suggest_mod.Suggestions(suggestions=["Yes"])
     ))
@@ -306,3 +312,82 @@ async def test_a_skip_still_clears_the_previous_turns_chips(monkeypatch):
 
     assert result == {"suggestions": []}
     assert written == [{"suggestions": []}]
+
+
+async def test_a_state_missing_member_or_messages_gets_no_chips(monkeypatch):
+    """A run whose input state omits `member`/`messages` must degrade to no
+    chips, not raise a KeyError out of the node - and still return a list
+    (not `{}`), so the previous turn's chips are cleared rather than left
+    standing."""
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    assert await suggest_mod.suggest({}, {}) == {"suggestions": []}
+
+
+async def test_a_missing_member_with_a_real_exchange_gets_no_chips(monkeypatch):
+    """Messages present, so the ambient/empty-human skip does not fire, but
+    `member` missing: `_render` KeyErrors on `member['name']`, which the
+    existing try/except around model preparation converts to no chips rather
+    than letting the KeyError escape the node."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    state = {"messages": [HumanMessage("lights off"), AIMessage("Which ones?")]}
+
+    assert await suggest_mod.suggest(state, {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+def _memory(layer: str, content: str) -> Memory:
+    now = datetime(2026, 8, 31)
+    return Memory(
+        id=f"mem-{layer}",
+        layer=layer,
+        scope_kind="member",
+        scope_id="sub-noah",
+        kind="fact",
+        subject=None,
+        content=content,
+        confidence=1.0,
+        salience=1.0,
+        created_at=now,
+        last_seen_at=now,
+    )
+
+
+async def test_the_prompt_carries_profile_and_rules_but_not_household_or_episodic(monkeypatch):
+    """`_render_memory` narrows the injected bundle to `profile` + `rules` -
+    deliberate, since the design doc names the rendered bundle as the
+    prompt-injection surface. Pin the narrowing so a later widening (e.g.
+    adding `household`/`episodic`) is not silent."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    memory: MemoryBundle = {
+        "profile": [_memory("profile", "PROFILE_MARKER likes tea in the morning")],
+        "household": [_memory("household", "HOUSEHOLD_MARKER quiet hours after 9pm")],
+        "episodic": [_memory("episodic", "EPISODIC_MARKER asked about the thermostat")],
+        "rules": [_memory("rule", "RULES_MARKER always confirm before locking doors")],
+        "digest": None,
+        "vector_used": False,
+        "latency_ms": 0.0,
+    }
+
+    await suggest_mod.suggest(_state(memory=memory), {})
+
+    assert "PROFILE_MARKER" in model.prompt
+    assert "RULES_MARKER" in model.prompt
+    assert "HOUSEHOLD_MARKER" not in model.prompt
+    assert "EPISODIC_MARKER" not in model.prompt
+
+
+async def test_a_model_factory_failure_yields_no_chips(monkeypatch):
+    """`get_model` raising - a realistic startup failure, e.g. a missing
+    LiteLLM key - must degrade to no chips like every other failure path
+    here."""
+    def factory(_tier):
+        raise RuntimeError("no LiteLLM key configured")
+
+    monkeypatch.setattr(suggest_mod, "get_model", factory)
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}

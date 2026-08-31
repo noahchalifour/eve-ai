@@ -236,11 +236,16 @@ helper that both emits it and returns it, so the two paths cannot drift.
 get_stream_writer()({"suggestions": [...]})
 ```
 
-Called unconditionally, no guard: `stream_writer` defaults to
-`_no_op_stream_writer` (`langgraph/runtime.py:206,288`), so this is inert under
-`ainvoke` with no `custom` stream mode, including in tests and eval replay.
-Aegra forwards the `custom` channel (`aegra_api/services/event_streaming/protocol.py:23`,
-`session.py:218,346`).
+Called unconditionally, no guard, but two distinct cases sit behind that:
+inside a real graph node with no `custom` stream consumer, `stream_writer`
+defaults to `_no_op_stream_writer` (`langgraph/runtime.py:206,288`), so the
+call is inert. Called outside a runnable context - e.g. a direct
+`await suggest(...)` in a unit test - `get_stream_writer()` instead raises
+`RuntimeError`, since it calls `get_config()` internally; `_emit` catches
+that specifically (logged at `debug`, not `warning`) and still returns the
+state-channel value below. Either way the node completes and eval replay
+sees no side effect. Aegra forwards the `custom` channel
+(`aegra_api/services/event_streaming/protocol.py:23`, `session.py:218,346`).
 
 **2. `suggestions` state channel — the stock LangGraph contract.**
 

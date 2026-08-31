@@ -104,23 +104,30 @@ def _render(member: dict, human: str, ai: str, memory: MemoryBundle | None) -> s
     )
 
 
-def _emit(chips: list[str], span) -> dict:
+def _emit(chips: list[str], span: trace.Span) -> dict:
     """The ONE exit. Two delivery paths - the `custom` stream frame the
     Flutter client consumes, and the state channel stock SDK clients and
     `GET /threads/{id}/state` read - so they must be written in one place or
     they will eventually disagree.
 
-    `get_stream_writer()` is called unconditionally: it defaults to
-    `_no_op_stream_writer` (langgraph/runtime.py:206), so this is inert under
-    `ainvoke` with no `custom` stream mode.
+    `get_stream_writer()` is called unconditionally. Inside a graph node it
+    defaults to `_no_op_stream_writer` (langgraph/runtime.py:206) when there
+    is no `custom` stream consumer, so this is inert there. Called outside a
+    runnable context - which is exactly what a direct `await suggest(...)` in
+    a test does - `get_stream_writer()` raises `RuntimeError`, which is
+    caught below and logged quietly rather than as a warning.
     """
     span.set_attribute("eve.suggest.count", len(chips))
     try:
         get_stream_writer()({"suggestions": chips})
+    except RuntimeError:
+        # No runnable context (e.g. a direct call in a test). Expected, not
+        # a bug - the state channel is still written below.
+        logger.debug("no runnable context to emit the suggestions frame")
     except Exception:
         # Delivering chips must not be able to fail a turn. A writer that
-        # raises (no runtime context, a future langgraph change) still leaves
-        # the state channel written below.
+        # raises for some other reason (a future langgraph change) still
+        # leaves the state channel written below.
         logger.warning("could not emit the suggestions frame", exc_info=True)
     return {"suggestions": chips}
 
@@ -129,8 +136,13 @@ async def suggest(state: EveState, config: RunnableConfig) -> dict:
     """Chips for the turn that just finished. Never raises; every failure is
     an empty list."""
     with _tracer.start_as_current_span("eve.suggest") as span:
-        human, ai = last_exchange(state["messages"])
-        member = state["member"]
+        # `.get(...) or ...`, not `state[...]`: a run whose input omits
+        # `member` or `messages` must degrade to no chips, not raise out of
+        # the node before the span has recorded anything. An empty `member`
+        # then KeyErrors inside `_render`, which the `try` below already
+        # converts to `_emit([], span)`.
+        human, ai = last_exchange(state.get("messages") or [])
+        member = state.get("member") or {}
 
         # Ordered cheapest-first, and all before the model is even
         # constructed: each of these saves a REFLEX call, and the ambient one
