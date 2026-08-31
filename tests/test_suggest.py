@@ -14,6 +14,11 @@ It is an observability signal read in Langfuse, not a behavioural contract.
 
 from __future__ import annotations
 
+import asyncio
+
+from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage, HumanMessage
+
 from eve import suggest as suggest_mod
 
 
@@ -72,3 +77,167 @@ def test_the_settings_defaults_are_on_and_bounded():
     settings = get_settings()
     assert settings.suggest_enabled is True
     assert settings.suggest_budget_ms == 1500
+
+
+MEMBER = {
+    "sub": "sub-noah",
+    "name": "Noah",
+    "role": "adult",
+    "timezone": "America/Toronto",
+    "permissions": [],
+    "local_time": "2026-08-31 09:00 EDT",
+}
+
+
+def _state(human="turn the lights off", ai="Which ones?", memory=None):
+    return {
+        "messages": [HumanMessage(human), AIMessage(ai)],
+        "member": MEMBER,
+        "system_prompt": "",
+        "memory": memory,
+        "dynamic_tools": [],
+        "suggestions": ["stale chip from the previous turn"],
+    }
+
+
+class FakeModel:
+    """Mirrors the surface `suggest` uses: with_structured_output, with_config,
+    ainvoke. Records what it was handed so tests can assert on the prompt and
+    on TAG_NOSTREAM without a real model."""
+
+    def __init__(self, result=None, error=None, delay=0.0):
+        self._result = result
+        self._error = error
+        self._delay = delay
+        self.prompt = None
+        self.tags = None
+        self.schema = None
+        self.calls = 0
+
+    def with_structured_output(self, schema):
+        self.schema = schema
+        return self
+
+    def with_config(self, **kwargs):
+        self.tags = kwargs.get("tags")
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        self.prompt = messages[0].content
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if self._error:
+            raise self._error
+        return self._result
+
+
+def _install(monkeypatch, model):
+    monkeypatch.setattr(suggest_mod, "get_model", lambda _tier: model)
+    return model
+
+
+async def test_a_good_response_becomes_chips(monkeypatch):
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Just the kitchen", "All of them"])
+    ))
+    result = await suggest_mod.suggest(_state(), {})
+    assert result == {"suggestions": ["Just the kitchen", "All of them"]}
+    assert model.calls == 1
+
+
+async def test_the_call_is_reflex_tier_and_never_streams(monkeypatch):
+    """Without TAG_NOSTREAM this model's tokens go out on the `messages`
+    channel and every client renders them as Eve's reply."""
+    from langgraph.constants import TAG_NOSTREAM
+
+    seen = {}
+    model = FakeModel(result=suggest_mod.Suggestions(suggestions=["Yes"]))
+
+    def factory(tier):
+        seen["tier"] = tier
+        return model
+
+    monkeypatch.setattr(suggest_mod, "get_model", factory)
+    await suggest_mod.suggest(_state(), {})
+
+    from eve.models import Tier
+
+    assert seen["tier"] is Tier.REFLEX
+    assert model.tags == [TAG_NOSTREAM]
+    assert model.schema is suggest_mod.Suggestions
+
+
+async def test_the_prompt_carries_the_exchange_and_the_member_name(monkeypatch):
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    await suggest_mod.suggest(_state(human="lights off", ai="Which ones?"), {})
+
+    assert "lights off" in model.prompt
+    assert "Which ones?" in model.prompt
+    assert "Noah" in model.prompt
+
+
+async def test_a_malformed_response_yields_no_chips(monkeypatch):
+    """The call succeeded and returned something unusable. Deterministic dead
+    end - no retry, no raise."""
+    _install(monkeypatch, FakeModel(error=OutputParserException("unknown tool")))
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+
+
+async def test_a_wrong_shaped_response_yields_no_chips(monkeypatch):
+    _install(monkeypatch, FakeModel(result={"suggestions": ["Yes"]}))
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+
+
+async def test_a_transient_failure_yields_no_chips(monkeypatch):
+    _install(monkeypatch, FakeModel(error=RuntimeError("gemini is down")))
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+
+
+async def test_exceeding_the_budget_yields_no_chips(monkeypatch):
+    """The whole point of the budget: a slow REFLEX call must not hold the run
+    open. 0ms budget against any awaited call is the deterministic version of
+    'too slow'."""
+    monkeypatch.setenv("EVE_SUGGEST_BUDGET_MS", "0")
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"]), delay=0.05
+    ))
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+
+
+async def test_the_custom_stream_frame_carries_the_same_list(monkeypatch):
+    """The Flutter client reads `custom`, not state. Both exits come from one
+    helper so they cannot disagree."""
+    written = []
+    monkeypatch.setattr(suggest_mod, "get_stream_writer", lambda: written.append)
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Just the kitchen"])
+    ))
+
+    result = await suggest_mod.suggest(_state(), {})
+
+    assert written == [{"suggestions": ["Just the kitchen"]}]
+    assert result["suggestions"] == written[0]["suggestions"]
+
+
+async def test_an_empty_result_still_emits_a_frame(monkeypatch):
+    """An empty list means 'clear the chips', which a client can only act on
+    if it arrives."""
+    written = []
+    monkeypatch.setattr(suggest_mod, "get_stream_writer", lambda: written.append)
+    _install(monkeypatch, FakeModel(error=RuntimeError("down")))
+
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+    assert written == [{"suggestions": []}]
+
+
+async def test_the_node_is_safe_without_a_custom_stream_consumer(monkeypatch):
+    """`stream_writer` defaults to `_no_op_stream_writer`
+    (langgraph/runtime.py:206), so the node needs no branch - but the graph
+    calls it under plain `ainvoke` in eval and in tests, so pin it."""
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Yes"])
+    ))
+    assert await suggest_mod.suggest(_state(), {}) == {"suggestions": ["Yes"]}
