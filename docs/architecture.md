@@ -225,7 +225,13 @@ without any of them holding a third-party credential directly:
   `permissions.py` enforces `family.yaml` permissions once at that
   specialist boundary and again inside `mail.py`'s `send_email`, which needs
   `mail.send` on top of the coarser `mail.read`/`mail.send` check on
-  `ask_mail` itself.
+  `ask_mail` itself. Each specialist's inner loop gets
+  `EVE_SPECIALIST_MAX_ITERATIONS` (6) model+tool rounds, converted to
+  LangGraph supersteps by `base.py`'s `_superstep_limit` — `create_agent`
+  spends two per round, so passing the setting through raw bought 2 rounds
+  and raised `GraphRecursionError` on the third. Exhausting the budget
+  returns an English sentence, the inner-loop twin of `graph.py`'s
+  `_LOOP_EXHAUSTED`.
 - **`src/eve/skills/`** — `search_skills` (`search.py`) is the one tool that
   turns Eve's fixed toolset into an extensible one: it matches a query
   against authored SKILL.md procedures (`registry.py`) and registered MCP

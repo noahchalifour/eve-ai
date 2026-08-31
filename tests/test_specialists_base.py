@@ -2,6 +2,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from eve.specialists.base import build_specialist
+from eve.settings import get_settings
 from eve.state import EveState
 from tests.conftest import FakeToolCallingModel
 
@@ -126,3 +127,62 @@ async def test_allows_any_of_a_permission_list():
     state = {**STATE, "member": member_with_read_only}
     result = await ask.ainvoke({"request": "summarise my inbox", "state": state, "config": CONFIG})
     assert result == "ok"
+
+
+def _tool_calling_model(rounds: int):
+    """A model that emits `rounds` tool calls before answering."""
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "get_widget",
+                    "args": {"name": f"w{i}"},
+                    "id": f"call-{i}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        for i in range(rounds)
+    ]
+    messages.append(AIMessage(content="Done."))
+    return FakeToolCallingModel(messages=iter(messages))
+
+
+def _widget_specialist(rounds: int):
+    return build_specialist(
+        name="home",
+        tools=[get_widget],
+        system_prompt="You manage widgets.",
+        permission="home.control",
+        model_factory=lambda _tier: _tool_calling_model(rounds),
+    )
+
+
+async def test_a_specialist_gets_its_full_iteration_budget_of_tool_rounds():
+    """EVE-15: `specialist_max_iterations` is a count of model+tool rounds,
+    but LangGraph's `recursion_limit` counts SUPERSTEPS, and create_agent
+    spends two per round (`model`, then `tools`). Passing the setting through
+    raw bought 2 rounds, not 6, so any specialist request needing a third
+    tool call - search mail then open it, list accounts then pull
+    transactions - died with GraphRecursionError."""
+    budget = get_settings().specialist_max_iterations
+    result = await _widget_specialist(budget).ainvoke(
+        {"request": "look up every widget", "state": STATE, "config": CONFIG}
+    )
+    assert result == "Done."
+
+
+async def test_exhausting_the_inner_loop_answers_a_sentence_not_a_traceback():
+    """The outer loop has `_LOOP_EXHAUSTED` for this; the inner loop leaked
+    `error: GraphRecursionError: Recursion limit of 6 reached...` into the
+    conversation as a tool message, which Eve then relayed to the member
+    verbatim (EVE-15). Whatever the budget is, blowing it has to read as
+    English."""
+    over = get_settings().specialist_max_iterations + 1
+    result = await _widget_specialist(over).ainvoke(
+        {"request": "look up every widget", "state": STATE, "config": CONFIG}
+    )
+    assert "GraphRecursionError" not in result
+    assert "recursion" not in result.lower()
+    assert "home" in result
