@@ -113,15 +113,24 @@ New module `src/eve_computer/acp/`:
 
 ### The agent registry
 
-Three entries, one shape. No plugin system, no abstract base class.
+Three entries, one shape: a model name in, a command and environment out. No
+plugin system, no abstract base class.
 
 ```python
 AGENTS = {
-    "claude":   (["claude-code-acp"], {"ANTHROPIC_BASE_URL": ..., "ANTHROPIC_API_KEY": ...}),
-    "codex":    (["codex-acp"],       {"LITELLM_API_KEY": ...}),
-    "opencode": (["opencode", "acp"], {"LITELLM_API_KEY": ...}),
+    "claude":   lambda m: (["claude-code-acp"], {"ANTHROPIC_BASE_URL": ..., "ANTHROPIC_MODEL": m, ...}),
+    "codex":    lambda m: (["codex-acp", "--model", m], {"LITELLM_API_KEY": ...}),
+    "opencode": lambda m: (["opencode", "acp", "--model", m], {"LITELLM_API_KEY": ...}),
 }
 ```
+
+**Codex is the default agent** when a member names none. It rides the
+subscription, so the common case costs nothing in dollars, and naming Claude
+Code is one word away when someone wants it.
+
+**The box does not own the model list.** It takes a model name and passes it to
+the subprocess. Validation and choice happen in Eve's container, for the reason
+in the next section.
 
 Claude Code and Codex reach ACP through the official adapters
 (`agentclientprotocol/claude-agent-acp`, `agentclientprotocol/codex-acp`).
@@ -146,12 +155,63 @@ existing `bootstrap.sh` from templates baked into the image — the same
 self-healing-across-reschedule philosophy as `packages.txt`. A wiped PVC
 recovers model routing with no human involved.
 
-**This is a deliberate cost, and it deserves to be named.** The `eve-computer`
-design chose Codex specifically because it *"rides the subscription at zero
-metered spend"*. Routing it through LiteLLM abandons that: delegated coding is
-now metered spend against the box's LiteLLM key. EVE-4 asks for this
-explicitly, and the key's own budget remains the hard ceiling, enforced by
-LiteLLM rather than by anything running on the machine.
+**Two things about LiteLLM routing that are easy to get backwards.**
+
+*Codex through LiteLLM still rides the subscription.* LiteLLM fronts the
+ChatGPT/Codex sign-in itself (ADR 0004: it fronts two subscription proxies and
+no metered general-purpose API), so pointing `codex-acp` at LiteLLM keeps
+`eve-computer`'s *"zero metered spend"* property rather than abandoning it.
+The same is true of OpenCode pointed at a `chatgpt/*` model. The one agent
+with real metered spend is **Claude Code**, whose `ANTHROPIC_BASE_URL` path
+resolves to `anthropic/claude-sonnet-5` on the metered `anthropic_api_key`.
+
+*Codex must not be pointed at a `-codex` model name.* ADR 0004's live probe
+found `gpt-5.3-codex` refused outright — *"The 'gpt-5.3-codex' model is not
+supported when using Codex with a ChatGPT account."* `codex-acp` targets
+`gpt-5.6-sol`, the same model `Tier.CODE` already uses. Setting this wrong
+fails at the first prompt, not silently, which is the one mercy here.
+
+**The cost that actually needs watching is rate limits, not dollars.**
+`models.py` is explicit that `REFLEX` was moved off the ChatGPT credential so
+it would not *"consume the rate limits Noah uses for his own work"*, and
+`tests/test_models.py` carries the same worry in a comment. A coding agent
+running for thirty minutes is a far heavier consumer of that subscription than
+any chat turn Eve takes. The session bounds below are the throttle, and the
+choice of default agent (next section) is the other half of it.
+
+### Model selection is per task, and `models.py` still owns the names
+
+The model is not pinned. Eve picks one per session from the goal and from
+whatever the member has said they want, because "add a log line" and "port the
+extraction pipeline" do not deserve the same model.
+
+**`src/eve/models.py` gains `CODING_MODELS`** — per agent, the candidate models
+and a one-line note on when each is for. That file declares itself *"the ONLY
+place model identifiers appear"*, and a per-task choice is not a licence to
+scatter model names into a tool docstring or onto the box. `delegate_coding_task`
+enumerates from `CODING_MODELS`; the box receives a name and passes it through.
+
+| Agent | Candidates | Spend |
+|---|---|---|
+| `codex` | `chatgpt/gpt-5.6-sol` / `-terra` / `-luna` — flagship, balanced, fast | subscription |
+| `opencode` | the same three | subscription |
+| `claude` | `anthropic/claude-sonnet-5` | metered |
+
+**Eve chooses inline, in the turn she is already taking.** No routing model
+call, no benchmark table, no scoring function — she has the goal in front of her
+and the candidate notes in the tool schema. This is the same thing she already
+does choosing which specialist to ask.
+
+**Member preferences need no new machinery.** They are already memory: *"use
+the fast one for small fixes"* is a Phase 5a authored rule, revocable from the
+existing CLI, and it reaches this decision through the recall snapshot the
+session takes at creation. Nothing here has its own preference store.
+
+**Invalid model names are caught before they leave the container.**
+`dispatch.py` validates the choice against `CODING_MODELS` for the chosen agent
+and falls back to that agent's default. A hallucinated name would otherwise
+kill the session at its first prompt, several minutes after Eve promised the
+member she was on it.
 
 ### Worktrees
 
@@ -233,9 +293,10 @@ tools), `supervisor.py` (the control loop).
 
 ### Three tools
 
-- `delegate_coding_task(repos: list[str], goal: str, agent: str | None)` —
-  permission check, create the session, return *"I'm on it."* `agent` defaults
-  to a configured default; Eve sets it only when a member names one.
+- `delegate_coding_task(repos: list[str], goal: str, agent: str | None, model: str | None)` —
+  permission check, validate the model, create the session, return *"I'm on
+  it."* `agent` defaults to Codex; Eve sets it only when a member names one.
+  `model` she picks per task, per the section above.
 - `check_coding_session()` — lists live sessions with short ids, repos, goal,
   status, and the box's rolling `activity`, so Eve can say what a session is
   doing right now.
@@ -398,20 +459,23 @@ unchanged.
 1. A member with `code.delegate` asks Eve for a code change; she dispatches,
    answers immediately, and later reports a pull request link in her own voice.
 2. All three agents — Claude Code, Codex, OpenCode — complete a session, and
-   every one of them is provably served by LiteLLM.
-3. An agent asks a clarifying question mid-session; Eve answers it herself, out
+   every one of them is provably served by LiteLLM. Codex and OpenCode add no
+   metered spend.
+3. Eve picks different models for a one-line fix and a multi-file refactor, and
+   an authored rule stating a preference changes what she picks.
+4. An agent asks a clarifying question mid-session; Eve answers it herself, out
    of household context, without involving the member.
-4. A member says "tell it to use httpx instead"; that lands in the agent's next
+5. A member says "tell it to use httpx instead"; that lands in the agent's next
    prompt and changes the outcome.
-5. An agent asks something Eve genuinely cannot answer; the session parks, the
+6. An agent asks something Eve genuinely cannot answer; the session parks, the
    member is asked, their answer resumes the same session.
-6. Two sessions run in parallel on the same repository without colliding, and
+7. Two sessions run in parallel on the same repository without colliding, and
    neither blocks a GUI task on `/tasks`.
-7. A session spanning two repositories produces two pull requests on one branch
+8. A session spanning two repositories produces two pull requests on one branch
    name.
-8. A wiped PVC recovers all three model-routing config files from
+9. A wiped PVC recovers all three model-routing config files from
    `bootstrap.sh` with no human involved.
-9. The `eve-computer` unreachability test still passes.
+10. The `eve-computer` unreachability test still passes.
 
 ## Consequences for existing documents
 
@@ -424,8 +488,11 @@ unchanged.
 - **`docs/architecture.md`** — the session lane beside the task lane, the ACP
   module map, and the supervisor loop in `eve-ambient`.
 - **`family.yaml`** — `code.delegate`, granted to Noah.
-- **ADR 0004** — an amendment noting that the coding harnesses run on LiteLLM
-  rather than the ChatGPT sign-in, and what that costs.
+- **`src/eve/models.py`** — `CODING_MODELS`, keeping this file the sole owner
+  of model identifiers.
+- **ADR 0004** — an amendment noting that the coding harnesses are a new and
+  much heavier consumer of the ChatGPT subscription's rate limits, alongside
+  the `-codex` model-name refusal that `codex-acp` has to route around.
 - **The `release-eve` skill** — no new image, but `eve-computer`'s image grows
   four binaries.
 
@@ -441,6 +508,9 @@ unchanged.
 - **No merging.** Eve opens pull requests. A human merges them, forever.
 - **No repo-less scratch sessions.** Every session gets at least one repo and
   at least one worktree. Making `repos` optional later is one branch.
-- **No agent auto-selection.** Eve uses the configured default unless a member
-  names one. No routing heuristic, no benchmark table, no "best agent for this
-  task" model call.
+- **No agent auto-selection.** Codex unless a member names another. The *model*
+  is chosen per task, but the agent is not: no routing heuristic, no benchmark
+  table, no "best harness for this task" model call. If Claude Code turns out
+  to be worth its metered spend by default, that is a one-line change once
+  there is evidence, and the eval harness is where that evidence would come
+  from.
