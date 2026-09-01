@@ -1,6 +1,6 @@
 [project]
 name = "eve"
-version = "0.6.0"
+version = "0.7.0"
 description = "Eve, a family personal assistant graph served by Aegra"
 readme = "README.md"
 authors = [
