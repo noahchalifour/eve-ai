@@ -17,10 +17,12 @@ for its own design and definition of done.
 ## The graph
 
 ```
-START -> load_context -> recall -> eve <-> tools -> extract -> END
+                          ┌─> ui_action ────────────────────────────────> END
+START -> load_context ────┤
+                          └─> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
 ```
 
-Five nodes, wired in `src/eve/graph.py`:
+Eight nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
@@ -47,10 +49,45 @@ Five nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
-- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed.
-  The `REFLEX` model produces structured add, reinforce, supersede, and forget
-  operations; valid writes, digest refresh, embeddings, and cap eviction are
-  applied best-effort so extraction failure cannot erase a completed answer.
+- **`ui_action`** (`src/eve/ui/actions.py`) answers a tap on a rendered
+  dynamic surface. The client re-runs the turn with the user message's content
+  replaced by an `<assistant-ui-action>` envelope, so `load_context` routes it
+  here instead of to `recall`: the branch calls no model, re-reads the
+  forecast from Home Assistant rather than trusting the envelope's `data`,
+  emits one `patch` on the `custom` stream, and replaces the raw envelope in
+  the transcript with a readable sentence. It is the one place in Eve where a
+  failed external call raises rather than returning a string — see
+  [ADR 0014](adr/0014-dynamic-ui-is-server-built.md).
+- **`persist_ui`** (`src/eve/ui/persist.py`) copies whatever surfaces the turn
+  emitted into the final AI message as a portable `<assistant-ui>` frame.
+  `custom` frames are streamed and never stored, and the client replays a
+  reopened session from `values.messages` alone, so without this a card
+  vanishes on relaunch. The frame text is never streamed live (a node's
+  message update is not an LLM token event) and is stripped from what the
+  member sees and from TTS on every path.
+- **`extract`** (`src/eve/memory/extract.py`) runs after the answer has streamed,
+  and hands its work to a background task rather than doing it in the graph — a
+  run is complete only at `END`, so an in-graph extraction held the client's
+  stream open for a model call plus writes. The `REFLEX` model produces
+  structured add, reinforce, supersede, and forget operations; valid writes,
+  digest refresh, embeddings, and cap eviction are applied best-effort so
+  extraction failure cannot erase a completed answer. The next turn on the
+  thread joins the pending task in `recall` before reading memory, so detaching
+  costs no ordering — see [ADR 0012](adr/0012-extraction-is-detached-and-joined.md).
+  That guarantee is per-process (the pending-task registry is in-memory, not
+  shared), so it requires `eve` to run as a single instance — a second
+  replica or a rolling deploy can serve one stale-memory turn per replica
+  transition, the same class of risk documented for `eve-ambient` below.
+- **`suggest`** (`src/eve/suggest.py`) makes one `REFLEX`-tier
+  structured-output call and produces 2-4 short first-person utterances the
+  member might send next. It runs AFTER `extract` deliberately: with
+  background extraction (the default) `extract` returns as soon as it
+  registers its task, so the two REFLEX calls overlap and the turn pays
+  `max()` rather than `sum()`. Every failure - timeout, malformed response,
+  transient error - yields an empty list rather than raising, so a member
+  never loses a reply to it. Ambient-driven turns, the loop-exhausted reply,
+  and a turn with no human message are skipped before the model is
+  constructed. See ADR 0013.
 
 The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
@@ -92,6 +129,13 @@ src/eve/
     materialize.py  # turn DynamicToolSpec into callable tool at model call time
     authoring.py    # write_skill tool (Phase 5a)
     cli.py          # eve-skill script (Phase 5a)
+  ui/
+    protocol.py     # the assistant-ui/1.0 contract, its validator, the portable frame
+    stream.py       # client capabilities in, custom-mode frames out
+    weather.py      # the weather surface, built from HA's forecast; no model output
+    tools.py        # show_weather: the model's whole share of the feature
+    actions.py      # inbound action envelope + the model-free ui_action node
+    persist.py      # copy this turn's surfaces into the AI message for history
   eval/
     types.py        # DatasetItem, ItemResult, RunScore -- shapes only
     datasets.py     # build the two dataset shapes from Postgres and the golden file
@@ -130,8 +174,10 @@ src/eve_ambient/
 The import graph is acyclic: `settings` and `family` depend on nothing
 internal. Within `memory/`, dependency order is `types` -> `ranking`; `settings`
 -> `db` and `embed`; `db`/`embed`/`types` -> `store`; and
-`embed`/`ranking`/`store`/`types` -> `recall`, while `extract` depends on
-`embed`, `store`, `types`, `models`, and `settings`. `context` depends on
+`embed`/`ranking`/`store`/`types`/`pending` -> `recall`, while `extract` depends
+on `embed`, `store`, `types`, `pending`, `models`, and `settings`. `pending`
+imports nothing internal, which is what lets both `recall` and `extract` depend
+on it without a cycle. `context` depends on
 `family`, `settings`, `state`, and memory types; `models` depends on `settings`;
 `graph` depends on `context`, `memory`, `models`, `state`, and, since Phase 5c,
 `eve.tools_authoring.propose` (`propose_tool` is bound alongside the
@@ -214,7 +260,13 @@ without any of them holding a third-party credential directly:
   `permissions.py` enforces `family.yaml` permissions once at that
   specialist boundary and again inside `mail.py`'s `send_email`, which needs
   `mail.send` on top of the coarser `mail.read`/`mail.send` check on
-  `ask_mail` itself.
+  `ask_mail` itself. Each specialist's inner loop gets
+  `EVE_SPECIALIST_MAX_ITERATIONS` (6) model+tool rounds, converted to
+  LangGraph supersteps by `base.py`'s `_superstep_limit` — `create_agent`
+  spends two per round, so passing the setting through raw bought 2 rounds
+  and raised `GraphRecursionError` on the third. Exhausting the budget
+  returns an English sentence, the inner-loop twin of `graph.py`'s
+  `_LOOP_EXHAUSTED`.
 - **`src/eve/skills/`** — `search_skills` (`search.py`) is the one tool that
   turns Eve's fixed toolset into an extensible one: it matches a query
   against authored SKILL.md procedures (`registry.py`) and registered MCP
@@ -381,7 +433,7 @@ gives Eve a persistent Linux desktop: her own accounts, a browser, a shell,
 and internet access, behind a task API she is dispatched to and polled for -
 never called back from. See
 [`docs/superpowers/specs/2026-08-28-eve-computer-design.md`](superpowers/specs/2026-08-28-eve-computer-design.md)
-and [ADR 0012](adr/0012-granted-identity-vs-authored-capability.md) for the
+and [ADR 0015](adr/0015-granted-identity-vs-authored-capability.md) for the
 full design and the boundary argument.
 
 **Dispatch.** `dispatch_computer_task` (`src/eve/computer/dispatch.py`) is a
@@ -774,6 +826,75 @@ across instances; the poll loop and the webhook handler both run in one
 process. A second replica would poll and push the same signals again and
 double-count the daily cap in `eve_ambient_notice`.
 
+## Reply suggestions
+
+`src/eve/suggest.py`, one node, one `REFLEX` call, no storage of its own.
+
+**What it produces.** 2-4 candidate next utterances *by the member*, first
+person, short enough to render in a pill: "Yes, do it", "What about
+tomorrow?", "Only the kitchen ones". A chip is text the member might have
+typed, so tapping one produces an ordinary `HumanMessage` and there is no
+inbound protocol to learn. The wire type is `list[str]` - no ids, no types,
+no actions.
+
+**Validation.** At most 4 entries, each at most 80 characters after trimming,
+empties dropped. There is no minimum: a response validating down to one good
+chip ships that one chip. Validation takes `object`, not `list[str]`, so a
+provider or langchain change that returns a bare dict produces no chips
+rather than an `AttributeError` inside the graph.
+
+**Delivery, two exits from one helper.** A `{"suggestions": [...]}` frame on
+LangGraph's `custom` stream channel, and the `suggestions` channel of
+`EveState`. The frame is what the Flutter client consumes; the state channel
+serves `GET /threads/{id}/state`, `stream_mode="values"`/`"updates"`, and
+survives a reload. Both are written in one place so they cannot drift.
+
+An empty list is always emitted rather than omitted. A turn that skips chip
+generation must CLEAR the previous turn's chips - otherwise a client renders
+continuations of a conversation that has moved on. This is also why the
+`suggestions` channel has a reducer: `_last_write_wins` in `src/eve/state.py`,
+shared with `dynamic_tools`, replaces rather than appends, and a reducer is
+what gives the channel its `[]` default at all.
+
+**`TAG_NOSTREAM` is mandatory** on the call, as it is on every REFLEX call in
+`eve/memory/extract.py`. Without it the suggestion model's tokens go out on
+the `messages` channel and every client renders them as Eve's reply.
+
+**Settings.**
+
+| Setting | Default | Effect |
+|---|---|---|
+| `EVE_SUGGEST_ENABLED` | `true` | Off skips the call entirely and clears chips. Default-on, unlike `EVE_AMBIENT_ENABLED` and `EVE_SANDBOX_ENABLED`, because this subsystem reaches nothing outside the process and writes nothing durable. |
+| `EVE_SUGGEST_BUDGET_MS` | `1500` | Ceiling on how long the run stays open after Eve's last token. Exceeded means no chips, not a delayed turn. |
+
+**Skips.** No chips for an ambient-driven turn (not a member speaking, and the
+reply goes to ntfy rather than a chat surface - this also saves a REFLEX call
+per household signal), for the loop-exhausted reply, or for a turn with no
+human message. All three are checked before the model is constructed.
+
+**Observability.** `eve.suggest.outcome` is the one number to look at:
+`ok` / `empty` / `budget` / `malformed` / `error` / `skipped` / `disabled`,
+plus `eve.suggest.count` and `eve.suggest.latency_ms` (set on every path
+where the model call actually happened, including `budget` and the failure
+outcomes). Because every failure degrades to an empty list, total failure is
+invisible without this attribute - chips simply stop appearing and nothing
+raises. A rising `budget` fraction means the budget is too tight or the tier
+too slow; `eve.suggest.latency_ms` is what shows that *before* `outcome`
+turns to `budget`, not after.
+
+**Eval.** `eve/eval/replay.py` injects a no-op through `build_graph`'s
+`suggest_fn` seam, so replays neither pay for chips nor score them.
+
+**The Flutter client cannot see this yet.** It requests only `messages` and
+`custom` stream modes, reads only `values.messages` when restoring a thread,
+and its `custom` handler accepts only the `assistant_ui` key - so the frame
+this node emits is dropped on the floor. The client change is tracked as
+Linear OPENA-14. Chips are deliberately NOT modelled as an `assistant-ui/1.0`
+surface: that protocol allowlists `actionId` to exactly
+`weather.rangeChanged`, and a tapped surface button sends an
+`<assistant-ui-action>` JSON envelope as the user text rather than a plain
+member utterance.
+
 ## Eval harness
 
 Phase 5b answers the question Phase 5a raises — is the rule set Eve writes
@@ -815,21 +936,60 @@ rules have turned on themselves — the signal to reach for `eve-skill revoke`
 or Phase 5b's own hygiene pass. Suppression is a parameter the eval package
 passes to `build_system_prompt`; production code paths never set it.
 
-**The judge runs on `REFLEX`**, not `DEEP` or `VOICE`. `assertion_pass`
-needs a model to grade a natural-language assertion against a response, and
-every tier except `REFLEX` is a subscription proxy sharing one `max_budget`
-with Noah's own work (see the tier table above) — a judge on any of them
-would make the harness the most expensive thing in the deployment for a
-narrow classification task flash-lite is already good at. Every other
-scorer (`notify_agreement`, `notify_precision`, `audience_exact`) is an
-exact comparison against a recorded verdict or a recorded reply and costs
-nothing. `eve-eval run` prints a spot-check of ten judged assertions with
-the judge's one-sentence reason so a human can read them; the tier decision —
+**The judge runs on `DEEP`**, not `REFLEX` or `VOICE`. `assertion_pass`
+needs a model to grade a natural-language assertion against a response.
+`REFLEX` — the metered, free-tier Gemini route — was the original choice,
+since every other tier is a subscription proxy sharing one `max_budget` with
+Noah's own work (see the tier table above) and a judge on any of them would
+make the harness the most expensive thing in the deployment for a narrow
+classification task flash-lite is already good at. Every other scorer
+(`notify_agreement`, `notify_precision`, `audience_exact`) is an exact
+comparison against a recorded verdict or a recorded reply and costs nothing.
+
+`eve-eval run` prints a spot-check of up to ten judged assertions with the
+judge's one-sentence reason so a human can read them; the tier decision —
 move to `DEEP` in `scorers.py` if agreement falls below ~85% — is made from
-that reading. **This has not happened yet**: `eve-eval run` has never been
-run against production data, so there is no recorded agreement figure here.
-The first real run's spot-check should be read by hand and the resulting
-percentage recorded in this paragraph.
+that reading. **The first real runs happened on 2026-08-31**, against
+production data via the `eve` pod, in three attempts:
+
+1. On `REFLEX`: of the 9 spot-checked lines (`turns.yaml` has 8 non-canary
+   assertions + 1 canary, so `min(10, len(spot))` capped it there), 4 came
+   back `[FAIL] ...: judge unavailable` — `REFLEX`'s free-tier Gemini quota
+   (15 requests/minute) rate-limited outright, with no fallback model group
+   configured for it. The other 5 produced real verdicts a human agreed
+   with, but 5/9 (56%) is already below the ~85% bar once the rate-limited
+   lines count as failed spot-checks, and a judge that cannot reliably
+   answer at all is disqualifying regardless of accuracy on the calls that
+   land. `rule_delta` that run was `-37.5`, but confounded: the same 4
+   `judge unavailable` calls default to `passed=False`, and excluding them
+   the assertions that *were* judged scored identically to `without-rules`
+   (75%) — the number was mostly measuring `REFLEX`'s rate limit, not the
+   rule set.
+2. Moved the judge to `Tier.DEEP` and re-ran: every one of the 16
+   `judge_assertion` calls failed with `judge returned an unusable
+   response: Structured Output response does not have a 'parsed' field nor
+   a 'refusal' field` — `with_structured_output`'s default `method=
+   "json_schema"` doesn't work through this LiteLLM proxy for a
+   `use_responses_api=True` model (`models.py`); every other
+   `with_structured_output` caller in the codebase runs on `REFLEX`
+   (chat-completions, not responses), so this combination had never been
+   exercised before. `assertion_pass` was 0.0% on both arms and `rule_delta`
+   a meaningless `+0.0`.
+3. Added `method="function_calling"` to the `with_structured_output` call
+   (verified first with a standalone call before spending another full run)
+   and re-ran: clean, no judge errors. **Spot-check agreement: 8/9 (89%)** —
+   a human agreed with 8 of the judge's 9 verdicts on the reasoning given;
+   the one debatable call marked `the-other-member-gets-the-same-treatment`
+   FAIL for citing a technical reason (data source needs reauthorization)
+   rather than a policy refusal, which a stricter reading of the assertion
+   ("does not refuse to answer or treat the question as forbidden") could
+   call PASS. 89% clears the ~85% bar, so `DEEP` + `function_calling`
+   stands. **`rule_delta`: -12.5** (`with-rules` 62.5% vs `without-rules`
+   75%, both /8, a one-assertion swing) — a real, uncounfounded number this
+   time, but thin: `turns.yaml` has only 8 non-canary assertions, so this is
+   not yet strong evidence either way on Phase 5a's rule set. Re-run
+   periodically as the dataset grows before treating a negative `rule_delta`
+   as a verdict on the rules.
 
 **The gate never calls Langfuse.** `eve-eval run` writes every score to
 `eve_eval_run` in Postgres first; publishing a Langfuse dataset run is
@@ -1012,4 +1172,7 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0009 — Eval inputs come from Postgres, not from Langfuse traces](adr/0009-eval-inputs-from-postgres.md)
 - [ADR 0010 — Sandboxed tools are pure functions, and the pod is the boundary](adr/0010-sandboxed-tools-are-pure-functions.md)
 - [ADR 0011 — Eve's migrations use Alembic with a private version table](adr/0011-alembic-with-a-private-version-table.md)
-- [ADR 0012 — A granted identity is not authored credentialed capability](adr/0012-granted-identity-vs-authored-capability.md)
+- [ADR 0012 — Memory extraction is detached from the turn and joined by the next one](adr/0012-extraction-is-detached-and-joined.md)
+- [ADR 0013 — Reply suggestions are a separate REFLEX call](adr/0013-suggestions-are-a-separate-reflex-call.md)
+- [ADR 0014 — Dynamic UI surfaces are built server-side and only triggered by the model](adr/0014-dynamic-ui-is-server-built.md)
+- [ADR 0015 — A granted identity is not authored credentialed capability](adr/0015-granted-identity-vs-authored-capability.md)

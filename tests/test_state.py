@@ -81,3 +81,43 @@ def test_is_ambient_text_handles_an_empty_string():
     from eve.state import is_ambient_text
 
     assert not is_ambient_text("")
+
+
+def test_eve_state_carries_suggestions():
+    from eve.state import EveState
+
+    state: EveState = {
+        "messages": [],
+        "member": {
+            "sub": "sub-noah",
+            "name": "Noah",
+            "role": "adult",
+            "timezone": "America/Vancouver",
+            "permissions": [],
+            "local_time": "2026-08-21 09:00 PDT",
+        },
+        "system_prompt": "",
+        "memory": None,
+        "dynamic_tools": [],
+        "suggestions": ["Yes, do it"],
+    }
+    assert state["suggestions"] == ["Yes, do it"]
+
+
+def test_the_shared_reducer_replaces_rather_than_appends():
+    """Chips describe ONE turn. Appending would accumulate the whole
+    conversation's suggestions, and a client would render chips that were
+    plausible three turns ago."""
+    from eve.state import _last_write_wins
+
+    assert _last_write_wins(["old"], ["new"]) == ["new"]
+    assert _last_write_wins(["old"], []) == []
+
+
+def test_the_loop_exhausted_sentence_has_one_owner():
+    """`suggest` must recognise this reply to skip chips for it, and
+    `graph.py` imports `suggest`, so the literal cannot live in graph.py."""
+    from eve.graph import _LOOP_EXHAUSTED
+    from eve.state import LOOP_EXHAUSTED
+
+    assert _LOOP_EXHAUSTED is LOOP_EXHAUSTED

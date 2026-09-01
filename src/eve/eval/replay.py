@@ -1,8 +1,11 @@
 """Running one dataset item through the real code path.
 
 Real, not reconstructed: shape 1 calls eve_ambient.filter.judge and shape 2
-invokes a compiled Eve graph. The one substitution is `extract`, replaced by a
-no-op - an eval run that writes memory corrupts the behaviour it is measuring.
+invokes a compiled Eve graph. Two substitutions are made, both no-ops:
+`extract`, because an eval run that writes memory corrupts the behaviour it
+is measuring, and `suggest`, because reply chips are not part of what this
+harness scores - substituting it saves a REFLEX call per replayed item
+without changing the answer being evaluated.
 """
 
 from __future__ import annotations
@@ -63,6 +66,12 @@ async def _no_extract(state: dict, config) -> dict:
     return {}
 
 
+async def _no_suggest(state, config):
+    """Eval replays score Eve's answer, not her chips. Same reason
+    `_no_extract` exists: a replay must not pay for work nothing scores."""
+    return {"suggestions": []}
+
+
 async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     """Invoke the real graph for one member message and return the final text.
 
@@ -70,7 +79,7 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     module attribute rather than a graph parameter: the graph builds its prompt
     internally and adding an arm parameter to EveState would make every tool
     taking InjectedState fail validation wherever the key is absent - the same
-    failure mode eve/state.py's _replace_dynamic_tools exists to prevent.
+    failure mode eve/state.py's _last_write_wins exists to prevent.
 
     Mirrors replay_ambient's posture: any failure (an unknown `member` sub, a
     model outage, ...) is reported as `{"error": True}` rather than raised, so
@@ -86,7 +95,9 @@ async def replay_turn(item: DatasetItem, *, suppress_rules: bool) -> dict:
     context.build_system_prompt = patched
     try:
         app = build_graph(
-            model_factory=_model_factory, extract_fn=_no_extract
+            model_factory=_model_factory,
+            extract_fn=_no_extract,
+            suggest_fn=_no_suggest,
         ).compile()
         result = await app.ainvoke(
             {"messages": [HumanMessage(item.input["message"])]},

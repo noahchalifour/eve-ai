@@ -25,7 +25,7 @@ independently useful and gets its own design document:
 This repository was Phase 5c, completing the original five-phase program.
 A sixth deploy, `eve-computer`, now sits beside it - see
 [`docs/superpowers/specs/2026-08-28-eve-computer-design.md`](docs/superpowers/specs/2026-08-28-eve-computer-design.md)
-and [ADR 0012](docs/adr/0012-granted-identity-vs-authored-capability.md).
+and [ADR 0015](docs/adr/0015-granted-identity-vs-authored-capability.md).
 Eve proposes a small Python tool through `propose_tool`; the run
 pauses on LangGraph's `interrupt()` until a human with `tools.author` approves
 or rejects the exact source bytes; an approved tool is discovered by
@@ -49,7 +49,7 @@ Four boundaries are permanent, not phases yet to come:
   with a checkbox, whose blast radius the pod's `NetworkPolicy` bounds to her
   own accounts and compute - which is a different thing from authoring
   capability over the family's credentials. See
-  [ADR 0012](docs/adr/0012-granted-identity-vs-authored-capability.md).
+  [ADR 0015](docs/adr/0015-granted-identity-vs-authored-capability.md).
 - **Eve does not rewrite her own persona.** `prompts/eve.md` is
   human-authored. Phase 5a lets her write rules *under* it; nothing lets her
   edit it.

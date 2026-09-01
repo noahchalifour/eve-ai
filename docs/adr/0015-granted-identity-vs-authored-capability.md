@@ -1,4 +1,4 @@
-# 12. A granted identity is not authored credentialed capability
+# 15. A granted identity is not authored credentialed capability
 
 **Status:** Accepted
 **Date:** 2026-08-28

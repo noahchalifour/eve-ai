@@ -1,0 +1,46 @@
+{
+  "run_id": "eval-2-with_skill",
+  "expectations": [
+    {
+      "text": "Reports the pyproject.toml version (0.1.0)",
+      "passed": true,
+      "evidence": "Table row 'pyproject.toml       v0.1.0' plus a dedicated section '3. pyproject.toml still says 0.1.0 - Known, long-standing, cosmetic - the version file was never wired to the tags.' Matches ground truth (pyproject.toml line 3: version = \"0.1.0\")."
+    },
+    {
+      "text": "Reports the latest eve-ai git tag (v0.2.4)",
+      "passed": true,
+      "evidence": "Table row 'latest git tag       v0.2.4'. Matches ground truth (git tag --sort=-v:refname head = v0.2.4)."
+    },
+    {
+      "text": "Reports the newTag from all three kustomize overlays",
+      "passed": true,
+      "evidence": "'overlay eve v0.2.4 / overlay eve-tools v0.2.4 / overlay eve-ambient v0.2.0 <-- drift'. Matches ground truth for all three overlays."
+    },
+    {
+      "text": "Reports the live image tag of all three running deployments from the cluster",
+      "passed": true,
+      "evidence": "'running eve v0.2.4 / running eve-tools v0.2.4 / running eve-ambient v0.2.0 <-- drift', corroborated by 'Running images match the overlay pins exactly, all three' and 'eve's eve-migrate initContainer is v0.2.4, matching its main container'."
+    },
+    {
+      "text": "Concludes NOT in sync, flagging both eve-ambient v0.2.0 and the stale pyproject 0.1.0",
+      "passed": true,
+      "evidence": "Answer opens '**No.** check-sync.sh exits 1' with 'OUT OF SYNC' in the table, then flags both items as separate numbered findings: '1. eve-ambient is four releases behind (the real drift)' and '3. pyproject.toml still says 0.1.0'."
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "'Read-only check - I changed nothing.' Evidence gathered from check-sync.sh, kubectl get (ArgoCD app status, pod ages/restarts), and git rev-list counts. Remediation is deferred: 'Not for me to run - flagging the shape'."
+    }
+  ],
+  "summary": {
+    "passed": 6,
+    "failed": 0,
+    "total": 6,
+    "pass_rate": 1.0
+  },
+  "timing": {
+    "total_tokens": 57235,
+    "duration_ms": 161412,
+    "total_duration_seconds": 161.4
+  }
+}

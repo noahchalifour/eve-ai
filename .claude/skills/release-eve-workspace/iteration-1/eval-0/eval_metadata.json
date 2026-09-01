@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "eval_name": "diagnose-version-drift",
+  "prompt": "eve-ambient seems to be running an older version than eve and eve-tools in my cluster. What's going on there and what's the right way to fix it? Don't change anything yet, just tell me.",
+  "assertions": [
+    "Names the actual drifted versions: eve-ambient on v0.2.0 vs eve and eve-tools on v0.2.4",
+    "Locates the pin in home-lab-infrastructure at kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml",
+    "Explains why the skew is dangerous (the three images share src/eve code and the eve-tools HTTP contract)",
+    "Prescribes one release bumping all three images together, not an eve-ambient-only bump",
+    "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+  ]
+}

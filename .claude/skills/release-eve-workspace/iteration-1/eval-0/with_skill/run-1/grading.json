@@ -1,0 +1,41 @@
+{
+  "run_id": "eval-0-with_skill",
+  "expectations": [
+    {
+      "text": "Names the actual drifted versions: eve-ambient on v0.2.0 vs eve and eve-tools on v0.2.4",
+      "passed": true,
+      "evidence": "Opening table: 'overlay eve v0.2.4 / overlay eve-tools v0.2.4 / overlay eve-ambient v0.2.0 <-- four releases behind' and matching 'running' rows. Verified against ground truth."
+    },
+    {
+      "text": "Locates the pin in home-lab-infrastructure at kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml",
+      "passed": true,
+      "evidence": "'kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml has exactly one commit in its entire history - 5cfbd11 ... which set newTag: v0.2.0', and the fix block names the same path."
+    },
+    {
+      "text": "Explains why the skew is dangerous (the three images share src/eve code and the eve-tools HTTP contract)",
+      "passed": true,
+      "evidence": "Both couplings covered: 'eve-ambient imports eve.family, eve.settings, eve.models, eve.memory.store, eve.memory.db, eve.state, eve.specialists.permissions and eve.tools_client out of the shared src/eve'; 'On the HTTP side, eve-tools moved a lot ... but the tool contract ambient consumes didn't'. Plus the silent-failure mechanism: 'ambient does not run migrations ... your entire Phase 5b eval dataset just comes back empty. That's the failure mode this drift produces: silent, not loud.'"
+    },
+    {
+      "text": "Prescribes one release bumping all three images together, not an eve-ambient-only bump",
+      "passed": false,
+      "evidence": "The prescribed fix is explicitly an eve-ambient-only pin bump with no release: 'The right way to fix it: A one-line PR in home-lab-infrastructure. No new tag, no rebuild.' and 'newTag: v0.2.0 -> v0.2.4'. It further argues against a coordinated release now: 'Don't fold this into a feature release ... Heal first at v0.2.4'. The all-three-in-one-PR rule appears only as future recurrence prevention ('one branch, one PR, all three overlays edited in the same for loop'), not as the prescribed fix. NOTE: this assertion may be mis-specified - eve and eve-tools are already at v0.2.4, so the heal is necessarily an ambient-only edit."
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "Only read-only operations reported: check-sync.sh, git log over overlay history, gh run view of run 33092186941, GHCR tag listing. States 'Nothing changed; this is read-only' at the top and 'Nothing has been changed. Say the word and I'll open the ambient bump PR.' at the end."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 1,
+    "total": 5,
+    "pass_rate": 0.8
+  },
+  "timing": {
+    "total_tokens": 69756,
+    "duration_ms": 234630,
+    "total_duration_seconds": 234.6
+  }
+}

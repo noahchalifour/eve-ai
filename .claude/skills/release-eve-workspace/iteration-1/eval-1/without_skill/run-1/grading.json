@@ -1,0 +1,51 @@
+{
+  "run_id": "eval-1-without_skill",
+  "expectations": [
+    {
+      "text": "States all three images (eve-ai, eve-tools, eve-ambient) build from one tag and must be bumped together",
+      "passed": false,
+      "evidence": "The build half is stated ('push annotated tag v* -> ghcr.io/noahchalifour/{eve-ai,eve-tools,eve-ambient,eve-sandbox}'), but the bump-together half is explicitly rejected. The Step 4 table marks eve-tools 'Optional' and eve-ambient 'Optional and the most stale ... I'd do it as its own change, not bundled with a streaming fix', and the summary bumps only kubernetes/apps/eve."
+    },
+    {
+      "text": "States the GHCR build fires only on pushing a v* git tag, not on merge to main",
+      "passed": true,
+      "evidence": "Explicit and cited: 'Merging to main does not publish an image (the image job is if: startsWith(github.ref, \\'refs/tags/v\\')), and publishing an image does not update the cluster - the tag is pinned by hand in the infra repo.'"
+    },
+    {
+      "text": "Includes bumping pyproject.toml to the release version",
+      "passed": false,
+      "evidence": "Directly contradicted: 'Note pyproject.toml still says version = \"0.1.0\" and has since v0.1.0 - it is not the source of truth for the release version and nobody bumps it. Leave it alone unless you want to start.' No bump step anywhere in the plan."
+    },
+    {
+      "text": "Says the infra change is a PR in home-lab-infrastructure updating all three overlay newTags",
+      "passed": false,
+      "evidence": "Step 4 is a PR in home-lab-infrastructure, but it edits only 'kubernetes/apps/eve/overlays/homelab/kustomization.yaml' ('git add kubernetes/apps/eve/overlays/homelab/kustomization.yaml'). The other two overlays are listed as optional, and eve-ambient is recommended as a separate change. Only one of three newTags is updated."
+    },
+    {
+      "text": "States ArgoCD auto-syncs on merge, so no manual deploy step is needed",
+      "passed": true,
+      "evidence": "Step 5: 'kubernetes/app-of-apps/eve.yaml has syncPolicy.automated with prune: true and selfHeal: true against targetRevision: HEAD, so merging the infra PR is the deploy. It'll pick it up within the default ~3 min poll.' The argocd app sync is offered only as an impatience shortcut."
+    },
+    {
+      "text": "Includes a verification step comparing running image tags against the release version",
+      "passed": true,
+      "evidence": "Step 6 item 1: 'kubectl get deploy -n eve eve -o jsonpath=... # expect ghcr.io/noahchalifour/eve-ai:v0.2.5'. (Covers only the eve deployment, consistent with its single-app plan.)"
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "'Nothing below has been executed - read it first'. The only slightly unusual operation is a read-only dry run: 'I dry-ran the merge with git merge-tree', which writes nothing. All git branch/tag/push/gh pr create commands appear inside plan blocks only."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 3,
+    "total": 7,
+    "pass_rate": 0.5714
+  },
+  "timing": {
+    "total_tokens": 91427,
+    "duration_ms": 327433,
+    "total_duration_seconds": 327.4
+  }
+}

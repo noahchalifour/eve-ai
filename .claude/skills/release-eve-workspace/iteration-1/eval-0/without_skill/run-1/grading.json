@@ -1,0 +1,41 @@
+{
+  "run_id": "eval-0-without_skill",
+  "expectations": [
+    {
+      "text": "Names the actual drifted versions: eve-ambient on v0.2.0 vs eve and eve-tools on v0.2.4",
+      "passed": true,
+      "evidence": "Running-workload table gives eve-ai:v0.2.4, eve-tools:v0.2.4, eve-ambient:v0.2.0, and the yaml block annotates 'newTag: v0.2.0        # eve and eve-tools both say v0.2.4'."
+    },
+    {
+      "text": "Locates the pin in home-lab-infrastructure at kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml",
+      "passed": true,
+      "evidence": "'The pin lives here: home-lab-infrastructure -> kubernetes/apps/eve-ambient/overlays/homelab/kustomization.yaml'."
+    },
+    {
+      "text": "Explains why the skew is dangerous (the three images share src/eve code and the eve-tools HTTP contract)",
+      "passed": true,
+      "evidence": "Covers the shared-code coupling in detail: 'eve_ambient imports eve.family, eve.settings, eve.models, eve.state, eve.tools_client, eve.memory.store, eve.memory.db.get_pool, and eve.specialists.permissions' and the migration asymmetry 'Ambient never runs migrations - those run in eve's eve-migrate initContainer, which is already on v0.2.4'; concludes 'This is a latent process bug that hasn't bitten yet ... Worth fixing precisely because the next release might not be so tidy.' Weaker than with_skill: it does not treat the eve-tools HTTP contract as a skew surface, and repeatedly characterises the pin as 'cosmetic today'."
+    },
+    {
+      "text": "Prescribes one release bumping all three images together, not an eve-ambient-only bump",
+      "passed": false,
+      "evidence": "Prescribed fix is an eve-ambient-only bump: 'The immediate fix - one line, one PR ... newTag: v0.2.4      # was v0.2.0'. The all-three rule appears only as the durable/structural follow-up ('treat \"release v0.2.5\" as one atomic infra PR touching three files'), not as the fix for this drift. Same verdict as with_skill."
+    },
+    {
+      "text": "Made no mutating change (no tag, commit, push, PR, or kubectl write)",
+      "passed": true,
+      "evidence": "All reported operations are reads: kubectl get deploy / argocd app status, kubectl logs, git log on overlay files, gh run view 33092186941, GHCR tag list, and a v0.2.0..v0.2.4 diff. No tag, commit, push, PR or kubectl write described."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 1,
+    "total": 5,
+    "pass_rate": 0.8
+  },
+  "timing": {
+    "total_tokens": 77693,
+    "duration_ms": 298034,
+    "total_duration_seconds": 298.0
+  }
+}

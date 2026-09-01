@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "check-sync-status",
+  "prompt": "Is eve fully in sync right now - repo, manifests and what's actually running? Read-only please.",
+  "assertions": [
+    "Reports the pyproject.toml version (0.1.0)",
+    "Reports the latest eve-ai git tag (v0.2.4)",
+    "Reports the newTag from all three kustomize overlays",
+    "Reports the live image tag of all three running deployments from the cluster",
+    "Concludes NOT in sync, flagging both eve-ambient v0.2.0 and the stale pyproject 0.1.0",
+    "Made no mutating change (no tag, commit, push, PR, or kubectl write)"
+  ]
+}

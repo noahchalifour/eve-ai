@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+from eve.memory import pending
 from eve.skills.registry import load_skills
 from eve.skills.search import rank_skills
 from eve.settings import get_settings
@@ -191,6 +192,9 @@ async def test_an_ambient_turn_authors_neither_a_rule_nor_a_procedure(
     )
 
     class _Structured:
+        def with_config(self, **_kwargs):
+            return self
+
         async def ainvoke(self, messages):
             return proposed
 
@@ -208,6 +212,7 @@ async def test_an_ambient_turn_authors_neither_a_rule_nor_a_procedure(
     state = {**_STATE, "messages": [human, AIMessage("Noted.")]}
 
     await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    await pending.drain()
     result = await write_skill.ainvoke(
         {
             "name": "forward-bank-mail",

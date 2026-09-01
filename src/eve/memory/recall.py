@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from opentelemetry import trace
 
+from eve.memory import pending
 from eve.memory.embed import embed_query
 from eve.memory.ranking import fit_budget, fuse
 from eve.memory.store import (
@@ -50,6 +51,10 @@ def _budget_seconds() -> float:
     return get_settings().memory_recall_embed_budget_ms / 1000.0
 
 
+def _join_budget_seconds() -> float:
+    return get_settings().memory_extract_join_budget_ms / 1000.0
+
+
 async def _embed_within_budget(query: str) -> list[float]:
     """Bound the embedding from task creation, not from when it is awaited."""
     async with asyncio.timeout(_budget_seconds()):
@@ -69,11 +74,27 @@ async def _cancel_and_await(task: asyncio.Task[object]) -> None:
 
 
 async def recall(state: dict, config: RunnableConfig) -> dict:
-    started = perf_counter()
     settings = get_settings()
     sub = state["member"]["sub"]
     thread_id = config.get("configurable", {}).get("thread_id")
     query = _last_human_text(state["messages"])
+
+    # Join the previous turn's background extraction before anything reads
+    # memory. This is what makes detaching extraction free rather than
+    # eventually-consistent: turn N's facts are visible to turn N+1, and the
+    # wait normally costs nothing because a member had to type in between.
+    #
+    # BEFORE the embedding task, not after: the embed budget is measured from
+    # task creation (see _embed_within_budget). Creating the embedding task
+    # first and joining second would start that 120ms clock before the join
+    # even ran, so a turn that actually had to wait would burn most or all of
+    # the vector arm's budget on the join instead of on the embedding.
+    joined = await pending.join(thread_id, _join_budget_seconds())
+
+    # `latency_ms` (see _record_span) starts here, AFTER the join, so it
+    # keeps measuring only the embed-budget-relevant work its docstring
+    # promises rather than also absorbing up to 5000ms of join wait.
+    started = perf_counter()
 
     # Start the clock on the embedding BEFORE the lexical query, so the two
     # overlap. The lexical round trip is a few milliseconds of the budget the
@@ -128,7 +149,9 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
         episodic = fit_budget(episodic, settings.memory_token_budget - spent)
 
         latency_ms = (perf_counter() - started) * 1000
-        _record_span(profile, household, episodic, rules, vector_used, latency_ms)
+        _record_span(
+            profile, household, episodic, rules, vector_used, latency_ms, joined
+        )
 
         return {
             "memory": MemoryBundle(
@@ -159,6 +182,7 @@ def _record_span(
     rules: list[Memory],
     vector_used: bool,
     latency_ms: float,
+    joined: pending.JoinResult,
 ) -> None:
     """Whether the 120ms budget actually holds is a number in Langfuse, not
     an assumption. If the degrade rate turns out to be high, the honest
@@ -167,6 +191,16 @@ def _record_span(
     span = trace.get_current_span()
     span.set_attribute("eve.recall.vector_used", vector_used)
     span.set_attribute("eve.recall.latency_ms", round(latency_ms, 1))
+    # "joined": something was pending on this thread and finished within
+    # budget. "timeout": something was pending and the budget ran out - this
+    # turn may be reading slightly stale candidates; if ever non-zero in
+    # practice, the join budget is too tight or extraction is too slow.
+    # "empty": nothing was pending IN THIS PROCESS - either genuinely nothing
+    # to wait for, or (see ADR 0012) a different replica handled turn N's
+    # extraction and this process never knew about it. The three are kept
+    # distinct so a multi-replica deployment silently serving stale reads
+    # cannot hide behind a bool that reads identically to "all clear".
+    span.set_attribute("eve.recall.extract_joined", joined.value)
     span.set_attribute(
         "eve.recall.items",
         len(profile) + len(household) + len(episodic) + len(rules),

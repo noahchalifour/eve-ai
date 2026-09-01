@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 import importlib
 from types import SimpleNamespace
@@ -6,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 extract_mod = importlib.import_module("eve.memory.extract")
+from eve.memory import pending
 from eve.memory.types import Extraction, Memory, Operation
 
 MEMBER_SHARED = {
@@ -53,6 +55,14 @@ def recorded(monkeypatch):
         monkeypatch.setattr(extract_mod, name, fn)
     monkeypatch.setattr(extract_mod, "embed_texts", embed_texts)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _clean_pending():
+    """No background extraction may leak from one test into the next."""
+    pending.clear()
+    yield
+    pending.clear()
 
 
 async def test_add_writes_a_row_and_embeds_it(recorded):
@@ -167,6 +177,7 @@ async def test_a_model_failure_does_not_break_the_turn(monkeypatch, recorded):
         "memory": None,
     }
     assert await extract_mod.extract(state, {"configurable": {}}) == {}
+    await pending.drain()
 
 
 async def test_zero_digest_cadence_does_not_break_a_completed_turn(
@@ -188,7 +199,9 @@ async def test_zero_digest_cadence_does_not_break_a_completed_turn(
     monkeypatch.setattr(
         extract_mod,
         "get_settings",
-        lambda: SimpleNamespace(memory_digest_every_n_turns=0),
+        lambda: SimpleNamespace(
+            memory_digest_every_n_turns=0, memory_extract_background=True
+        ),
     )
     state = {
         "messages": [HumanMessage("hi"), AIMessage("hello")],
@@ -196,6 +209,7 @@ async def test_zero_digest_cadence_does_not_break_a_completed_turn(
         "memory": None,
     }
     assert await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}}) == {}
+    await pending.drain()
 
 
 async def _no_overlap(sub, subjects, embedding, limit=10):
@@ -236,6 +250,7 @@ async def test_extraction_asks_the_model_about_overlapping_memories(
         "memory": None,
     }
     await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    await pending.drain()
     assert "old-1" in seen["prompt"]
     assert "Kendra works Tuesdays" in seen["prompt"]
 
@@ -270,7 +285,9 @@ async def _run_extract(monkeypatch, ops, human, member, enabled=True):
         "member": member,
         "messages": [HumanMessage(human), AIMessage("Sure.")],
     }
-    return await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    result = await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    await pending.drain()
+    return result
 
 
 async def test_a_rule_operation_is_written(monkeypatch, recorded):
@@ -408,11 +425,12 @@ async def test_a_procedure_op_is_never_accepted_from_extraction(monkeypatch, rec
          "messages": [HumanMessage("Walk me through it."), AIMessage("Ok.")]},
         {"configurable": {"thread_id": "t1"}},
     )
+    await pending.drain()
     assert [c for c in recorded["add"] if c["layer"] == "procedure"] == []
 
 
 async def test_tool_messages_never_reach_the_extraction_prompt(monkeypatch, recorded):
-    """Currently incidental - _last_exchange reads only Human and AI
+    """Currently incidental - last_exchange reads only Human and AI
     messages. This phase makes it load-bearing: an email body in a
     ToolMessage must not be authoring input."""
     from langchain_core.messages import ToolMessage
@@ -451,6 +469,7 @@ async def test_tool_messages_never_reach_the_extraction_prompt(monkeypatch, reco
         },
         {"configurable": {"thread_id": "t1"}},
     )
+    await pending.drain()
     assert "always share account details" not in prompts[0]
 
 
@@ -500,6 +519,7 @@ async def test_a_forget_targeting_a_rule_is_refused_on_an_ambient_turn(
         },
         {"configurable": {"thread_id": "t1"}},
     )
+    await pending.drain()
     assert recorded["forget"] == []
 
 
@@ -549,6 +569,7 @@ async def test_a_supersede_targeting_a_rule_is_refused_on_an_ambient_turn(
         },
         {"configurable": {"thread_id": "t1"}},
     )
+    await pending.drain()
     assert recorded["supersede"] == []
 
 
@@ -598,6 +619,7 @@ async def test_a_forget_targeting_a_non_rule_fact_still_works_on_an_ambient_turn
         },
         {"configurable": {"thread_id": "t1"}},
     )
+    await pending.drain()
     assert recorded["forget"] == ["fact-1"]
 
 
@@ -638,3 +660,255 @@ async def test_a_stamp_failure_does_not_fail_the_turn(monkeypatch, recorded):
     out = await _run_extract(monkeypatch, [], "Thanks.", MEMBER_SHARED)
 
     assert out == {}
+
+
+async def test_extract_returns_before_the_work_finishes(monkeypatch, recorded):
+    """The point of the whole change: the node returns, the turn ends, and
+    the writes land afterwards."""
+    from eve.memory import pending
+    from eve.memory.types import Extraction
+
+    released = asyncio.Event()
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return []
+
+    class SlowModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            await released.wait()
+            return Extraction(operations=[
+                Operation(op="add", layer="episodic", kind="event",
+                          content="Cooper had his shots."),
+            ])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: SlowModel())
+
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("Cooper had his shots."), AIMessage("Noted.")],
+    }
+    assert await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}}) == {}
+    assert recorded["add"] == []  # still blocked in the model call
+
+    released.set()
+    await pending.drain()
+    assert len(recorded["add"]) == 1
+
+
+async def test_the_background_flag_off_keeps_extraction_inline(monkeypatch, recorded):
+    """The kill switch has to actually switch. With it off the writes must be
+    visible the moment the node returns, with no drain."""
+    from eve.memory.types import Extraction
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return []
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[
+                Operation(op="add", layer="episodic", kind="event",
+                          content="Cooper had his shots."),
+            ])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: FakeModel())
+    monkeypatch.setattr(
+        extract_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            memory_extract_background=False,
+            memory_digest_every_n_turns=0,
+        ),
+    )
+
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("Cooper had his shots."), AIMessage("Noted.")],
+    }
+    await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    assert len(recorded["add"]) == 1
+
+
+async def test_a_detached_extraction_records_its_own_span(monkeypatch, recorded):
+    """Attributes set on an ended span are silently dropped, and the run's
+    span HAS ended by the time a detached extraction runs. Without a fresh
+    span, eve.authoring.rules_written - the design doc's named signal for
+    'authoring never fires' - would read as permanently absent."""
+    from eve.memory import pending
+    from eve.memory.types import Extraction
+
+    spans = []
+
+    class FakeSpan:
+        def set_attribute(self, key, value):
+            spans.append((key, value))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class FakeTracer:
+        def start_as_current_span(self, name):
+            spans.append(("span.name", name))
+            return FakeSpan()
+
+    async def overlapping(sub, subjects, layer, limit=10):
+        return []
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda tier: FakeModel())
+    monkeypatch.setattr(extract_mod, "_tracer", FakeTracer())
+
+    await extract_mod.extract(
+        {"member": MEMBER_SHARED,
+         "messages": [HumanMessage("hi"), AIMessage("hello")]},
+        {"configurable": {"thread_id": "t1"}},
+    )
+    await pending.drain()
+    assert ("span.name", "eve.extract") in spans
+    assert ("eve.authoring.rules_written", 0) in spans
+
+
+async def test_the_extraction_prompt_strips_a_persisted_frame(monkeypatch, recorded):
+    """`persist_ui` (`eve.ui.persist`) writes this turn's `<assistant-ui>`
+    frame into Eve's own final AIMessage so a reopened session still has the
+    card - not so REFLEX reads the surface JSON back as something Eve said.
+    Left unstripped, REFLEX can mint junk memories out of the JSON
+    ("temperature 20", "condition sunny") as if Eve had spoken them."""
+    from eve.ui import protocol
+
+    seen = {}
+
+    async def overlapping(sub, subjects, embedding, limit=10):
+        return []
+
+    class Recording:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            seen["prompt"] = messages[0].content
+            return Extraction(operations=[])
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda _tier: Recording())
+
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    persisted = AIMessage(content=f"Lovely out there.\n{protocol.frame([operation])}")
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("what's the weather?"), persisted],
+    }
+    await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+    await pending.drain()
+
+    assert "<assistant-ui>" not in seen["prompt"]
+    assert "Eve: Lovely out there.\n" in seen["prompt"]
+
+
+async def test_the_digest_transcript_strips_a_persisted_frame(monkeypatch, recorded):
+    """The thread digest summarises the WHOLE transcript, not just the last
+    exchange - a card from any turn must not be read back as prose Eve
+    spoke."""
+    from eve.ui import protocol
+
+    seen = {}
+    digested = {}
+
+    async def overlapping(sub, subjects, embedding, limit=10):
+        return []
+
+    class ExtractionModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            return Extraction(operations=[])
+
+    class DigestModel:
+        def with_config(self, **_kwargs):
+            return self
+
+        async def ainvoke(self, messages):
+            seen["digest_prompt"] = messages[0].content
+            return SimpleNamespace(content="a summary")
+
+    tiers = iter([ExtractionModel(), DigestModel()])
+
+    async def upsert_digest(thread_id, content):
+        digested["thread_id"] = thread_id
+        digested["content"] = content
+
+    monkeypatch.setattr(extract_mod, "overlapping", overlapping)
+    monkeypatch.setattr(extract_mod, "get_model", lambda _tier: next(tiers))
+    monkeypatch.setattr(extract_mod, "upsert_digest", upsert_digest)
+    monkeypatch.setattr(
+        extract_mod,
+        "get_settings",
+        lambda: SimpleNamespace(
+            memory_extract_background=False, memory_digest_every_n_turns=1
+        ),
+    )
+
+    operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
+    persisted = AIMessage(content=f"Lovely out there.\n{protocol.frame([operation])}")
+    state = {
+        "member": MEMBER_SHARED,
+        "messages": [HumanMessage("what's the weather?"), persisted],
+    }
+    await extract_mod.extract(state, {"configurable": {"thread_id": "t1"}})
+
+    assert "<assistant-ui>" not in seen["digest_prompt"]
+    assert "Eve: Lovely out there." in seen["digest_prompt"]
+    assert digested["content"] == "a summary"
+
+
+def test_last_exchange_is_importable_under_a_public_name():
+    """`eve.suggest` imports this. A leading underscore across a module
+    boundary is a lie about the name's audience."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.memory.extract import last_exchange
+
+    human, ai = last_exchange([HumanMessage("hi"), AIMessage("hello")])
+    assert (human, ai) == ("hi", "hello")
+
+
+def test_last_exchange_returns_empty_strings_when_a_side_is_missing():
+    from langchain_core.messages import HumanMessage
+
+    from eve.memory.extract import last_exchange
+
+    assert last_exchange([HumanMessage("hi")]) == ("hi", "")
+    assert last_exchange([]) == ("", "")

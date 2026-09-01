@@ -93,3 +93,43 @@ async def test_fallback_model_emits_tool_calls():
     reply = await model.ainvoke([HumanMessage("What is the weather in Toronto?")])
     assert reply.tool_calls, "fallback model did not return tool calls"
     assert reply.tool_calls[0]["name"] == "get_weather"
+
+
+async def test_the_reflex_tier_produces_usable_reply_suggestions():
+    """The one thing a fake cannot check: that a real REFLEX model, given a
+    real exchange and this prompt, returns short first-person options rather
+    than Eve's side of the conversation."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.suggest import MAX_CHARS, MAX_SUGGESTIONS, suggest
+
+    state = {
+        "messages": [
+            HumanMessage("can you turn off the lights"),
+            AIMessage("Which ones - the kitchen, or the whole downstairs?"),
+        ],
+        "member": {
+            "sub": "sub-noah",
+            "name": "Noah",
+            "role": "adult",
+            "timezone": "America/Toronto",
+            "permissions": [],
+            "local_time": "2026-08-31 21:30 EDT",
+        },
+        "system_prompt": "",
+        "memory": None,
+        "dynamic_tools": [],
+        "suggestions": [],
+    }
+
+    result = await suggest(state, {})
+    chips = result["suggestions"]
+
+    assert 1 <= len(chips) <= MAX_SUGGESTIONS, f"got {chips!r}"
+    assert all(chip.strip() and len(chip) <= MAX_CHARS for chip in chips)
+    # Answering "which ones?" is the obvious continuation. A model that
+    # instead returns Eve's next line ("I'll turn them off") fails this.
+    assert any(
+        word in " ".join(chips).lower()
+        for word in ("kitchen", "downstairs", "both", "all")
+    ), f"suggestions do not answer the question asked: {chips!r}"

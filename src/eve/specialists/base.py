@@ -16,6 +16,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
+from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import InjectedState
 from opentelemetry import trace
 
@@ -33,6 +34,26 @@ from eve.state import EveState
 # are not allowed" - caught live against the real proxy, not by any of this
 # module's tests, all of which fake the model.
 _OPENAI_DEVELOPER_ROLE = {"__openai_role__": "developer"}
+
+# `specialist_max_iterations` counts model+tool ROUNDS; LangGraph's
+# `recursion_limit` counts SUPERSTEPS, and `create_agent`'s graph spends two
+# per round (`model`, then `tools`) plus one to enter and one to answer.
+# Passing the setting through raw bought 2 rounds out of 6 (EVE-15): every
+# specialist request needing a third tool call - search mail then open the
+# message, list accounts then pull transactions - raised GraphRecursionError,
+# which ToolNode's handler stringified into the conversation for Eve to read
+# out to the member.
+def _superstep_limit(rounds: int) -> int:
+    return 2 * rounds + 2
+
+
+# Whatever the budget is, a specialist that blows it has to answer in English.
+# `graph.py`'s `_LOOP_EXHAUSTED` is the same guarantee for the outer loop.
+def _loop_exhausted(name: str) -> str:
+    return (
+        f"I asked {name} to look into that, but it kept going without "
+        "reaching an answer. Could you narrow the request down for me?"
+    )
 
 
 def build_specialist(
@@ -76,14 +97,22 @@ def build_specialist(
         inner_config: RunnableConfig = {
             **config,
             "configurable": {**config.get("configurable", {}), "member": member},
-            "recursion_limit": get_settings().specialist_max_iterations,
+            "recursion_limit": _superstep_limit(
+                get_settings().specialist_max_iterations
+            ),
         }
-        result = await agent.ainvoke(
-            {"messages": [HumanMessage(request)]}, inner_config
-        )
-        span.set_attribute(
-            "eve.specialist.latency_ms", round((perf_counter() - started) * 1000, 1)
-        )
+        try:
+            result = await agent.ainvoke(
+                {"messages": [HumanMessage(request)]}, inner_config
+            )
+        except GraphRecursionError:
+            span.set_attribute("eve.specialist.loop_exhausted", True)
+            return _loop_exhausted(name)
+        finally:
+            span.set_attribute(
+                "eve.specialist.latency_ms",
+                round((perf_counter() - started) * 1000, 1),
+            )
         return str(result["messages"][-1].content)
 
     ask.__name__ = f"ask_{name}"
