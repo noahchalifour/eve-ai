@@ -1,7 +1,7 @@
 """One row per garment, catalogued from an Immich asset by a vision pass.
 
-Revision ID: 0005_eve_wardrobe_item
-Revises: 0004_eve_computer_task
+Revision ID: 0006_eve_wardrobe_item
+Revises: 0005_eve_oauth_token
 
 `item_index` exists because one photograph is not always one garment: a rail
 of shirts or a folded stack is a natural thing to shoot, and a schema keyed
@@ -15,8 +15,8 @@ axes, used for grouping the rendered catalogue and for `eve-wardrobe list`.
 """
 from alembic import op
 
-revision = "0005_eve_wardrobe_item"
-down_revision = "0004_eve_computer_task"
+revision = "0006_eve_wardrobe_item"
+down_revision = "0005_eve_oauth_token"
 branch_labels = None
 depends_on = None
 

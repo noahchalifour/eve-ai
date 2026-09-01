@@ -1,19 +1,20 @@
 """Track successfully catalogued Immich assets independently of garments.
 
-Revision ID: 0006_eve_wardrobe_asset
-Revises: 0005_eve_wardrobe_item
+Revision ID: 0007_eve_wardrobe_asset
+Revises: 0006_eve_wardrobe_item
 
 A valid photo can contain no garments. The per-asset state makes that empty
 result durable while the existing item table stays one row per garment.
 Existing item rows become state rows during upgrade so databases already at
-0005 retain their normal-sync idempotence. A short-lived round-one version
-created this table in 0005, so both operations are replay-safe for databases
-stamped at that temporary revision.
+0006 retain their normal-sync idempotence. Round-one numbering placed this
+table at 0005_eve_wardrobe_item / 0006_eve_wardrobe_asset before main's own
+0005 landed; the operations are replay-safe for databases stamped at either
+numbering.
 """
 from alembic import op
 
-revision = "0006_eve_wardrobe_asset"
-down_revision = "0005_eve_wardrobe_item"
+revision = "0007_eve_wardrobe_asset"
+down_revision = "0006_eve_wardrobe_item"
 branch_labels = None
 depends_on = None
 

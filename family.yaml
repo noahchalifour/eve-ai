@@ -34,6 +34,10 @@ members:
       - tools.author
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+      # Health coach: WHOOP and Oura recovery, sleep, and training load.
+      # Read-only; a bare noun like `finances` because there is no write
+      # surface to distinguish it from.
+      - health
     # Phase 6: the Immich album holding his clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""
@@ -53,6 +57,10 @@ members:
       - memory.write_shared
       # Phase 6: dispatching a task to her own computer.
       - computer.use
-    # Phase 6: the Immich album holding his clothes, catalogued by
+      # Health coach: WHOOP and Oura recovery, sleep, and training load.
+      # Read-only; a bare noun like `finances` because there is no write
+      # surface to distinguish it from.
+      - health
+    # Phase 6: the Immich album holding her clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""

@@ -51,6 +51,7 @@ from eve.skills.authoring import write_skill
 from eve.skills.materialize import materialize
 from eve.skills.search import search_skills
 from eve.specialists.finances import ask_finances
+from eve.specialists.health import ask_health
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.specialists.stylist import ask_stylist
@@ -68,6 +69,7 @@ _BASE_TOOLS = [
     ask_mail,
     ask_finances,
     ask_stylist,
+    ask_health,
     search_skills,
     search_memory,
 ]
