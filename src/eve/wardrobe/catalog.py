@@ -14,11 +14,20 @@ from __future__ import annotations
 import json
 import logging
 
+from opentelemetry import trace
+
 from eve.family import get_family
 from eve.tools_client import invoke
 from eve.wardrobe import store, vision
 
 logger = logging.getLogger(__name__)
+
+# The spec's observability section names these numbers as the answers to "is
+# the vision pass actually working" and "is the catalogue drifting" - same
+# discipline as specialists/base.py and memory/recall.py. A module tracer,
+# because sync also runs from the CLI, where there is no ambient span to
+# hang attributes on (the detached-extraction lesson, test_memory_extract).
+_tracer = trace.get_tracer("eve.wardrobe")
 
 NO_ALBUM = (
     "No wardrobe album is configured for this member. Add a `wardrobe_album` "
@@ -27,6 +36,11 @@ NO_ALBUM = (
 EMPTY = (
     "The wardrobe catalogue is empty. Photograph the clothes into the Immich "
     "album and run `eve-wardrobe sync` (or ask me to sync it)."
+)
+TRUNCATED = (
+    "error: the wardrobe album returned more photos than one listing can "
+    "carry, so the catalogue refuses to reconcile a partial view of it - "
+    "nothing was changed. Raise the sync cap or split the album."
 )
 
 # ponytail: the whole wardrobe in one string, roughly 6k tokens at 200
@@ -42,27 +56,51 @@ def album_for(member_sub: str) -> str | None:
     return get_family().get(member_sub).wardrobe_album
 
 
-async def _album_asset_list(album_id: str) -> tuple[list[dict], str | None]:
-    """`(assets, error)`. `invoke` returns a JSON string, or a string starting
-    with `error:` - it never raises, which is why nothing here does either."""
+async def _album_asset_list(album_id: str) -> tuple[list[dict], bool, str | None]:
+    """`(assets, truncated, error)`. `invoke` returns a JSON string, or a
+    string starting with `error:` - it never raises, which is why nothing
+    here does either."""
     raw = await invoke("immich.album_assets", {"album_id": album_id})
     if raw.startswith("error:"):
-        return [], raw
+        return [], False, raw
     try:
-        return json.loads(raw).get("assets", []), None
+        payload = json.loads(raw)
+        return (
+            payload.get("assets", []),
+            bool(payload.get("truncated", False)),
+            None,
+        )
     except (ValueError, AttributeError):
-        return [], "error: Immich returned something that was not an album"
+        return [], False, "error: Immich returned something that was not an album"
 
 
 async def sync(
     member_sub: str, *, force: bool = False, limit: int | None = None
 ) -> dict:
-    """Bring the catalogue in line with the album.
+    """Bring the catalogue in line with the album, instrumented with the
+    spec's two sync questions: how much the vision pass catalogued, and how
+    often it failed."""
+    with _tracer.start_as_current_span("eve.wardrobe.sync") as span:
+        try:
+            result = await _reconcile(member_sub, force=force, limit=limit)
+        except Exception:
+            # A store failure exits without a result dict; the zeros say this
+            # sync produced nothing rather than that nothing was stale.
+            span.set_attribute("eve.wardrobe.items_catalogued", 0)
+            span.set_attribute("eve.wardrobe.vision_failures", 0)
+            raise
+        span.set_attribute("eve.wardrobe.items_catalogued", result["catalogued"])
+        span.set_attribute("eve.wardrobe.vision_failures", result["failed"])
+        return result
 
-    `limit` bounds how many photographs one call will describe, so the
-    conversational `sync_wardrobe` tool cannot spend a whole turn on a
-    hundred-photo first run; `remaining` tells the caller what it left.
-    """
+
+async def _reconcile(
+    member_sub: str, *, force: bool = False, limit: int | None = None
+) -> dict:
+    """The sync body. `limit` bounds how many photographs one call will
+    describe, so the conversational `sync_wardrobe` tool cannot spend a whole
+    turn on a hundred-photo first run; `remaining` tells the caller what it
+    left."""
     result = {"catalogued": 0, "removed": 0, "failed": 0, "remaining": 0, "error": None}
 
     album_id = album_for(member_sub)
@@ -70,9 +108,15 @@ async def sync(
         result["error"] = NO_ALBUM
         return result
 
-    assets, error = await _album_asset_list(album_id)
+    assets, truncated, error = await _album_asset_list(album_id)
     if error:
         result["error"] = error
+        return result
+    if truncated:
+        # A partial listing must never be treated as authoritative: deleting
+        # every known id absent from the first window would destroy garments
+        # whose photos are still in the album, just ordered past the cap.
+        result["error"] = TRUNCATED
         return result
 
     known = await store.catalogued_asset_ids(member_sub)
@@ -127,46 +171,67 @@ def _render_item(item: dict) -> str:
     return f"- {item['name']}" + (f" ({detail})" if detail else "")
 
 
-async def _staleness_note(member_sub: str, album_id: str) -> str:
-    """One extra API call, no vision, no measurable latency - and the
-    alternative is a stylist confidently dressing someone out of a wardrobe
-    missing the coat they bought last week.
+async def _staleness_note(member_sub: str, album_id: str) -> tuple[str, int]:
+    """`(note, uncatalogued)`. One extra API call, no vision, no measurable
+    latency - and the alternative is a stylist confidently dressing someone
+    out of a wardrobe missing the coat they bought last week.
 
-    Degrades to silence: if Immich cannot be reached, the catalogue we have is
-    still worth answering from, and a failure to CHECK for staleness is not
-    itself worth reporting to a member asking what to wear.
+    Degrades loudly but briefly: if Immich cannot be reached, or the album is
+    too big to check against, the note says so instead of pretending the
+    catalogue is current - a failed staleness CHECK must not read as an
+    all-clear to the member.
     """
-    assets, error = await _album_asset_list(album_id)
+    assets, truncated, error = await _album_asset_list(album_id)
     if error:
-        return ""
+        return (
+            "\n\nNote: the wardrobe album could not be reached just now, so "
+            "this list may be out of date.",
+            0,
+        )
+    if truncated:
+        return (
+            "\n\nNote: the wardrobe album has more photos than the catalogue "
+            "can check against at once, so this list may be incomplete or "
+            "out of date.",
+            0,
+        )
     uncatalogued = len({a["id"] for a in assets} - await store.catalogued_asset_ids(member_sub))
     if not uncatalogued:
-        return ""
+        return "", 0
     return (
         f"\n\nNote: {uncatalogued} photo(s) in the album have not been "
-        "catalogued yet, so this list may be incomplete."
+        "catalogued yet, so this list may be incomplete.",
+        uncatalogued,
     )
 
 
 async def render_wardrobe(member_sub: str) -> str:
     """The whole catalogue as one string, grouped by category."""
-    album_id = album_for(member_sub)
-    if not album_id:
-        return NO_ALBUM
+    with _tracer.start_as_current_span("eve.wardrobe.read") as span:
+        album_id = album_for(member_sub)
+        if not album_id:
+            span.set_attribute("eve.wardrobe.stale_count", 0)
+            return NO_ALBUM
 
-    items = await store.list_items(member_sub)
-    if not items:
-        return EMPTY
+        items = await store.list_items(member_sub)
+        if not items:
+            span.set_attribute("eve.wardrobe.stale_count", 0)
+            return EMPTY
 
-    by_category: dict[str, list[dict]] = {}
-    for item in items:
-        by_category.setdefault(item["category"], []).append(item)
+        by_category: dict[str, list[dict]] = {}
+        for item in items:
+            by_category.setdefault(item["category"], []).append(item)
 
-    ordered = [c for c in _CATEGORY_ORDER if c in by_category]
-    ordered += sorted(c for c in by_category if c not in _CATEGORY_ORDER)
+        ordered = [c for c in _CATEGORY_ORDER if c in by_category]
+        ordered += sorted(c for c in by_category if c not in _CATEGORY_ORDER)
 
-    sections = [
-        f"## {category}\n" + "\n".join(_render_item(i) for i in by_category[category])
-        for category in ordered
-    ]
-    return "\n\n".join(sections) + await _staleness_note(member_sub, album_id)
+        sections = [
+            f"## {category}\n" + "\n".join(_render_item(i) for i in by_category[category])
+            for category in ordered
+        ]
+        note, stale_count = await _staleness_note(member_sub, album_id)
+        # Zero covers both "nothing stale" and "the check could not run" -
+        # the rendered note tells the member which, and the spec's question
+        # ("is the catalogue drifting in practice") is answerable either way.
+        span.set_attribute("eve.wardrobe.stale_count", stale_count)
+        return "\n\n".join(sections) + note

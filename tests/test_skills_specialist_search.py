@@ -68,3 +68,30 @@ async def test_the_tool_returns_a_string_not_a_command(tmp_path, monkeypatch):
     result = await tool.ainvoke({"query": "outfit"})
 
     assert isinstance(result, str)
+
+
+def _raise_runtime_error(*_args):
+    raise RuntimeError("skills dir missing")
+
+
+async def test_a_failing_corpus_returns_an_error_string(monkeypatch):
+    """Same contract as every specialist tool: a filesystem failure returns
+    an error string, it does not fail the specialist's turn."""
+    monkeypatch.setattr(specialist_search, "load_skills", _raise_runtime_error)
+
+    tool = specialist_search.build_skills_search("stylist")
+    result = await tool.ainvoke({"query": "outfit"})
+
+    assert result.startswith("error:")
+
+
+async def test_a_failing_ranker_returns_an_error_string(monkeypatch):
+    monkeypatch.setattr(
+        "eve.skills.search.embed_query",
+        AsyncMock(side_effect=RuntimeError("embedder down")),
+    )
+
+    tool = specialist_search.build_skills_search("stylist")
+    result = await tool.ainvoke({"query": "outfit"})
+
+    assert result.startswith("error:")

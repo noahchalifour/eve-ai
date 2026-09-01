@@ -14,11 +14,15 @@ ticket rather than something smuggled in behind a skills search.
 
 from __future__ import annotations
 
+import logging
+
 from langchain_core.tools import BaseTool, tool
 from opentelemetry import trace
 
 from eve.skills.registry import load_skills
 from eve.skills.search import rank_skills
+
+logger = logging.getLogger(__name__)
 
 NO_MATCH = "No matching skill found."
 
@@ -30,8 +34,17 @@ def build_skills_search(specialist: str) -> BaseTool:
         # ponytail: filesystem corpus only - no Eve-authored database rows,
         # which would mean a Postgres round trip inside every specialist loop.
         # Add one if authored specialist procedures ever become a real want.
-        skills = [skill for skill in load_skills() if skill.specialist == specialist]
-        matches = await rank_skills(query, skills)
+        try:
+            skills = [skill for skill in load_skills() if skill.specialist == specialist]
+            matches = await rank_skills(query, skills)
+        except Exception as exc:
+            # Same contract as every other specialist tool: a filesystem or
+            # embedding failure returns an error string, it does not fail the
+            # specialist's turn.
+            logger.warning(
+                "specialist skills search failed for %s", specialist, exc_info=exc
+            )
+            return f"error: the skills search is unavailable ({exc.__class__.__name__})"
         trace.get_current_span().set_attribute(
             "eve.skills.specialist_search_used", specialist
         )

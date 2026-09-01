@@ -43,13 +43,14 @@ async def test_album_assets_returns_ids_and_filenames(monkeypatch):
         "assets": [
             {"id": "asset-1", "filename": "blazer.jpg"},
             {"id": "asset-2", "filename": "boots.jpg"},
-        ]
+        ],
+        "truncated": False,
     }
     assert seen["url"] == "http://immich.test/api/albums/album-1"
     assert seen["key"] == "immich-key"
 
 
-async def test_album_assets_is_capped(monkeypatch):
+async def test_album_assets_is_capped_and_marked_truncated(monkeypatch):
     def handler(request):
         return httpx.Response(
             200,
@@ -66,6 +67,7 @@ async def test_album_assets_is_capped(monkeypatch):
     result = await immich.album_assets("album-1")
 
     assert len(result["assets"]) == immich._MAX_ASSETS
+    assert result["truncated"] is True
 
 
 async def test_asset_image_returns_base64_and_content_type(monkeypatch):

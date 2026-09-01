@@ -75,8 +75,8 @@ def _coerce_category(category: str) -> str:
 async def describe(image_base64: str, content_type: str) -> list[WardrobeItem]:
     """Every garment visible in one photograph. An empty list is a valid and
     expected answer - the prompt tells the model to prefer it over guessing."""
-    # Deliberate ceiling: one vision call per photograph; add retries or
-    # batching if transient failures or throughput become a requirement.
+    # ponytail: one vision call per photograph; add retries or batching if
+    # transient failures or throughput become a requirement.
     model = get_model(Tier.REFLEX).with_structured_output(WardrobeItems)
     message = HumanMessage(
         content=[

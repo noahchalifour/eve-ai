@@ -9,13 +9,13 @@ def _item(name, category="top", **attrs):
     return vision.WardrobeItem(name=name, category=category, **attrs)
 
 
-def _fake_invoke(album_assets, images=None):
+def _fake_invoke(album_assets, images=None, truncated=False):
     """Stands in for eve.tools_client.invoke, which returns a JSON STRING."""
     images = images or {}
 
     async def _invoke(tool, arguments, **kwargs):
         if tool == "immich.album_assets":
-            return json.dumps({"assets": album_assets})
+            return json.dumps({"assets": album_assets, "truncated": truncated})
         if tool == "immich.asset_image":
             asset_id = arguments["asset_id"]
             return json.dumps(
@@ -27,6 +27,35 @@ def _fake_invoke(album_assets, images=None):
         raise AssertionError(f"unexpected tool {tool}")
 
     return AsyncMock(side_effect=_invoke)
+
+
+class FakeSpan:
+    def __init__(self, spans):
+        self._spans = spans
+
+    def set_attribute(self, key, value):
+        self._spans.append((key, value))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeTracer:
+    def __init__(self, spans):
+        self._spans = spans
+
+    def start_as_current_span(self, name):
+        self._spans.append(("span.name", name))
+        return FakeSpan(self._spans)
+
+
+def _record_telemetry(monkeypatch):
+    spans = []
+    monkeypatch.setattr(catalog, "_tracer", FakeTracer(spans))
+    return spans
 
 
 def _patch_common(monkeypatch, *, album="album-1", catalogued=frozenset()):
@@ -199,6 +228,70 @@ async def test_an_immich_failure_is_returned_not_raised(monkeypatch):
     assert result["catalogued"] == 0
 
 
+async def test_a_truncated_album_listing_is_refused_not_reconciled(monkeypatch):
+    """The regression the whole-branch review demanded: an asset outside the
+    returned window must not be treated as departed. The 500-asset cap makes
+    the listing partial, and a partial listing is never authoritative."""
+    _patch_common(monkeypatch, catalogued={"asset-1", "asset-outside-the-window"})
+    monkeypatch.setattr(
+        catalog,
+        "invoke",
+        _fake_invoke([{"id": "asset-1", "filename": "a.jpg"}], truncated=True),
+    )
+
+    result = await catalog.sync("sub-noah")
+
+    assert result["error"] == catalog.TRUNCATED
+    assert result["catalogued"] == 0
+    assert result["removed"] == 0
+    catalog.store.delete_assets.assert_not_awaited()
+
+
+async def test_a_truncated_refusal_records_zero_telemetry(monkeypatch):
+    _patch_common(monkeypatch, catalogued={"asset-1"})
+    spans = _record_telemetry(monkeypatch)
+    monkeypatch.setattr(
+        catalog,
+        "invoke",
+        _fake_invoke([{"id": "asset-1", "filename": "a.jpg"}], truncated=True),
+    )
+
+    await catalog.sync("sub-noah")
+
+    assert ("eve.wardrobe.items_catalogued", 0) in spans
+    assert ("eve.wardrobe.vision_failures", 0) in spans
+
+
+async def test_sync_records_the_spec_telemetry(monkeypatch):
+    """The spec's two sync questions: is the vision pass working, and on what
+    fraction. One failing photo beside one good one must show both numbers."""
+    inserted = _patch_common(monkeypatch)
+    spans = _record_telemetry(monkeypatch)
+    monkeypatch.setattr(
+        catalog,
+        "invoke",
+        _fake_invoke([{"id": "asset-1", "filename": "a.jpg"}, {"id": "asset-2", "filename": "b.jpg"}]),
+    )
+
+    calls = {"n": 0}
+
+    async def _describe(image_base64, content_type):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("the model hiccuped")
+        return [_item("survivor")]
+
+    monkeypatch.setattr(catalog.vision, "describe", _describe)
+
+    result = await catalog.sync("sub-noah")
+
+    assert result["catalogued"] == 1
+    assert result["failed"] == 1
+    assert ("span.name", "eve.wardrobe.sync") in spans
+    assert ("eve.wardrobe.items_catalogued", 1) in spans
+    assert ("eve.wardrobe.vision_failures", 1) in spans
+
+
 async def test_render_groups_by_category_and_names_every_item(monkeypatch):
     monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
     monkeypatch.setattr(
@@ -244,7 +337,9 @@ async def test_render_flags_a_stale_catalogue(monkeypatch):
     assert "not been catalogued" in rendered
 
 
-async def test_render_survives_immich_being_down(monkeypatch):
+async def test_render_survives_immich_being_down_and_says_so(monkeypatch):
+    """A failed staleness CHECK is not an all-clear: the render still works,
+    but the member is told the list may be out of date."""
     monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
     monkeypatch.setattr(catalog.store, "list_items", AsyncMock(return_value=[{"name": "shirt", "category": "top", "attrs": {}}]))
     monkeypatch.setattr(catalog, "invoke", AsyncMock(return_value="error: down"))
@@ -252,3 +347,47 @@ async def test_render_survives_immich_being_down(monkeypatch):
     rendered = await catalog.render_wardrobe("sub-noah")
 
     assert "shirt" in rendered
+    assert "could not be reached" in rendered
+
+
+async def test_render_warns_when_the_album_is_too_big_to_check(monkeypatch):
+    monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
+    monkeypatch.setattr(catalog.store, "list_items", AsyncMock(return_value=[{"name": "shirt", "category": "top", "attrs": {}}]))
+    monkeypatch.setattr(
+        catalog,
+        "invoke",
+        _fake_invoke([{"id": "a", "filename": "x"}], truncated=True),
+    )
+
+    rendered = await catalog.render_wardrobe("sub-noah")
+
+    assert "incomplete or out of date" in rendered
+
+
+async def test_render_records_the_stale_count(monkeypatch):
+    """The spec's drift question, answered with a number on every read."""
+    monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
+    spans = _record_telemetry(monkeypatch)
+    monkeypatch.setattr(catalog.store, "list_items", AsyncMock(return_value=[{"name": "shirt", "category": "top", "attrs": {}}]))
+    monkeypatch.setattr(
+        catalog,
+        "invoke",
+        _fake_invoke([{"id": "a", "filename": "x"}, {"id": "b", "filename": "y"}, {"id": "c", "filename": "z"}]),
+    )
+    monkeypatch.setattr(catalog.store, "catalogued_asset_ids", AsyncMock(return_value={"a"}))
+
+    await catalog.render_wardrobe("sub-noah")
+
+    assert ("span.name", "eve.wardrobe.read") in spans
+    assert ("eve.wardrobe.stale_count", 2) in spans
+
+
+async def test_render_records_zero_when_the_stale_check_cannot_run(monkeypatch):
+    monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
+    spans = _record_telemetry(monkeypatch)
+    monkeypatch.setattr(catalog.store, "list_items", AsyncMock(return_value=[{"name": "shirt", "category": "top", "attrs": {}}]))
+    monkeypatch.setattr(catalog, "invoke", AsyncMock(return_value="error: down"))
+
+    await catalog.render_wardrobe("sub-noah")
+
+    assert ("eve.wardrobe.stale_count", 0) in spans

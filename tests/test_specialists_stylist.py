@@ -108,6 +108,32 @@ async def test_sync_wardrobe_surfaces_an_error(monkeypatch):
     assert result.startswith("error:")
 
 
+async def test_read_wardrobe_degrades_when_the_store_raises(monkeypatch):
+    """The binding contract: a tool returns a string and never raises - a
+    database failure must not cost the whole specialist turn."""
+    monkeypatch.setattr(
+        stylist_module.catalog,
+        "render_wardrobe",
+        AsyncMock(side_effect=RuntimeError("connection refused")),
+    )
+
+    result = await stylist_module.read_wardrobe.ainvoke({}, config=CONFIG)
+
+    assert result.startswith("error:")
+
+
+async def test_sync_wardrobe_degrades_when_the_store_raises(monkeypatch):
+    monkeypatch.setattr(
+        stylist_module.catalog,
+        "sync",
+        AsyncMock(side_effect=RuntimeError("connection refused")),
+    )
+
+    result = await stylist_module.sync_wardrobe.ainvoke({}, config=CONFIG)
+
+    assert result.startswith("error:")
+
+
 async def test_a_member_without_the_wardrobe_permission_is_denied():
     state = {**STATE, "member": {**MEMBER, "permissions": ["home.control"]}}
 

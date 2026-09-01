@@ -13,6 +13,7 @@ grant inside `list_events`.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
@@ -23,6 +24,8 @@ from eve.specialists.base import build_specialist
 from eve.specialists.permissions import permission_denial
 from eve.tools_client import invoke
 from eve.wardrobe import catalog
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = Path("prompts/stylist.md").read_text()
 
@@ -54,7 +57,13 @@ async def read_wardrobe(config: RunnableConfig) -> str:
     """Read the member's whole wardrobe catalogue, grouped by category. Call
     this before recommending anything: it is the only list of clothes they
     actually own, and it changes between requests."""
-    return await catalog.render_wardrobe(_member(config)["sub"])
+    try:
+        return await catalog.render_wardrobe(_member(config)["sub"])
+    except Exception as exc:
+        # The binding contract: a tool returns a string and never raises -
+        # a database failure here must not cost the whole specialist turn.
+        logger.warning("read_wardrobe failed for %s", _member(config)["sub"], exc_info=exc)
+        return f"error: the wardrobe catalogue is unavailable ({exc.__class__.__name__})"
 
 
 @tool
@@ -86,7 +95,13 @@ async def sync_wardrobe(config: RunnableConfig) -> str:
     """Catalogue any new photos the member has added to their Immich wardrobe
     album. Use when they say they have added or removed clothes, or when the
     catalogue reports itself stale."""
-    result = await catalog.sync(_member(config)["sub"], limit=SYNC_LIMIT)
+    try:
+        result = await catalog.sync(_member(config)["sub"], limit=SYNC_LIMIT)
+    except Exception as exc:
+        logger.warning(
+            "sync_wardrobe failed for %s", _member(config)["sub"], exc_info=exc
+        )
+        return f"error: the wardrobe sync could not run ({exc.__class__.__name__})"
     if result["error"]:
         return result["error"]
     parts = [f"Catalogued {result['catalogued']} new garment(s)"]

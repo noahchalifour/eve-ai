@@ -31,17 +31,25 @@ def _client(timeout: float) -> httpx.AsyncClient:
 
 
 async def album_assets(album_id: str) -> dict:
-    """Every asset in one album: id and original filename, nothing else."""
+    """Every asset in one album: id and original filename, nothing else.
+
+    `truncated` is False only when the whole album fit under the cap. The
+    catalogue refuses to reconcile against a partial listing - treating the
+    first window as authoritative would delete garments whose photos are
+    simply outside it.
+    """
     async with _client(15.0) as client:
         response = await client.get(f"/api/albums/{album_id}")
         response.raise_for_status()
         album = response.json()
     assets = album.get("assets") or []
+    truncated = len(assets) > _MAX_ASSETS
     return {
         "assets": [
             {"id": asset["id"], "filename": asset.get("originalFileName", "")}
             for asset in assets[:_MAX_ASSETS]
-        ]
+        ],
+        "truncated": truncated,
     }
 
 
