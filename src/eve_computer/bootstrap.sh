@@ -6,7 +6,8 @@
 set -eu
 
 PACKAGES_FILE="/home/eve/.eve/packages.txt"
-mkdir -p /home/eve/.eve /home/eve/tasks
+mkdir -p /home/eve/.eve /home/eve/tasks /home/eve/sessions /home/eve/code \
+         /home/eve/.codex /home/eve/.config/opencode
 
 # The package replay is best-effort, not a precondition for the desktop
 # starting: a typo'd package name in packages.txt or a transient apt mirror
@@ -31,6 +32,25 @@ if [ -f "$PACKAGES_FILE" ]; then
         set -e
     fi
 fi
+
+# Model routing for the three ACP coding agents (EVE-4). Rewritten on every
+# start rather than baked into the image: $HOME is the PVC, so a wiped or
+# fresh volume would otherwise come up with no routing at all and every
+# session would fail at its first prompt.
+#
+# Claude Code needs no file - it reads ANTHROPIC_BASE_URL from the
+# environment the registry hands its subprocess.
+LITELLM_BASE_URL="${EVE_COMPUTER_LITELLM_BASE_URL:-https://litellm.chalifour.dev}"
+for template in codex-config.toml:/home/eve/.codex/config.toml \
+                opencode.json:/home/eve/.config/opencode/opencode.json; do
+    src="/app/src/eve_computer/templates/${template%%:*}"
+    dest="${template#*:}"
+    sed "s|__LITELLM_BASE_URL__|${LITELLM_BASE_URL}|g" "$src" > "$dest"
+done
+
+# The agents read the key by name (`env_key` / `{env:...}`), so it is
+# exported here and never written into a config file on the PVC.
+export LITELLM_API_KEY="${EVE_COMPUTER_LITELLM_API_KEY:-}"
 
 # 1024x768, not 1920x1080: Anthropic's vision API downscales any screenshot
 # whose long edge exceeds ~1568px before the model reasons over it, so a

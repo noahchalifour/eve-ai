@@ -481,6 +481,19 @@ directly against the deployed pod - the same shape as
 public internet while still being unable to reach anything inside the
 cluster.
 
+**Eve's GitHub login is provisioned by hand, once, over VNC.**
+`kubectl port-forward` to the VNC port, open a terminal on her desktop,
+run `gh auth login`, and complete the browser flow as Eve's own GitHub
+account. The token lands in `/home/eve/.config/gh/hosts.yml` on the PVC -
+never a Kubernetes Secret, never an environment variable, never a line in
+this repository, exactly like her browser session cookies.
+
+Which repositories she can touch is her collaborator status on GitHub.
+There is no allow-list in this repo to keep in sync, and revocation is a
+checkbox in your account (ADR 0015). Until that login exists, every
+delegated coding session fails loudly at `git push`, with the failure
+riding in the pull-request result Eve reports.
+
 ## Aegra and `aegra.json`
 
 Eve does not run its own server process. `aegra.json` at the repository root

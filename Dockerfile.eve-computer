@@ -15,8 +15,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
 # already pulls the manylinux wheel with the linux/amd64 binary baked in.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb fluxbox x11vnc chromium fonts-liberation imagemagick xdotool \
-        git curl ripgrep ffmpeg jq sudo nodejs npm ca-certificates \
-    && npm install -g @openai/codex \
+        git curl ripgrep ffmpeg jq sudo nodejs npm ca-certificates gh \
+    && npm install -g @openai/codex @zed-industries/claude-code-acp opencode-ai \
+    && mkdir -p /opt/codex-acp \
+    && curl -fsSL "https://github.com/zed-industries/codex-acp/releases/download/v0.16.0/codex-acp-0.16.0-$(uname -m)-unknown-linux-gnu.tar.gz" \
+        | tar -xz -C /opt/codex-acp \
+    && ln -s /opt/codex-acp/codex-acp /usr/local/bin/codex-acp \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -39,6 +43,7 @@ EXPOSE 8092 5900
 # "Storage"). Passwordless sudo is deliberate too (design doc: "Image") - the
 # pod spec, not the user account, is what contains her.
 RUN useradd --system --uid 10004 --create-home --shell /bin/bash eve \
+    && mkdir -p /home/eve/sessions /home/eve/code \
     && chown -R eve:eve /app /home/eve \
     && echo "eve ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/eve \
     && chmod 0440 /etc/sudoers.d/eve
