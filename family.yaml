@@ -27,6 +27,8 @@ members:
       - mail.read
       - mail.send
       - finances
+      # The stylist: reading the wardrobe catalogue and asking what to wear.
+      - wardrobe
       - memory.write_shared
       # Phase 5c: reviewing and approving Eve-authored tool code.
       - tools.author
@@ -46,6 +48,8 @@ members:
       - mail.read
       - mail.send
       - finances
+      # The stylist: reading the wardrobe catalogue and asking what to wear.
+      - wardrobe
       - memory.write_shared
       # Phase 6: dispatching a task to her own computer.
       - computer.use

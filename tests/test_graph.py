@@ -31,6 +31,12 @@ UI_CAPABLE_CONFIG = {
 }
 
 
+def test_the_stylist_is_bound_on_every_turn():
+    from eve.graph import _static_tools
+
+    assert "ask_stylist" in [t.name for t in _static_tools()]
+
+
 def _fake_factory(_tier):
     return FakeToolCallingModel(messages=iter([AIMessage(content="Hi Noah.")]))
 

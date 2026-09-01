@@ -53,6 +53,7 @@ from eve.skills.search import search_skills
 from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
+from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
@@ -62,7 +63,14 @@ from eve.ui.actions import parse_action, ui_action
 from eve.ui.persist import persist_ui
 from eve.ui.tools import show_weather
 
-_BASE_TOOLS = [ask_home, ask_mail, ask_finances, search_skills, search_memory]
+_BASE_TOOLS = [
+    ask_home,
+    ask_mail,
+    ask_finances,
+    ask_stylist,
+    search_skills,
+    search_memory,
+]
 
 
 def _live_specs(state: EveState) -> list:
