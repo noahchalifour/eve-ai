@@ -2,13 +2,16 @@
 
                           +-> ui_action ------------------------------------> END
     START -> load_context-+
-                          +-> recall -> eve <-> tools -> persist_ui -> extract -> END
+                          +-> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
 if it misses its budget. `extract` runs after the answer has streamed and hands its
 work to a background task, so it delays neither the answer nor the end of the
 turn; the next turn on the thread joins it before reading memory (ADR 0012).
+`suggest` runs last, making one bounded REFLEX call to produce reply chips
+for the member to tap; any failure degrades to an empty list rather than
+delaying or losing the answer (ADR 0013).
 Phase 3 (this file) adds the `eve <-> tools` cycle:
 `eve` binds the static specialist/skill tools plus any dynamically-discovered
 ones (freshly materialized from state on every call) and either answers,
@@ -49,7 +52,8 @@ from eve.skills.search import search_skills
 from eve.specialists.finances import ask_finances
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
-from eve.state import EveState
+from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
+from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol
 from eve.ui import stream as ui_stream
@@ -157,7 +161,7 @@ def _tool_rounds_this_turn(messages: list) -> int:
     EveState field on purpose: every field of EveState is a required field of
     the pydantic schema `InjectedState` validates, so adding one would make
     every tool taking injected state fail wherever the new key is missing -
-    the same failure mode `_replace_dynamic_tools` exists to prevent. Reading
+    the same failure mode `_last_write_wins` exists to prevent. Reading
     backwards to the last HumanMessage also resets the budget per turn for
     free, which a checkpointed counter would have to be told to do."""
     rounds = 0
@@ -167,12 +171,6 @@ def _tool_rounds_this_turn(messages: list) -> int:
         if isinstance(message, AIMessage) and message.tool_calls:
             rounds += 1
     return rounds
-
-
-_LOOP_EXHAUSTED = (
-    "I wasn't able to finish that - I kept going back and forth with my tools "
-    "without getting anywhere. Could you try asking me a different way?"
-)
 
 
 def _route_after_context(state: EveState, config: RunnableConfig) -> str:
@@ -205,7 +203,10 @@ def _route_after_context(state: EveState, config: RunnableConfig) -> str:
 
 
 def build_graph(
-    model_factory=get_model, recall_fn=memory_recall, extract_fn=memory_extract
+    model_factory=get_model,
+    recall_fn=memory_recall,
+    extract_fn=memory_extract,
+    suggest_fn=suggest_node,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         if _tool_rounds_this_turn(state["messages"]) >= (
@@ -247,6 +248,7 @@ def build_graph(
     builder.add_node("tools", tools_node)
     builder.add_node("persist_ui", persist_ui)
     builder.add_node("extract", extract_fn)
+    builder.add_node("suggest", suggest_fn)
     builder.add_edge(START, "load_context")
     builder.add_conditional_edges(
         "load_context",
@@ -266,7 +268,13 @@ def build_graph(
     )
     builder.add_edge("tools", "eve")
     builder.add_edge("persist_ui", "extract")
-    builder.add_edge("extract", END)
+    # AFTER extract, not before. With EVE_MEMORY_EXTRACT_BACKGROUND=true (the
+    # default) `extract` returns as soon as it registers its task, so
+    # extraction's REFLEX call and the suggestion call overlap and the turn
+    # pays max() rather than sum(). Reversing them serialises two calls for
+    # no gain. See ADR 0013.
+    builder.add_edge("extract", "suggest")
+    builder.add_edge("suggest", END)
     return builder
 
 

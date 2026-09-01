@@ -61,6 +61,7 @@ async def test_ask_home_reads_real_state_through_a_running_eve_tools(
             "local_time": "2026-08-21 09:00 PDT",
         },
         "messages": [], "system_prompt": "", "memory": None, "dynamic_tools": [],
+        "suggestions": [],
     }
     result = await home_module.ask_home.ainvoke(
         {"request": "is the kitchen light on?", "state": state, "config": {"configurable": {}}}
@@ -123,6 +124,7 @@ async def _ask_how_many_lights(monkeypatch, eve_tools_server, entity_ids, final)
             "local_time": "2026-08-21 09:00 PDT",
         },
         "messages": [], "system_prompt": "", "memory": None, "dynamic_tools": [],
+        "suggestions": [],
     }
     return await home_module.ask_home.ainvoke(
         {
@@ -208,6 +210,7 @@ async def test_how_many_lights_are_on_answers_from_one_list_entities_call(
             "local_time": "2026-08-21 09:00 PDT",
         },
         "messages": [], "system_prompt": "", "memory": None, "dynamic_tools": [],
+        "suggestions": [],
     }
     result = await home_module.ask_home.ainvoke(
         {

@@ -20,6 +20,7 @@ STATE: EveState = {
     "system_prompt": "",
     "memory": None,
     "dynamic_tools": [],
+    "suggestions": [],
 }
 CONFIG = {"configurable": {}}
 

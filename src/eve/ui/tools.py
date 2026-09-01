@@ -3,7 +3,7 @@
 No arguments, no forecast from the model, no JSON from the model. The model's
 only decision is WHETHER a card is the right answer; everything in it comes
 from Home Assistant through `eve.ui.weather`. That asymmetry is the point -
-see ADR 0013.
+see ADR 0014.
 """
 
 from __future__ import annotations

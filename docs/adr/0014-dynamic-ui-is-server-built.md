@@ -1,4 +1,4 @@
-# 13. Dynamic UI surfaces are built server-side and only triggered by the model
+# 14. Dynamic UI surfaces are built server-side and only triggered by the model
 
 **Status:** Accepted
 **Date:** 2026-08-31

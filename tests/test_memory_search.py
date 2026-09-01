@@ -29,6 +29,7 @@ def _state():
         "system_prompt": "You are Eve, a family AI assistant.",
         "memory": None,
         "dynamic_tools": [],
+        "suggestions": [],
     }
 
 

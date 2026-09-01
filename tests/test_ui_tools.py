@@ -31,6 +31,7 @@ STATE = {
     "system_prompt": "",
     "memory": None,
     "dynamic_tools": [],
+    "suggestions": [],
 }
 
 PAYLOAD = {
