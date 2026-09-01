@@ -100,3 +100,144 @@ async def test_updated_at_moves_on_every_save(store):
     second = (await store.get_row("whoop", "sub-noah"))["updated_at"]
     assert second > first
     assert second > datetime.now(UTC) - timedelta(minutes=5)
+
+
+async def test_a_fresh_token_is_returned_without_refreshing(store):
+    future = datetime.now(UTC) + timedelta(hours=1)
+    await store.save("whoop", "sub-noah", "acc-1", "ref-1", future)
+    calls = []
+
+    async def refresh(token):
+        calls.append(token)
+        raise AssertionError("must not refresh a fresh token")
+
+    assert await store.access_token("whoop", "sub-noah", refresh) == "acc-1"
+    assert calls == []
+
+
+async def test_a_null_expiry_never_refreshes(store):
+    """An Oura PAT has no expiry. Treating NULL as "expired long ago" would
+    refresh it on every single call - with no refresh token to do it with."""
+    await store.save("oura", "sub-noah", "pat-1", None, None)
+
+    async def refresh(token):
+        raise AssertionError("must not refresh a non-expiring credential")
+
+    assert await store.access_token("oura", "sub-noah", refresh) == "pat-1"
+
+
+async def test_a_token_inside_the_skew_window_refreshes(store):
+    """Expiring in 30s is expiring mid-request. SKEW_SECONDS is 120."""
+    await store.save(
+        "whoop", "sub-noah", "acc-1", "ref-1",
+        datetime.now(UTC) + timedelta(seconds=30),
+    )
+
+    async def refresh(token):
+        assert token == "ref-1"
+        return {"access_token": "acc-2", "refresh_token": "ref-2", "expires_in": 3600}
+
+    assert await store.access_token("whoop", "sub-noah", refresh) == "acc-2"
+    row = await store.get_row("whoop", "sub-noah")
+    assert row["refresh_token"] == "ref-2", "the rotated token must be persisted"
+    assert row["expires_at"] > datetime.now(UTC) + timedelta(minutes=50)
+
+
+async def test_an_expired_token_refreshes(store):
+    await store.save(
+        "whoop", "sub-noah", "acc-1", "ref-1",
+        datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    async def refresh(token):
+        return {"access_token": "acc-2", "refresh_token": "ref-2", "expires_in": 3600}
+
+    assert await store.access_token("whoop", "sub-noah", refresh) == "acc-2"
+
+
+async def test_a_missing_row_raises_not_connected(store):
+    async def refresh(token):
+        raise AssertionError("nothing to refresh")
+
+    with pytest.raises(store.NotConnected):
+        await store.access_token("whoop", "sub-noah", refresh)
+
+
+async def test_a_rejected_refresh_raises_reconnect_required(store):
+    await store.save(
+        "whoop", "sub-noah", "acc-1", "ref-1",
+        datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    async def refresh(token):
+        raise RuntimeError("400 invalid_grant")
+
+    with pytest.raises(store.ReconnectRequired, match="whoop"):
+        await store.access_token("whoop", "sub-noah", refresh)
+
+
+async def test_an_expired_token_with_no_refresh_token_raises_reconnect_required(store):
+    """Expired and nothing to refresh with. Must not silently return the dead
+    access token."""
+    await store.save(
+        "whoop", "sub-noah", "acc-1", None,
+        datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    async def refresh(token):
+        raise AssertionError("there is no refresh token to use")
+
+    with pytest.raises(store.ReconnectRequired):
+        await store.access_token("whoop", "sub-noah", refresh)
+
+
+async def test_refresh_now_refreshes_even_a_fresh_token(store):
+    """The reactive path: the provider answered 401 on a token that has not
+    reached its stated expiry, because it was revoked server-side."""
+    await store.save(
+        "whoop", "sub-noah", "acc-1", "ref-1",
+        datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    async def refresh(token):
+        return {"access_token": "acc-2", "refresh_token": "ref-2", "expires_in": 3600}
+
+    assert await store.refresh_now("whoop", "sub-noah", refresh) == "acc-2"
+
+
+async def test_two_concurrent_refreshes_rotate_the_token_exactly_once(store):
+    """Concurrent rotation must preserve the one valid refresh token.
+
+    A real Postgres is required: FOR UPDATE semantics are the thing under
+    test, and a fake would assert nothing.
+    """
+    import asyncio
+
+    await store.save(
+        "whoop", "sub-noah", "acc-0", "ref-0",
+        datetime.now(UTC) - timedelta(hours=2),
+    )
+    refreshes = []
+
+    async def refresh(token):
+        refreshes.append(token)
+        # Hold the lock long enough that a naive implementation interleaves.
+        await asyncio.sleep(0.3)
+        n = len(refreshes)
+        return {
+            "access_token": f"acc-{n}",
+            "refresh_token": f"ref-{n}",
+            "expires_in": 3600,
+        }
+
+    results = await asyncio.gather(
+        store.access_token("whoop", "sub-noah", refresh),
+        store.access_token("whoop", "sub-noah", refresh),
+    )
+
+    assert len(refreshes) == 1, f"refreshed {len(refreshes)} times, must be 1"
+    assert refreshes == ["ref-0"]
+    # The second caller must return the token the first one stored, not a
+    # stale read from before the lock.
+    assert results == ["acc-1", "acc-1"]
+    assert (await store.get_row("whoop", "sub-noah"))["refresh_token"] == "ref-1"
