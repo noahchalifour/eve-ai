@@ -11,7 +11,15 @@ from __future__ import annotations
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from eve_tools import caldav_client, gmail, health, home_assistant, mcp_dispatch, monarch
+from eve_tools import (
+    caldav_client,
+    gmail,
+    health,
+    home_assistant,
+    immich,
+    mcp_dispatch,
+    monarch,
+)
 from eve_tools.settings import get_tools_settings
 
 app = FastAPI()
@@ -41,6 +49,8 @@ _HANDLERS = {
         a.get("limit", 20), a.get("category")
     ),
     "finances.get_budgets": lambda a: monarch.get_budgets(),
+    "immich.album_assets": lambda a: immich.album_assets(a["album_id"]),
+    "immich.asset_image": lambda a: immich.asset_image(a["asset_id"]),
     "health.get_recovery": lambda a: health.get_recovery(
         a["member_sub"], a.get("days", 1)
     ),
