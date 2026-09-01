@@ -91,15 +91,27 @@ def _record_date(record: dict) -> str | None:
         logger.warning("unparseable WHOOP timestamp, dropping record: %r", raw)
         return None
     offset = record.get("timezone_offset")
-    if offset:
-        try:
-            sign = -1 if str(offset).startswith("-") else 1
-            hours, _, minutes = str(offset).lstrip("+-").partition(":")
-            instant = instant + sign * timedelta(
-                hours=int(hours), minutes=int(minutes or 0)
-            )
-        except ValueError:
-            logger.warning("unparseable WHOOP timezone_offset: %r", offset)
+    if not isinstance(offset, str):
+        logger.warning("missing WHOOP timezone_offset, dropping record")
+        return None
+    try:
+        if (
+            len(offset) != 6
+            or offset[0] not in "+-"
+            or offset[3] != ":"
+            or not offset[1:3].isdigit()
+            or not offset[4:].isdigit()
+        ):
+            raise ValueError
+        hours = int(offset[1:3])
+        minutes = int(offset[4:])
+        if hours > 14 or minutes > 59:
+            raise ValueError
+        sign = -1 if offset.startswith("-") else 1
+        instant = instant + sign * timedelta(hours=hours, minutes=minutes)
+    except ValueError:
+        logger.warning("unparseable WHOOP timezone_offset, dropping record: %r", offset)
+        return None
     return instant.date().isoformat()
 
 

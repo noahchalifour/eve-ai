@@ -122,6 +122,26 @@ async def test_the_date_comes_from_the_records_own_timezone_offset():
     assert result[0]["date"] == "2026-09-01"
 
 
+@pytest.mark.parametrize("offset", [None, "not-an-offset"])
+@respx.mock
+async def test_recovery_without_a_valid_provider_timezone_offset_is_dropped(offset):
+    """A UTC calendar date is not an acceptable substitute for provider time."""
+    respx.get(f"{BASE}/v2/recovery").mock(
+        return_value=httpx.Response(200, json={"records": [
+            {**_recovery_record(), "cycle_id": 111},
+        ]})
+    )
+    cycle = {"id": 111, "start": "2026-09-02T05:30:00.000Z"}
+    if offset is not None:
+        cycle["timezone_offset"] = offset
+    respx.get(f"{BASE}/v2/cycle").mock(
+        return_value=httpx.Response(200, json={"records": [cycle]})
+    )
+    from eve_tools import whoop
+
+    assert await whoop.get_recovery("sub-noah", days=1) == []
+
+
 @respx.mock
 async def test_results_are_newest_first_and_trimmed_to_days():
     respx.get(f"{BASE}/v2/recovery").mock(
