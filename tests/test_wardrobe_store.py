@@ -16,6 +16,7 @@ async def pool(monkeypatch):
     await db.migrate()
     p = await db.get_pool()
     async with p.connection() as conn:
+        await conn.execute("TRUNCATE eve_wardrobe_asset")
         await conn.execute("TRUNCATE eve_wardrobe_item")
     yield p
     await db.close_pool()
@@ -52,6 +53,16 @@ async def test_catalogued_asset_ids_are_scoped_to_the_member(pool):
 
     assert await store.catalogued_asset_ids("sub-noah") == {"asset-1"}
     assert await store.catalogued_asset_ids("sub-kendra") == {"asset-2"}
+
+
+async def test_an_empty_successful_asset_is_still_catalogued(pool):
+    from eve.wardrobe import store
+
+    await store.insert_items("sub-noah", "asset-empty", [])
+
+    assert await store.catalogued_asset_ids("sub-noah") == {"asset-empty"}
+    assert await store.list_items("sub-noah") == []
+    assert await store.count_items("sub-noah") == 0
 
 
 async def test_deleting_assets_removes_every_garment_from_them(pool):

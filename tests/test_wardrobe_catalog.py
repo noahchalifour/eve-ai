@@ -93,6 +93,34 @@ async def test_one_photo_can_yield_several_garments(monkeypatch):
     assert [row["name"] for row in inserted[0][1]] == ["shirt a", "shirt b", "shirt c"]
 
 
+async def test_an_empty_successful_photo_is_not_redescribed_or_flagged_stale(monkeypatch):
+    catalogued = set()
+    monkeypatch.setattr(catalog, "album_for", lambda _sub: "album-1")
+    monkeypatch.setattr(
+        catalog, "invoke", _fake_invoke([{"id": "asset-empty", "filename": "empty.jpg"}])
+    )
+    monkeypatch.setattr(
+        catalog.store, "catalogued_asset_ids", AsyncMock(side_effect=lambda _sub: set(catalogued))
+    )
+
+    async def _insert(_member_sub, asset_id, _items):
+        catalogued.add(asset_id)
+
+    monkeypatch.setattr(catalog.store, "insert_items", AsyncMock(side_effect=_insert))
+    monkeypatch.setattr(catalog.store, "delete_assets", AsyncMock())
+    describe = AsyncMock(return_value=[])
+    monkeypatch.setattr(catalog.vision, "describe", describe)
+
+    await catalog.sync("sub-noah")
+    await catalog.sync("sub-noah")
+    monkeypatch.setattr(catalog.store, "list_items", AsyncMock(return_value=[{"name": "shirt", "category": "top", "attrs": {}}]))
+
+    rendered = await catalog.render_wardrobe("sub-noah")
+
+    assert describe.await_count == 1
+    assert "not been catalogued" not in rendered
+
+
 async def test_assets_that_left_the_album_are_deleted(monkeypatch):
     _patch_common(monkeypatch, catalogued={"asset-1", "asset-gone"})
     monkeypatch.setattr(
@@ -184,6 +212,9 @@ async def test_render_groups_by_category_and_names_every_item(monkeypatch):
         ),
     )
     monkeypatch.setattr(catalog, "invoke", _fake_invoke([{"id": "a", "filename": "x"}, {"id": "b", "filename": "y"}]))
+    monkeypatch.setattr(
+        catalog.store, "catalogued_asset_ids", AsyncMock(return_value={"a", "b"})
+    )
 
     rendered = await catalog.render_wardrobe("sub-noah")
 

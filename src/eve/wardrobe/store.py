@@ -1,4 +1,4 @@
-"""Every eve_wardrobe_item SQL statement. Same discipline as
+"""Every wardrobe catalogue SQL statement. Same discipline as
 `eve/computer/store.py`: one module owns the table, and nothing else in the
 codebase writes SQL against it.
 """
@@ -12,13 +12,13 @@ from eve.memory.db import get_pool
 
 
 async def catalogued_asset_ids(member_sub: str) -> set[str]:
-    """Which assets this member's catalogue has already seen. The sync diffs
-    the album against this rather than re-describing every photograph."""
+    """Which assets this member's catalogue has already seen, including
+    successful photographs that contained no garments."""
     pool = await get_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT DISTINCT asset_id FROM eve_wardrobe_item WHERE member_sub = %s",
+                "SELECT asset_id FROM eve_wardrobe_asset WHERE member_sub = %s",
                 (member_sub,),
             )
             return {row[0] for row in await cur.fetchall()}
@@ -34,6 +34,12 @@ async def insert_items(member_sub: str, asset_id: str, items: list[dict]) -> Non
     """
     pool = await get_pool()
     async with pool.connection() as conn, conn.transaction():
+        await conn.execute(
+            "INSERT INTO eve_wardrobe_asset (member_sub, asset_id) VALUES (%s, %s)"
+            " ON CONFLICT (member_sub, asset_id)"
+            " DO UPDATE SET catalogued_at = now()",
+            (member_sub, asset_id),
+        )
         await conn.execute(
             "DELETE FROM eve_wardrobe_item WHERE member_sub = %s AND asset_id = %s",
             (member_sub, asset_id),
@@ -60,7 +66,12 @@ async def delete_assets(member_sub: str, asset_ids: list[str]) -> None:
     if not asset_ids:
         return
     pool = await get_pool()
-    async with pool.connection() as conn:
+    async with pool.connection() as conn, conn.transaction():
+        await conn.execute(
+            "DELETE FROM eve_wardrobe_asset"
+            " WHERE member_sub = %s AND asset_id = ANY(%s)",
+            (member_sub, list(asset_ids)),
+        )
         await conn.execute(
             "DELETE FROM eve_wardrobe_item"
             " WHERE member_sub = %s AND asset_id = ANY(%s)",
