@@ -172,6 +172,30 @@ async def test_quiet_hours_do_not_suppress_an_urgent_signal(wiring):
     assert wiring["delivered"] == ["sub-noah"]
 
 
+async def test_quiet_hours_do_not_suppress_a_computer_signal(wiring):
+    """(fix wave item 1) A computer signal bypasses quiet hours exactly like
+    an urgent one - a direct answer to a direct request isn't what the
+    quiet-hours gate exists to suppress - but without setting `urgent=True`,
+    so it must not trip the URGENT-bypass warning either (asserted below)."""
+    assert (
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=NIGHT
+        )
+        == "sent"
+    )
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_quiet_hours_bypass_for_a_computer_signal_is_not_logged_urgent(
+    wiring, caplog
+):
+    with caplog.at_level("WARNING"):
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=NIGHT
+        )
+    assert not any("URGENT bypass" in r.getMessage() for r in caplog.records)
+
+
 async def test_the_cap_suppresses_once_it_is_reached(wiring):
     wiring["counts"]["sub-noah"] = 2
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "capped"
@@ -184,6 +208,20 @@ async def test_an_urgent_signal_bypasses_the_cap(wiring):
     wiring["counts"]["sub-noah"] = 99
     wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-noah"], urgent=True, why="fire")
     assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
+
+
+async def test_a_computer_signal_bypasses_the_cap(wiring):
+    """(fix wave item 1) A member already at the daily cap still gets a
+    computer task's result - the cap exists to throttle ambient noise, not
+    to drop the answer to something they explicitly asked for."""
+    wiring["counts"]["sub-noah"] = 99
+    assert (
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=MIDDAY
+        )
+        == "sent"
+    )
+    assert wiring["delivered"] == ["sub-noah"]
 
 
 async def test_urgent_cannot_bypass_the_permission_gate(wiring):

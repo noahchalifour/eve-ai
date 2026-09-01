@@ -4,6 +4,8 @@ in memory and loses on restart (design doc: "Storage")."""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -53,6 +55,25 @@ async def mark_finished(task_id: str, status: str, result: dict) -> None:
             " updated_at = now(), finished_at = now() WHERE id = %s",
             (status, Jsonb(result), task_id),
         )
+
+
+async def recently_resolved_tasks(since: datetime) -> list[dict]:
+    """Every task that resolved (finished/failed/stale) since `since` -
+    not just ones that resolved on this exact poll tick. Lets the ambient
+    source re-derive a signal for a task whose delivery was suppressed
+    (quiet hours, daily cap) or failed (deferred), the same way every
+    other polled source re-derives from live upstream state each tick."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM eve_computer_task"
+                " WHERE status IN ('finished', 'failed', 'stale')"
+                "   AND finished_at >= %s"
+                " ORDER BY finished_at",
+                (since,),
+            )
+            return list(await cur.fetchall())
 
 
 async def mark_stale(task_id: str) -> None:

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -69,3 +71,60 @@ async def test_mark_stale_sets_status_and_finished_at(pool):
     row = await get("t1")
     assert row["status"] == "stale"
     assert row["finished_at"] is not None
+
+
+async def _finish_at(pool, task_id: str, status: str, finished_at: datetime) -> None:
+    """Backdates a task's `finished_at` directly - `mark_finished`/`mark_stale`
+    always stamp `now()`, so the `since` filter can't otherwise be exercised
+    against a task that resolved before some cutoff."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_computer_task SET status = %s, finished_at = %s WHERE id = %s",
+            (status, finished_at, task_id),
+        )
+
+
+async def test_recently_resolved_tasks_filters_by_since_and_status(pool):
+    from eve.computer.store import create_task, recently_resolved_tasks
+
+    now = datetime.now(UTC)
+    old = now - timedelta(hours=48)
+    recent = now - timedelta(hours=1)
+
+    await create_task("old-finished", "sub-noah", "thread-1", "goal old")
+    await _finish_at(pool, "old-finished", "finished", old)
+
+    await create_task("recent-finished", "sub-noah", "thread-2", "goal recent")
+    await _finish_at(pool, "recent-finished", "finished", recent)
+
+    await create_task("recent-failed", "sub-noah", "thread-3", "goal failed")
+    await _finish_at(pool, "recent-failed", "failed", recent)
+
+    await create_task("recent-stale", "sub-noah", "thread-4", "goal stale")
+    await _finish_at(pool, "recent-stale", "stale", recent)
+
+    await create_task("still-running", "sub-noah", "thread-5", "goal running")
+
+    since = now - timedelta(hours=24)
+    rows = await recently_resolved_tasks(since=since)
+    ids = {row["id"] for row in rows}
+
+    # Older than `since`: excluded despite being resolved.
+    assert "old-finished" not in ids
+    # Never resolved: excluded regardless of `since`.
+    assert "still-running" not in ids
+    # Resolved within the window, any terminal status: included.
+    assert ids == {"recent-finished", "recent-failed", "recent-stale"}
+
+
+async def test_recently_resolved_tasks_orders_by_finished_at(pool):
+    from eve.computer.store import create_task, recently_resolved_tasks
+
+    now = datetime.now(UTC)
+    await create_task("second", "sub-noah", "thread-1", "goal")
+    await _finish_at(pool, "second", "finished", now - timedelta(minutes=1))
+    await create_task("first", "sub-noah", "thread-2", "goal")
+    await _finish_at(pool, "first", "finished", now - timedelta(minutes=10))
+
+    rows = await recently_resolved_tasks(since=now - timedelta(hours=24))
+    assert [row["id"] for row in rows] == ["first", "second"]

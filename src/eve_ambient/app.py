@@ -116,7 +116,7 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
             # `has_any` and the priming `mark_seen` live inside this same
             # try/except: a transient database error here must not escape
             # `poll_once` and skip every source after this one for the tick.
-            if not await store.has_any(source.name):
+            if source.name != "computer" and not await store.has_any(source.name):
                 if member_failed:
                     # Priming only happens once every member has actually
                     # been polled successfully. `signals` here can't be

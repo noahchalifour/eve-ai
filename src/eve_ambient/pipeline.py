@@ -108,7 +108,7 @@ async def handle_signal(
             already_known = True
             continue
 
-        if not verdict.urgent:
+        if not verdict.urgent and signal.source != "computer":
             local = gates.local_now(member.timezone, now)
             if gates.in_quiet_hours(local, settings.ambient_quiet_hours):
                 logger.info("holding %s for %s: quiet hours", signal.key, sub)
@@ -121,7 +121,11 @@ async def handle_signal(
                 logger.info("holding %s for %s: daily cap", signal.key, sub)
                 outcomes.append("capped")
                 continue
-        else:
+        elif verdict.urgent:
+            # Not `else:` (fix wave item 1): a computer signal also takes
+            # this bypass now, and a direct answer to a direct request is
+            # not what this warning is about - only a genuinely `urgent`
+            # verdict logs it.
             logger.warning(
                 "URGENT bypass of cap and quiet hours: source=%s key=%s member=%s why=%s",
                 signal.source, signal.key, sub, verdict.why,
