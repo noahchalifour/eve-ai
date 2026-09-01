@@ -49,6 +49,24 @@ async def test_invoke_dispatches_immich_album_assets(monkeypatch):
     mock_album.assert_awaited_once_with("album-1")
 
 
+async def test_invoke_dispatches_immich_asset_image(monkeypatch):
+    mock_image = AsyncMock(
+        return_value={"asset_id": "asset-1", "content_type": "image/jpeg", "base64": "aW1hZ2U="}
+    )
+    monkeypatch.setattr("eve_tools.app.immich.asset_image", mock_image)
+    async with await _client() as client:
+        response = await client.post(
+            "/invoke",
+            json={"tool": "immich.asset_image", "arguments": {"asset_id": "asset-1"}},
+            headers={"Authorization": "Bearer test-key"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {
+        "result": {"asset_id": "asset-1", "content_type": "image/jpeg", "base64": "aW1hZ2U="}
+    }
+    mock_image.assert_awaited_once_with("asset-1")
+
+
 async def test_invoke_returns_404_for_an_unknown_tool():
     async with await _client() as client:
         response = await client.post(

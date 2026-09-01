@@ -15,6 +15,8 @@ import httpx
 from eve_tools.settings import get_tools_settings
 
 _MAX_ASSETS = 500
+# ponytail: a flat cap. The upgrade path is raising it or teaching the
+# catalogue to page.
 _transport_for_test: httpx.MockTransport | None = None
 
 
