@@ -1,0 +1,47 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
+
+# The working set (design doc: "Image"): Xvfb + a window manager + x11vnc +
+# Chromium give her a desktop reachable over VNC; git/curl/ripgrep/ffmpeg/jq
+# and Codex CLI are the shell she works in. Anything durable she installs on
+# top gets replayed by bootstrap.sh (design doc: "Storage") rather than
+# rebuilt into the image every time.
+#
+# No separate Claude Code CLI install here: claude-agent-sdk's wheel bundles
+# a native `claude` binary per platform (see
+# claude_agent_sdk/_internal/transport/subprocess_cli.py's
+# _find_bundled_cli(), checked before any PATH search) - `uv sync` below
+# already pulls the manylinux wheel with the linux/amd64 binary baked in.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb fluxbox x11vnc chromium fonts-liberation imagemagick xdotool \
+        git curl ripgrep ffmpeg jq sudo nodejs npm ca-certificates \
+    && npm install -g @openai/codex \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY src/eve_computer ./src/eve_computer
+RUN chmod +x ./src/eve_computer/bootstrap.sh
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PORT=8092 \
+    DISPLAY=:99
+
+EXPOSE 8092 5900
+
+# --create-home, unlike every other image's --no-create-home: this is the
+# one deploy with a persistent PVC-backed home directory (design doc:
+# "Storage"). Passwordless sudo is deliberate too (design doc: "Image") - the
+# pod spec, not the user account, is what contains her.
+RUN useradd --system --uid 10004 --create-home --shell /bin/bash eve \
+    && chown -R eve:eve /app /home/eve \
+    && echo "eve ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/eve \
+    && chmod 0440 /etc/sudoers.d/eve
+USER 10004
+
+CMD ["sh", "-c", "/app/src/eve_computer/bootstrap.sh && exec uvicorn eve_computer.app:app --host 0.0.0.0 --port 8092"]

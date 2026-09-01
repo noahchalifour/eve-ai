@@ -12,6 +12,7 @@ dependencies = [
     "aegra-cli>=0.10.3",
     "alembic>=1.14.0",
     "caldav>=3.2.1",
+    "claude-agent-sdk>=0.2.149",
     "fastapi>=0.141.1",
     # monarchmoney 0.1.15 declares gql>=3.4 but calls the gql 3.x
     # execute_async(document=..., operation_name=..., variable_values=...)
