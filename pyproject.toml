@@ -63,6 +63,11 @@ dev = [
 # `uv sync --frozen --no-dev --no-install-project` never pulls it in.
 computer = [
     "claude-agent-sdk>=0.2.149",
+    # The ACP client half of EVE-4. Kept in this group for the same reason
+    # claude-agent-sdk is: only Dockerfile.eve-computer runs `uv sync --group
+    # computer`, and eve-sandbox's whole security argument (ADR 0010) rests on
+    # its image containing nothing it does not need.
+    "agent-client-protocol>=0.5.0",
 ]
 
 [tool.pytest.ini_options]
