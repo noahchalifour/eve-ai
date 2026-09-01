@@ -22,19 +22,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Asset state is deliberately separate from garment rows: a successful
-    # vision pass can find no clothes, and that still must stop normal syncs
-    # from re-processing the photograph forever.
-    op.execute(
-        """
-        CREATE TABLE eve_wardrobe_asset (
-          member_sub     text        NOT NULL,
-          asset_id       text        NOT NULL,
-          catalogued_at  timestamptz NOT NULL DEFAULT now(),
-          PRIMARY KEY (member_sub, asset_id)
-        )
-        """
-    )
     op.execute(
         """
         CREATE TABLE eve_wardrobe_item (
@@ -58,5 +45,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE eve_wardrobe_asset")
     op.execute("DROP TABLE eve_wardrobe_item")
