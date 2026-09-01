@@ -22,6 +22,7 @@ from opentelemetry import trace
 
 from eve.models import Tier, get_model
 from eve.settings import get_settings
+from eve.skills.specialist_search import build_skills_search
 from eve.specialists.permissions import permission_denial
 from eve.state import EveState
 
@@ -87,7 +88,11 @@ def build_specialist(
         if "agent" not in agent_holder:
             agent_holder["agent"] = create_agent(
                 model_factory(Tier.MECHANICAL),
-                tools,
+                # Every specialist gets its own scoped skills search from the
+                # factory rather than from four separate wirings, so the
+                # capability arrives with the mechanism. A specialist with no
+                # skills searches an empty set and is told so.
+                [*tools, build_skills_search(name)],
                 system_prompt=SystemMessage(
                     system_prompt, additional_kwargs=_OPENAI_DEVELOPER_ROLE
                 ),
