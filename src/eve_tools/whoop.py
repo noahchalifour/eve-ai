@@ -181,7 +181,7 @@ async def get_sleep(member_sub: str, days: int) -> list[dict]:
         stages = stages if isinstance(stages, dict) else {}
         in_bed = _num(stages.get("total_in_bed_time_milli"))
         awake = _num(stages.get("total_awake_time_milli"))
-        asleep = None if in_bed is None else in_bed - (awake or 0)
+        asleep = None if in_bed is None or awake is None else in_bed - awake
         entries.append({
             "date": date,
             "source": PROVIDER,

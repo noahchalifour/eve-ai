@@ -354,3 +354,26 @@ async def test_a_day_with_no_workouts_gets_an_empty_list_not_none():
 
     result = await whoop.get_activity("sub-noah", days=1)
     assert result[0]["workouts"] == []
+
+
+@pytest.mark.parametrize("awake", [None, "not-a-number"])
+@respx.mock
+async def test_partial_sleep_stage_data_does_not_fabricate_sleep_hours(awake):
+    stages = {"total_in_bed_time_milli": 28_800_000}
+    if awake is not None:
+        stages["total_awake_time_milli"] = awake
+    respx.get(f"{BASE}/v2/activity/sleep").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": "partial", "start": "2026-09-01T06:10:00.000Z",
+            "timezone_offset": "-07:00", "nap": False,
+            "score_state": "SCORED",
+            "score": {
+                "stage_summary": stages,
+                "sleep_performance_percentage": 88,
+            },
+        }]})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_sleep("sub-noah", days=1)
+    assert result[0]["hours"] is None
