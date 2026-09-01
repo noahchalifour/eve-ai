@@ -8,12 +8,27 @@ set -eu
 PACKAGES_FILE="/home/eve/.eve/packages.txt"
 mkdir -p /home/eve/.eve /home/eve/tasks
 
+# The package replay is best-effort, not a precondition for the desktop
+# starting: a typo'd package name in packages.txt or a transient apt mirror
+# failure must not crash-loop the whole pod (the self-heal mechanism
+# becoming the outage, on a file nobody but the automated worker writes).
+# `set +e`/`set -e` brackets only this section - `set -u` stays on for the
+# rest of the script.
 if [ -f "$PACKAGES_FILE" ]; then
     PACKAGES=$(grep -v '^[[:space:]]*#' "$PACKAGES_FILE" | tr '\n' ' ')
     if [ -n "$PACKAGES" ]; then
+        set +e
         sudo apt-get update
-        # shellcheck disable=SC2086
-        sudo apt-get install -y --no-install-recommends $PACKAGES
+        if [ $? -ne 0 ]; then
+            echo "bootstrap.sh: apt-get update failed; continuing without replaying packages.txt" >&2
+        else
+            # shellcheck disable=SC2086
+            sudo apt-get install -y --no-install-recommends $PACKAGES
+            if [ $? -ne 0 ]; then
+                echo "bootstrap.sh: apt-get install failed for one or more packages in packages.txt; continuing" >&2
+            fi
+        fi
+        set -e
     fi
 fi
 
