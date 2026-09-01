@@ -5,6 +5,50 @@ from eve.skills.registry import load_skills
 from eve.skills.types import DynamicToolSpec
 
 
+def test_a_skill_without_a_specialist_key_belongs_to_eve():
+    from eve.skills.registry import parse_skill_text
+
+    name, description, body, specialist = parse_skill_text(
+        "---\nname: greet\ndescription: how to greet\n---\nUse their name.", "fallback"
+    )
+
+    assert name == "greet"
+    assert description == "how to greet"
+    assert body == "Use their name."
+    assert specialist is None
+
+
+def test_a_specialist_key_is_parsed():
+    from eve.skills.registry import parse_skill_text
+
+    _, _, _, specialist = parse_skill_text(
+        "---\nname: dress\ndescription: d\nspecialist: stylist\n---\nBody.", "fallback"
+    )
+
+    assert specialist == "stylist"
+
+
+def test_load_skills_carries_the_specialist_through(tmp_path, monkeypatch):
+    from eve.settings import get_settings
+    from eve.skills.registry import load_skills
+
+    (tmp_path / "dress-for-the-day").mkdir()
+    (tmp_path / "dress-for-the-day" / "SKILL.md").write_text(
+        "---\nname: dress-for-the-day\ndescription: outfits\nspecialist: stylist\n---\nBody."
+    )
+    (tmp_path / "greet-warmly").mkdir()
+    (tmp_path / "greet-warmly" / "SKILL.md").write_text(
+        "---\nname: greet-warmly\ndescription: greeting\n---\nBody."
+    )
+    monkeypatch.setenv("EVE_SKILLS_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    by_name = {s.name: s for s in load_skills()}
+
+    assert by_name["dress-for-the-day"].specialist == "stylist"
+    assert by_name["greet-warmly"].specialist is None
+
+
 def test_loads_a_skill_md_with_frontmatter(tmp_path, monkeypatch):
     skill_dir = tmp_path / "greet-warmly"
     skill_dir.mkdir()
