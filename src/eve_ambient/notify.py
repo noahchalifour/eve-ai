@@ -132,20 +132,28 @@ def _click_url(thread_id: str) -> str | None:
 
 
 async def deliver(
-    signal: Signal, member: Member, verdict: FilterVerdict, notifier: Notifier
+    signal: Signal, member: Member, verdict: FilterVerdict, notifier: Notifier,
+    *, thread_id: str | None = None,
 ) -> str | None:
+    """`thread_id`, when given, is a real conversation thread the member
+    already owns (design doc: "compose a turn as Eve on the originating
+    thread," for the `computer` source) - it is never created here and never
+    discarded here, unlike the fresh, ambient-only thread every other source
+    still gets."""
+    reused = thread_id is not None
     async with _client(member.sub) as client:
-        try:
-            thread = await client.threads.create(
-                metadata={
-                    "ambient": True,
-                    "source": signal.source,
-                    "signal_key": signal.key,
-                }
-            )
-            thread_id = thread["thread_id"]
-        except Exception as exc:
-            raise DeliveryError(f"could not create a thread: {exc}") from exc
+        if not reused:
+            try:
+                thread = await client.threads.create(
+                    metadata={
+                        "ambient": True,
+                        "source": signal.source,
+                        "signal_key": signal.key,
+                    }
+                )
+                thread_id = thread["thread_id"]
+            except Exception as exc:
+                raise DeliveryError(f"could not create a thread: {exc}") from exc
 
         try:
             state = await client.runs.wait(
@@ -165,7 +173,8 @@ async def deliver(
                 "ambient run failed member=%s key=%s thread=%s",
                 member.sub, signal.key, thread_id, exc_info=True,
             )
-            await _discard(client, thread_id)
+            if not reused:
+                await _discard(client, thread_id)
             raise DeliveryError(f"the compose turn failed: {exc}") from exc
 
         tools = _tools_called(state)
@@ -185,12 +194,14 @@ async def deliver(
                 "ambient run produced no final answer member=%s key=%s thread=%s",
                 member.sub, signal.key, thread_id,
             )
-            await _discard(client, thread_id)
+            if not reused:
+                await _discard(client, thread_id)
             raise DeliveryError("the compose turn produced no final answer")
 
         if _is_veto(text):
             logger.info("Eve declined to speak about %s; discarding the thread", signal.key)
-            await _discard(client, thread_id)
+            if not reused:
+                await _discard(client, thread_id)
             return None
 
         title = "Eve - urgent" if verdict.urgent else "Eve"

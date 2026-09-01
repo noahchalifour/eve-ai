@@ -351,6 +351,58 @@ async def test_block_style_content_is_flattened(monkeypatch):
     assert notifier.calls[0]["body"] == "Leave by 2:30."
 
 
+async def test_a_passed_thread_id_is_reused_instead_of_creating_one(monkeypatch):
+    threads = FakeThreads()
+    client = _with_client(monkeypatch, FakeClient(threads=threads))
+
+    thread_id = await notify.deliver(
+        SIGNAL, MEMBER, VERDICT, RecordingNotifier(), thread_id="existing-thread"
+    )
+
+    assert thread_id == "existing-thread"
+    assert threads.created == []
+    assert client.runs.inputs  # the turn still ran
+
+
+async def test_a_reused_thread_is_never_discarded_on_veto(monkeypatch):
+    threads = FakeThreads()
+    _with_client(monkeypatch, FakeClient(threads=threads, runs=FakeRuns(final_text="NOTHING")))
+
+    result = await notify.deliver(
+        SIGNAL, MEMBER, VERDICT, RecordingNotifier(), thread_id="existing-thread"
+    )
+
+    assert result is None
+    assert threads.deleted == []
+
+
+async def test_a_reused_thread_is_never_discarded_on_run_failure(monkeypatch):
+    threads = FakeThreads()
+    _with_client(
+        monkeypatch,
+        FakeClient(threads=threads, runs=FakeRuns(error=RuntimeError("aegra down"))),
+    )
+
+    with pytest.raises(notify.DeliveryError):
+        await notify.deliver(
+            SIGNAL, MEMBER, VERDICT, RecordingNotifier(), thread_id="existing-thread"
+        )
+
+    assert threads.deleted == []
+
+
+async def test_without_a_thread_id_behaviour_is_unchanged(monkeypatch):
+    """Every existing caller (calendar, mail, finances, home) passes no
+    thread_id and must keep creating a fresh one."""
+    threads = FakeThreads()
+    _with_client(monkeypatch, FakeClient(threads=threads))
+
+    thread_id = await notify.deliver(SIGNAL, MEMBER, VERDICT, RecordingNotifier())
+
+    assert thread_id == "thread-1"
+    assert threads.created == [{"ambient": True, "source": "calendar", "signal_key": "uid-1:start:x"}]
+
+
 def test_compose_prompt_uses_the_shared_marker():
     """notify.py must not hand-roll the prefix: the extract guard matches on
     the constant, so a divergence here disables authoring protection."""
