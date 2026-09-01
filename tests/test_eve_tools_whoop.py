@@ -228,3 +228,129 @@ async def test_refresh_posts_the_form_whoop_documents():
     body = dict(pair.split("=") for pair in route.calls[0].request.content.decode().split("&"))
     assert body["grant_type"] == "refresh_token"
     assert body["refresh_token"] == "ref-1"
+
+
+@respx.mock
+async def test_sleep_converts_stage_milliseconds_to_hours():
+    respx.get(f"{BASE}/v2/activity/sleep").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": "aaaa0000-0000-4000-8000-000000000000",
+            "start": "2026-09-01T06:10:00.000Z",
+            "timezone_offset": "-07:00",
+            "nap": False,
+            "score_state": "SCORED",
+            "score": {
+                "stage_summary": {
+                    "total_in_bed_time_milli": 28_800_000,
+                    "total_awake_time_milli": 1_800_000,
+                    "total_slow_wave_sleep_time_milli": 5_400_000,
+                    "total_rem_sleep_time_milli": 7_200_000,
+                },
+                "sleep_performance_percentage": 88,
+                "sleep_efficiency_percentage": 93.5,
+            },
+        }]})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_sleep("sub-noah", days=1)
+    assert result == [{
+        "date": "2026-08-31",
+        "source": "whoop",
+        "score_0_100": 88,
+        "hours": 7.5,
+        "deep_hours": 1.5,
+        "rem_hours": 2.0,
+        "efficiency_pct": 93.5,
+        "hrv_ms": None,
+        "resting_hr": None,
+    }]
+
+
+@respx.mock
+async def test_a_nap_does_not_displace_the_nights_sleep():
+    respx.get(f"{BASE}/v2/activity/sleep").mock(
+        return_value=httpx.Response(200, json={"records": [
+            {"id": "n", "start": "2026-09-01T21:00:00.000Z",
+             "timezone_offset": "-07:00", "nap": True, "score_state": "SCORED",
+             "score": {"stage_summary": {"total_in_bed_time_milli": 1_800_000,
+                                         "total_awake_time_milli": 0},
+                       "sleep_performance_percentage": 20}},
+            {"id": "m", "start": "2026-09-01T14:00:00.000Z",
+             "timezone_offset": "-07:00", "nap": False, "score_state": "SCORED",
+             "score": {"stage_summary": {"total_in_bed_time_milli": 28_800_000,
+                                         "total_awake_time_milli": 1_800_000},
+                       "sleep_performance_percentage": 88}},
+        ]})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_sleep("sub-noah", days=1)
+    assert len(result) == 1
+    assert result[0]["score_0_100"] == 88
+
+
+@respx.mock
+async def test_unscored_sleep_yields_nulls_not_zero_hours():
+    respx.get(f"{BASE}/v2/activity/sleep").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": "a", "start": "2026-09-01T06:10:00.000Z",
+            "timezone_offset": "-07:00", "nap": False,
+            "score_state": "PENDING_SCORE",
+        }]})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_sleep("sub-noah", days=1)
+    assert result[0]["hours"] is None
+    assert result[0]["deep_hours"] is None
+
+
+@respx.mock
+async def test_activity_maps_strain_and_converts_kilojoules_to_calories():
+    respx.get(f"{BASE}/v2/cycle").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": 93845, "start": "2026-09-01T14:00:00.000Z",
+            "timezone_offset": "-07:00", "score_state": "SCORED",
+            "score": {"strain": 14.2, "kilojoule": 3397.0,
+                      "average_heart_rate": 78, "max_heart_rate": 171},
+        }]})
+    )
+    respx.get(f"{BASE}/v2/activity/workout").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": "w", "start": "2026-09-01T16:00:00.000Z",
+            "end": "2026-09-01T17:02:00.000Z", "timezone_offset": "-07:00",
+            "sport_name": "cycling", "score_state": "SCORED",
+            "score": {"average_heart_rate": 138, "strain": 9.1},
+        }]})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_activity("sub-noah", days=1)
+    assert result == [{
+        "date": "2026-09-01",
+        "source": "whoop",
+        "score_0_100": None,
+        "strain_0_21": 14.2,
+        "active_calories": 812,
+        "steps": None,
+        "workouts": [{"sport": "cycling", "duration_min": 62, "avg_hr": 138}],
+    }]
+
+
+@respx.mock
+async def test_a_day_with_no_workouts_gets_an_empty_list_not_none():
+    respx.get(f"{BASE}/v2/cycle").mock(
+        return_value=httpx.Response(200, json={"records": [{
+            "id": 1, "start": "2026-09-01T14:00:00.000Z",
+            "timezone_offset": "-07:00", "score_state": "SCORED",
+            "score": {"strain": 4.1, "kilojoule": 1000.0},
+        }]})
+    )
+    respx.get(f"{BASE}/v2/activity/workout").mock(
+        return_value=httpx.Response(200, json={"records": []})
+    )
+    from eve_tools import whoop
+
+    result = await whoop.get_activity("sub-noah", days=1)
+    assert result[0]["workouts"] == []

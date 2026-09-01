@@ -157,3 +157,98 @@ async def get_recovery(member_sub: str, days: int) -> list[dict]:
             "temp_deviation_c": None,
         })
     return _newest_first(entries, days)
+
+
+def _hours(millis: object) -> float | None:
+    value = _num(millis)
+    return None if value is None else round(value / 3_600_000, 2)
+
+
+async def get_sleep(member_sub: str, days: int) -> list[dict]:
+    raw = await _get(member_sub, "/v2/activity/sleep", _window(days))
+    entries = []
+    for record in raw.get("records") or []:
+        if not isinstance(record, dict):
+            logger.warning("WHOOP sleep record was not a dict: %r", record)
+            continue
+        if record.get("nap"):
+            continue
+        date = _record_date(record)
+        if not date:
+            continue
+        score = _score(record)
+        stages = score.get("stage_summary")
+        stages = stages if isinstance(stages, dict) else {}
+        in_bed = _num(stages.get("total_in_bed_time_milli"))
+        awake = _num(stages.get("total_awake_time_milli"))
+        asleep = None if in_bed is None else in_bed - (awake or 0)
+        entries.append({
+            "date": date,
+            "source": PROVIDER,
+            "score_0_100": _num(score.get("sleep_performance_percentage")),
+            "hours": _hours(asleep),
+            "deep_hours": _hours(stages.get("total_slow_wave_sleep_time_milli")),
+            "rem_hours": _hours(stages.get("total_rem_sleep_time_milli")),
+            "efficiency_pct": _num(score.get("sleep_efficiency_percentage")),
+            "hrv_ms": None,
+            "resting_hr": None,
+        })
+    return _newest_first(entries, days)
+
+
+def _workouts_by_date(records: list) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        date = _record_date(record)
+        if not date:
+            continue
+        start, end = record.get("start"), record.get("end")
+        duration = None
+        if start and end:
+            try:
+                duration = round(
+                    (
+                        datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+                        - datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                    ).total_seconds()
+                    / 60
+                )
+            except ValueError:
+                logger.warning("unparseable WHOOP workout bounds: %r %r", start, end)
+        grouped.setdefault(date, []).append({
+            "sport": record.get("sport_name"),
+            "duration_min": duration,
+            "avg_hr": _num(_score(record).get("average_heart_rate")),
+        })
+    return grouped
+
+
+async def get_activity(member_sub: str, days: int) -> list[dict]:
+    raw = await _get(member_sub, "/v2/cycle", _window(days))
+    workouts = _workouts_by_date(
+        (await _get(member_sub, "/v2/activity/workout", _window(days))).get("records")
+    )
+    entries = []
+    for record in raw.get("records") or []:
+        if not isinstance(record, dict):
+            logger.warning("WHOOP cycle record was not a dict: %r", record)
+            continue
+        date = _record_date(record)
+        if not date:
+            continue
+        score = _score(record)
+        kilojoules = _num(score.get("kilojoule"))
+        entries.append({
+            "date": date,
+            "source": PROVIDER,
+            "score_0_100": None,
+            "strain_0_21": _num(score.get("strain")),
+            "active_calories": (
+                None if kilojoules is None else round(kilojoules / 4.184)
+            ),
+            "steps": None,
+            "workouts": workouts.get(date, []),
+        })
+    return _newest_first(entries, days)
