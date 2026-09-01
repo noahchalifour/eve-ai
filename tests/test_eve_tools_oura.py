@@ -176,3 +176,89 @@ async def test_refresh_posts_the_form_oura_documents():
     body = dict(pair.split("=") for pair in route.calls[0].request.content.decode().split("&"))
     assert body["grant_type"] == "refresh_token"
     assert body["refresh_token"] == "ref-1"
+
+
+@respx.mock
+async def test_sleep_joins_the_daily_score_with_the_detailed_durations():
+    """daily_sleep carries the score; the `sleep` collection carries the
+    durations. Neither has both."""
+    respx.get(f"{BASE}/daily_sleep").mock(
+        return_value=httpx.Response(200, json={"data": [
+            {"id": "ds-1", "day": "2026-09-01", "score": 81},
+        ]})
+    )
+    respx.get(f"{BASE}/sleep").mock(
+        return_value=httpx.Response(200, json={"data": [_sleep_record()]})
+    )
+    from eve_tools import oura
+
+    result = await oura.get_sleep("sub-noah", days=1)
+    assert result == [{
+        "date": "2026-09-01",
+        "source": "oura",
+        "score_0_100": 81,
+        "hours": 7.4,
+        "deep_hours": 1.2,
+        "rem_hours": 1.8,
+        "efficiency_pct": 92,
+        "hrv_ms": 61,
+        "resting_hr": 48,
+    }]
+
+
+@respx.mock
+async def test_a_daily_score_with_no_detailed_row_nulls_the_durations():
+    respx.get(f"{BASE}/daily_sleep").mock(
+        return_value=httpx.Response(200, json={"data": [
+            {"id": "ds-1", "day": "2026-09-01", "score": 81},
+        ]})
+    )
+    respx.get(f"{BASE}/sleep").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    from eve_tools import oura
+
+    result = await oura.get_sleep("sub-noah", days=1)
+    assert result[0]["hours"] is None, "zero hours would read as 'you did not sleep'"
+    assert result[0]["score_0_100"] == 81
+
+
+@respx.mock
+async def test_activity_maps_score_calories_and_steps():
+    respx.get(f"{BASE}/daily_activity").mock(
+        return_value=httpx.Response(200, json={"data": [{
+            "id": "da-1", "day": "2026-09-01", "score": 88,
+            "active_calories": 612, "steps": 11_284,
+            "target_calories": 500,
+        }]})
+    )
+    from eve_tools import oura
+
+    result = await oura.get_activity("sub-noah", days=1)
+    assert result == [{
+        "date": "2026-09-01",
+        "source": "oura",
+        "score_0_100": 88,
+        # Oura has no strain metric at all. None, not zero - a 0 here reads
+        # as "you did nothing strenuous", which is a claim. Spec 4.1.
+        "strain_0_21": None,
+        "active_calories": 612,
+        "steps": 11_284,
+        # daily_activity has no per-workout breakdown. Empty list, because
+        # workouts is a list field. Spec 4.2.
+        "workouts": [],
+    }]
+
+
+@respx.mock
+async def test_a_missing_step_count_is_none_not_zero():
+    respx.get(f"{BASE}/daily_activity").mock(
+        return_value=httpx.Response(200, json={"data": [
+            {"id": "da-1", "day": "2026-09-01", "score": 88},
+        ]})
+    )
+    from eve_tools import oura
+
+    result = await oura.get_activity("sub-noah", days=1)
+    assert result[0]["steps"] is None
+    assert result[0]["active_calories"] is None

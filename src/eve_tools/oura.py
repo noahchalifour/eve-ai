@@ -154,3 +154,56 @@ async def get_recovery(member_sub: str, days: int) -> list[dict]:
             "temp_deviation_c": _num(record.get("temperature_deviation")),
         })
     return _newest_first(entries, days)
+
+
+async def get_sleep(member_sub: str, days: int) -> list[dict]:
+    """Two requests, like recovery: `daily_sleep` has the score, the `sleep`
+    collection has the durations, and neither has both."""
+    detailed = await _sleep_by_date(member_sub, days)
+    raw = await _get(member_sub, "/daily_sleep", _window(days))
+    entries = []
+    for record in raw.get("data") or []:
+        if not isinstance(record, dict):
+            logger.warning("Oura daily_sleep record was not a dict: %r", record)
+            continue
+        day = record.get("day")
+        if not day:
+            continue
+        night = detailed.get(day) or {}
+        entries.append({
+            "date": day,
+            "source": PROVIDER,
+            "score_0_100": _num(record.get("score")),
+            "hours": _hours(night.get("total_sleep_duration")),
+            "deep_hours": _hours(night.get("deep_sleep_duration")),
+            "rem_hours": _hours(night.get("rem_sleep_duration")),
+            "efficiency_pct": _num(night.get("efficiency")),
+            "hrv_ms": _num(night.get("average_hrv")),
+            "resting_hr": _num(night.get("lowest_heart_rate")),
+        })
+    return _newest_first(entries, days)
+
+
+async def get_activity(member_sub: str, days: int) -> list[dict]:
+    raw = await _get(member_sub, "/daily_activity", _window(days))
+    entries = []
+    for record in raw.get("data") or []:
+        if not isinstance(record, dict):
+            logger.warning("Oura daily_activity record was not a dict: %r", record)
+            continue
+        day = record.get("day")
+        if not day:
+            continue
+        entries.append({
+            "date": day,
+            "source": PROVIDER,
+            "score_0_100": _num(record.get("score")),
+            # Oura has no strain metric. Spec 4.1: None, never 0.
+            "strain_0_21": None,
+            "active_calories": _num(record.get("active_calories")),
+            "steps": _num(record.get("steps")),
+            # No per-workout breakdown in daily_activity. A list field's
+            # empty value is [], not None.
+            "workouts": [],
+        })
+    return _newest_first(entries, days)
