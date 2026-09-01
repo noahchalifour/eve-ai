@@ -22,8 +22,11 @@ independently useful and gets its own design document:
 | **5b** | **Eval harness** | Datasets built from Eve's own tables; an A/B measuring what the rule set is worth; a regression gate that never depends on Langfuse. **Now we can tell.** |
 | **5c** | **Gated tool code** | Eve proposes executable Python tools behind a human approval; approved tools run in `eve-sandbox`, a separate credential-free service with no network access. **Eve computes, safely.** |
 
-This repository is Phase 5c, and with it **the five-phase program is
-complete**. Eve proposes a small Python tool through `propose_tool`; the run
+This repository was Phase 5c, completing the original five-phase program.
+A sixth deploy, `eve-computer`, now sits beside it - see
+[`docs/superpowers/specs/2026-08-28-eve-computer-design.md`](docs/superpowers/specs/2026-08-28-eve-computer-design.md)
+and [ADR 0012](docs/adr/0012-granted-identity-vs-authored-capability.md).
+Eve proposes a small Python tool through `propose_tool`; the run
 pauses on LangGraph's `interrupt()` until a human with `tools.author` approves
 or rejects the exact source bytes; an approved tool is discovered by
 `search_skills` and dispatched to `eve-sandbox`, which runs it with no
@@ -41,9 +44,12 @@ Four boundaries are permanent, not phases yet to come:
 - **Eve does not approve her own code.** There is no path, no setting, and no
   "trusted tool" tier. The one human gate in the program stays.
 - **Eve does not author credentialed capability.** A tool needing a secret is
-  an `eve-tools` handler in a pull request, forever. The self-improvement
-  boundary is drawn at "computation Eve can verify," not "actions Eve can
-  take."
+  an `eve-tools` handler in a pull request, forever. `eve-computer` grants Eve
+  her *own* identity - accounts a human provisions by hand over VNC, revocable
+  with a checkbox, whose blast radius the pod's `NetworkPolicy` bounds to her
+  own accounts and compute - which is a different thing from authoring
+  capability over the family's credentials. See
+  [ADR 0012](docs/adr/0012-granted-identity-vs-authored-capability.md).
 - **Eve does not rewrite her own persona.** `prompts/eve.md` is
   human-authored. Phase 5a lets her write rules *under* it; nothing lets her
   edit it.
