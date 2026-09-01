@@ -167,6 +167,16 @@ class Settings(BaseSettings):
     sandbox_max_output_bytes: int = 65536
     sandbox_max_concurrency: int = 4
 
+    # Phase 6 (Eve's computer). See docs/superpowers/specs/
+    # 2026-08-28-eve-computer-design.md.
+    computer_enabled: bool = False
+    computer_base_url: str = "http://eve-computer:8092"
+    computer_api_key: str = ""
+    # How long the poller waits for the box to answer about a task before
+    # giving up and marking it stale (design doc: "Reporting back" - covers a
+    # pod restart mid-run, since eve-computer keeps no task state on disk).
+    computer_task_stale_minutes: int = 120
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
@@ -213,6 +223,16 @@ class Settings(BaseSettings):
         if self.sandbox_enabled and not self.sandbox_api_key:
             raise ValueError(
                 "EVE_SANDBOX_API_KEY is required when EVE_SANDBOX_ENABLED=true"
+            )
+        if self.computer_api_key and len(self.computer_api_key) < 32:
+            raise ValueError(
+                "EVE_COMPUTER_API_KEY must be at least 32 characters: it "
+                "authenticates a service that takes real-world actions, so "
+                "a guessable value fails open"
+            )
+        if self.computer_enabled and not self.computer_api_key:
+            raise ValueError(
+                "EVE_COMPUTER_API_KEY is required when EVE_COMPUTER_ENABLED=true"
             )
 
 

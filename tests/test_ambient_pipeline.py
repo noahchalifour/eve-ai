@@ -13,7 +13,7 @@ members:
     name: "Noah"
     role: adult
     timezone: "America/Vancouver"
-    permissions: [mail.read, finances, home.control, calendar.read]
+    permissions: [mail.read, finances, home.control, calendar.read, computer.use]
   - sub: "sub-kid"
     name: "Kid"
     role: child
@@ -93,7 +93,7 @@ def wiring(tmp_path, monkeypatch):
             raise state["judge_error"]
         return state["verdict"]
 
-    async def _deliver(signal, member, verdict, notifier):
+    async def _deliver(signal, member, verdict, notifier, *, thread_id=None):
         if state["deliver_error"]:
             raise state["deliver_error"]
         state["delivered"].append(member.sub)
@@ -172,6 +172,30 @@ async def test_quiet_hours_do_not_suppress_an_urgent_signal(wiring):
     assert wiring["delivered"] == ["sub-noah"]
 
 
+async def test_quiet_hours_do_not_suppress_a_computer_signal(wiring):
+    """(fix wave item 1) A computer signal bypasses quiet hours exactly like
+    an urgent one - a direct answer to a direct request isn't what the
+    quiet-hours gate exists to suppress - but without setting `urgent=True`,
+    so it must not trip the URGENT-bypass warning either (asserted below)."""
+    assert (
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=NIGHT
+        )
+        == "sent"
+    )
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_quiet_hours_bypass_for_a_computer_signal_is_not_logged_urgent(
+    wiring, caplog
+):
+    with caplog.at_level("WARNING"):
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=NIGHT
+        )
+    assert not any("URGENT bypass" in r.getMessage() for r in caplog.records)
+
+
 async def test_the_cap_suppresses_once_it_is_reached(wiring):
     wiring["counts"]["sub-noah"] = 2
     assert await pipeline.handle_signal(_signal(), now=MIDDAY) == "capped"
@@ -184,6 +208,20 @@ async def test_an_urgent_signal_bypasses_the_cap(wiring):
     wiring["counts"]["sub-noah"] = 99
     wiring["verdict"] = FilterVerdict(notify=True, audience=["sub-noah"], urgent=True, why="fire")
     assert await pipeline.handle_signal(_signal(source="home"), now=MIDDAY) == "sent"
+
+
+async def test_a_computer_signal_bypasses_the_cap(wiring):
+    """(fix wave item 1) A member already at the daily cap still gets a
+    computer task's result - the cap exists to throttle ambient noise, not
+    to drop the answer to something they explicitly asked for."""
+    wiring["counts"]["sub-noah"] = 99
+    assert (
+        await pipeline.handle_signal(
+            _signal(source="computer", member_sub="sub-noah"), now=MIDDAY
+        )
+        == "sent"
+    )
+    assert wiring["delivered"] == ["sub-noah"]
 
 
 async def test_urgent_cannot_bypass_the_permission_gate(wiring):
@@ -313,7 +351,7 @@ async def test_a_partial_defer_leaves_the_signal_unseen(wiring, monkeypatch):
         notify=True, audience=["sub-noah", "sub-kid"], why="w"
     )
 
-    async def _deliver(signal, member, verdict, notifier):
+    async def _deliver(signal, member, verdict, notifier, *, thread_id=None):
         if member.sub == "sub-kid":
             raise DeliveryError("aegra down")
         wiring["delivered"].append(member.sub)
@@ -339,7 +377,7 @@ async def test_a_retry_after_a_partial_defer_only_reaches_the_missed_member(
     )
     attempts = {"sub-kid": 0}
 
-    async def _deliver(signal, member, verdict, notifier):
+    async def _deliver(signal, member, verdict, notifier, *, thread_id=None):
         if member.sub == "sub-kid":
             attempts["sub-kid"] += 1
             if attempts["sub-kid"] == 1:
@@ -512,7 +550,7 @@ def pipeline_stubs(monkeypatch):
     async def _judge(signal):
         return FilterVerdict(notify=True, audience=["sub-noah"], why="w")
 
-    async def _deliver(signal, member, verdict, notifier):
+    async def _deliver(signal, member, verdict, notifier, *, thread_id=None):
         calls["delivered"].append(member.sub)
         return "thread-1"
 
@@ -606,3 +644,46 @@ async def test_a_recording_failure_does_not_break_the_pipeline(monkeypatch, pipe
     outcome = await _handle(monkeypatch, notify=False, why="no")
 
     assert outcome == "filtered"
+
+
+def _computer_signal(member_sub="sub-noah", key="t1"):
+    return Signal(
+        source="computer", key=key, occurred_at=MIDDAY, member_sub=member_sub,
+        summary="Finished a computer task: book the flight.",
+        payload={"thread_id": "thread-1"},
+        cooldown_hours=0,
+    )
+
+
+async def test_a_computer_signal_never_calls_the_filter(wiring, monkeypatch):
+    async def _judge_should_not_be_called(signal):
+        raise AssertionError("judge() must not be called for source=computer")
+
+    monkeypatch.setattr(pipeline, "judge", _judge_should_not_be_called)
+
+    assert await pipeline.handle_signal(_computer_signal(), now=MIDDAY) == "sent"
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_a_computer_signal_is_addressed_only_to_its_own_member(wiring):
+    """The verdict is synthesised directly from the signal's own member_sub,
+    not filter output - there is no model in the loop to name anyone else."""
+    result = await pipeline.handle_signal(_computer_signal(member_sub="sub-noah"), now=MIDDAY)
+    assert result == "sent"
+    assert wiring["delivered"] == ["sub-noah"]
+
+
+async def test_a_computer_signal_records_no_eval_decision(monkeypatch, pipeline_stubs):
+    recorded = pipeline_stubs["decisions"]
+    await pipeline.handle_signal(_computer_signal(key="t2"), now=MIDDAY)
+    assert recorded == []
+
+
+async def test_a_computer_signal_still_respects_the_permission_gate(wiring):
+    """gates.permitted still runs - a member without computer.use is dropped
+    even though the filter never ran."""
+    result = await pipeline.handle_signal(
+        _computer_signal(member_sub="sub-kid", key="t3"), now=MIDDAY
+    )
+    assert result == "unpermitted"
+    assert wiring["delivered"] == []

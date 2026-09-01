@@ -27,6 +27,7 @@ SOURCE_PERMISSION: dict[str, str] = {
     "mail": "mail.read",
     "finances": "finances",
     "home": "home.control",
+    "computer": "computer.use",
 }
 
 # Sources whose content belongs to one member and may not be redistributed,

@@ -11,7 +11,7 @@ members:
     name: "Noah"
     role: adult
     timezone: "America/Vancouver"
-    permissions: [mail.read, finances, home.control, calendar.read]
+    permissions: [mail.read, finances, home.control, calendar.read, computer.use]
   - sub: "sub-kid"
     name: "Kid"
     role: child
@@ -78,6 +78,14 @@ def test_an_unknown_source_permits_nobody():
     """Fail closed: a source added without a permission mapping notifies
     no one instead of everyone."""
     assert gates.permitted(_signal("weather"), ["sub-noah"]) == []
+
+
+def test_a_member_holding_computer_use_is_kept_for_a_computer_signal():
+    assert gates.permitted(_signal("computer"), ["sub-noah"]) == ["sub-noah"]
+
+
+def test_a_member_lacking_computer_use_is_dropped_for_a_computer_signal():
+    assert gates.permitted(_signal("computer"), ["sub-kid"]) == []
 
 
 def test_a_duplicated_sub_is_deduped_preserving_order():

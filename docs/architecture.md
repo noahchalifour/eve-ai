@@ -426,6 +426,61 @@ switch: `propose_tool` unbinds, no sandbox spec is registered, and a sandbox
 spec a paused thread's checkpoint already carries fails closed to an error
 string rather than dispatching.
 
+## Eve's computer
+
+A sixth service, `eve-computer` (`src/eve_computer/`, `Dockerfile.eve-computer`),
+gives Eve a persistent Linux desktop: her own accounts, a browser, a shell,
+and internet access, behind a task API she is dispatched to and polled for -
+never called back from. See
+[`docs/superpowers/specs/2026-08-28-eve-computer-design.md`](superpowers/specs/2026-08-28-eve-computer-design.md)
+and [ADR 0015](adr/0015-granted-identity-vs-authored-capability.md) for the
+full design and the boundary argument.
+
+**Dispatch.** `dispatch_computer_task` (`src/eve/computer/dispatch.py`) is a
+bare tool, bound alongside the specialists when `EVE_COMPUTER_ENABLED=true` -
+requires `computer.use`, checked before the HTTP call, per ADR 0006's
+pattern. It mints a task id, calls `eve.tools_client.dispatch_task` (a
+dedicated door, not `invoke()` - the box's task API is a lifecycle, not the
+`{tool, arguments}` contract `eve-tools`/`eve-sandbox` share), and records the
+task in `eve_computer_task` (`alembic/versions/0004_eve_computer_task.py`) -
+Eve's own row, holding what the box itself never learns: which member asked,
+and on which thread.
+
+**The poller.** `eve.computer.poller.sync` asks the box about every task
+Eve is still waiting on and updates that row; `eve_ambient.sources.computer`
+turns each newly-resolved row into a `Signal`, polled once per tick for the
+whole household (`per_member=False`) since the box itself carries no
+per-member data to poll by. Two deliberate deviations from every other
+ambient source: `eve_ambient.pipeline.handle_signal` bypasses the REFLEX
+relevance filter for `source == "computer"` (a direct request is never "not
+relevant"), and `eve_ambient.notify.deliver` reuses the *originating* thread
+(the one the member dispatched from) rather than creating a fresh one -
+`gates.SOURCE_PERMISSION` still gates the audience on `computer.use` even
+though no filter verdict was involved.
+
+**The harness.** `eve-computer`'s own FastAPI surface
+(`src/eve_computer/app.py`) is a one-task-at-a-time queue over
+`POST /tasks`, `GET /tasks/{id}`, `GET /tasks/{id}/artifacts/{name}`, and
+`DELETE /tasks/{id}` - one display, one mouse, so concurrent GUI tasks would
+fight over the same cursor. `harness.py`'s `run_task` drives
+`claude-agent-sdk` with bash/read/write/edit tools supplied directly and a
+lifted computer-use tool (`gui_tool.py`, xdotool against `:99`); Codex CLI is
+available as a plain shell command, not a second harness. This package
+imports nothing from `eve`, `eve_ambient`, `eve_tools`, or `eve_sandbox` -
+the box learns only a goal string and a task id, never a member subject, a
+name, or a permission.
+
+**Isolation.** Enforcement is the pod, exactly as ADR 0010 argues for
+`eve-sandbox`, but with the opposite contract: default-deny egress except
+DNS and public 80/443 (RFC1918 ranges, the cluster CIDRs, and the metadata
+endpoint are explicitly denied), no ServiceAccount token, ingress restricted
+to the harness port from `eve`/`eve-ambient` and the VNC port reached only
+via `kubectl port-forward`. `tests/test_computer_live.py` asserts this
+directly against the deployed pod - the same shape as
+`tests/test_sandbox_live.py`, adapted to a machine that must reach the
+public internet while still being unable to reach anything inside the
+cluster.
+
 ## Aegra and `aegra.json`
 
 Eve does not run its own server process. `aegra.json` at the repository root
@@ -1091,6 +1146,19 @@ follows `Dockerfile.eve-tools`'s pattern — same base image, `uv sync --frozen
 the built image cannot contain a module that knows how to reach the database
 or a credential even by accident.
 
+`eve-computer` adds a fifth app to that same `infrastructure` repository:
+a Deployment with a 50 GiB PVC mounted at `/home/eve`, `hostUsers: false`,
+every capability dropped, no ServiceAccount token, and a `NetworkPolicy`
+denying RFC1918/cluster/link-local ranges while allowing DNS and public
+80/443; a Service exposing only the harness port to `eve` and `eve-ambient`;
+no Ingress and no exposed VNC Service, since the operator reaches VNC only
+through `kubectl port-forward`, which never traverses a `NetworkPolicy`.
+This repository's side is `Dockerfile.eve-computer`, which departs from
+every other image's pattern in two deliberate ways: it runs as a user with a
+real home directory (`--create-home`, not `--no-create-home`) and
+passwordless sudo, because a computer she cannot install a package on is not
+a computer - the pod spec, not the user account, is what contains her.
+
 ## Decision records
 
 - [ADR 0001 — Specialists are subgraph tools, not separate services](adr/0001-agents-as-subgraph-tools.md)
@@ -1107,3 +1175,4 @@ or a credential even by accident.
 - [ADR 0012 — Memory extraction is detached from the turn and joined by the next one](adr/0012-extraction-is-detached-and-joined.md)
 - [ADR 0013 — Reply suggestions are a separate REFLEX call](adr/0013-suggestions-are-a-separate-reflex-call.md)
 - [ADR 0014 — Dynamic UI surfaces are built server-side and only triggered by the model](adr/0014-dynamic-ui-is-server-built.md)
+- [ADR 0015 — A granted identity is not authored credentialed capability](adr/0015-granted-identity-vs-authored-capability.md)

@@ -639,6 +639,27 @@ def test_propose_tool_is_unbound_by_default(monkeypatch):
     assert "propose_tool" not in {t.name for t in graph_mod._static_tools()}
 
 
+def test_dispatch_computer_task_is_bound_when_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_ENABLED", "true")
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "k" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "dispatch_computer_task" in {t.name for t in graph_mod._static_tools()}
+
+
+def test_dispatch_computer_task_is_unbound_by_default(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "dispatch_computer_task" not in {t.name for t in graph_mod._static_tools()}
+
+
 def test_show_weather_is_bound_only_when_the_client_declared_the_catalog():
     """Binding it unconditionally would put a tool in front of the model that
     can only ever answer "your app can't render this" - and would let a

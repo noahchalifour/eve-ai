@@ -56,6 +56,14 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "respx>=0.23.1",
 ]
+# claude-agent-sdk bundles a ~94MB `claude` CLI binary that only
+# eve-computer's image needs (ADR 0010: eve-sandbox's whole security
+# argument rests on its image containing nothing beyond what it needs). Kept
+# out of the main `dependencies` list so the other four Dockerfiles' shared
+# `uv sync --frozen --no-dev --no-install-project` never pulls it in.
+computer = [
+    "claude-agent-sdk>=0.2.149",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

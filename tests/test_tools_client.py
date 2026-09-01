@@ -121,3 +121,68 @@ async def test_a_dead_sandbox_returns_an_error_string(monkeypatch):
 
     out = await invoke("amortise", {}, target="sandbox")
     assert out.startswith("error:")
+
+
+@respx.mock
+async def test_dispatch_task_posts_to_the_computer_tasks_endpoint(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_BASE_URL", "http://eve-computer.test")
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "c" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve.tools_client import dispatch_task
+
+    route = respx.post("http://eve-computer.test/tasks").mock(
+        return_value=httpx.Response(202, json={"id": "t1", "status": "queued"})
+    )
+    result = await dispatch_task("t1", "book the flight")
+
+    assert result == "ok"
+    sent = json.loads(route.calls.last.request.content)
+    assert sent == {"id": "t1", "goal": "book the flight"}
+    assert route.calls.last.request.headers["authorization"] == "Bearer " + "c" * 32
+
+
+@respx.mock
+async def test_dispatch_task_degrades_to_an_error_string_on_failure(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_BASE_URL", "http://eve-computer.test")
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "c" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve.tools_client import dispatch_task
+
+    respx.post("http://eve-computer.test/tasks").mock(side_effect=httpx.ConnectError)
+    result = await dispatch_task("t1", "book the flight")
+    assert result.startswith("error:")
+
+
+@respx.mock
+async def test_get_computer_task_returns_the_boxs_status(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_BASE_URL", "http://eve-computer.test")
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "c" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve.tools_client import get_computer_task
+
+    respx.get("http://eve-computer.test/tasks/t1").mock(
+        return_value=httpx.Response(
+            200, json={"status": "finished", "result": {"summary": "done"}, "artifacts": []}
+        )
+    )
+    status = await get_computer_task("t1")
+    assert status == {"status": "finished", "result": {"summary": "done"}, "artifacts": []}
+
+
+@respx.mock
+async def test_get_computer_task_returns_none_when_the_box_is_unreachable(monkeypatch):
+    monkeypatch.setenv("EVE_COMPUTER_BASE_URL", "http://eve-computer.test")
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "c" * 32)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve.tools_client import get_computer_task
+
+    respx.get("http://eve-computer.test/tasks/t1").mock(side_effect=httpx.ConnectError)
+    assert await get_computer_task("t1") is None

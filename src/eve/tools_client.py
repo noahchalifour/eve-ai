@@ -58,3 +58,44 @@ async def invoke(
     except Exception as exc:
         logger.warning("eve-%s call to %r failed", target, tool, exc_info=True)
         return f"error: eve-{target} unavailable ({exc.__class__.__name__})"
+
+
+async def dispatch_task(task_id: str, goal: str, timeout: float = 15.0) -> str:
+    """POST /tasks on eve-computer. Not routed through `invoke()`: the box's
+    task API is a lifecycle (create, poll, fetch an artifact, kill), not the
+    {tool, arguments} -> {result|error} shape eve-tools and eve-sandbox
+    share, so it gets its own thin wrapper instead of a second meaning for
+    `target`."""
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{settings.computer_base_url}/tasks",
+                json={"id": task_id, "goal": goal},
+                headers={"Authorization": f"Bearer {settings.computer_api_key}"},
+            )
+            response.raise_for_status()
+        return "ok"
+    except Exception as exc:
+        logger.warning("eve-computer dispatch failed for %s", task_id, exc_info=True)
+        return f"error: eve-computer unavailable ({exc.__class__.__name__})"
+
+
+async def get_computer_task(task_id: str, timeout: float = 15.0) -> dict | None:
+    """GET /tasks/{id} on eve-computer. `None` means the box could not be
+    asked at all - down, timed out, or the task id is unknown to it (e.g.
+    after a restart, since eve-computer keeps no task state on disk). The
+    poller (eve.computer.poller) treats that as "still waiting" until it has
+    been true past its own stale timeout."""
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{settings.computer_base_url}/tasks/{task_id}",
+                headers={"Authorization": f"Bearer {settings.computer_api_key}"},
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        logger.warning("eve-computer status check failed for %s", task_id, exc_info=True)
+        return None

@@ -415,6 +415,52 @@ async def test_an_empty_first_poll_still_primes_so_the_next_real_signal_notifies
     assert "primed" not in second
 
 
+async def test_the_computer_source_is_never_primed_even_on_the_first_tick(monkeypatch):
+    """(fix wave item 1) Priming exists to swallow a pre-existing backlog the
+    first time a source is polled - fine for a month of stale calendar
+    entries, wrong for a computer task a family member is actively waiting
+    on. `computer` must go through the normal signal-handling path on every
+    tick, including the very first, regardless of what `store.has_any`
+    reports for it."""
+    handled = []
+
+    async def _has_any(source):
+        # Even an explicit "never primed" report for `computer` must not
+        # route it into the priming branch.
+        return False
+
+    async def _mark_seen(source, key):
+        pytest.fail(f"unexpected mark_seen({source!r}, {key!r}) - computer must not prime")
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        return [
+            Signal(
+                source="computer", key="t1",
+                occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub="sub-noah", summary="Finished a computer task: goal",
+                payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(
+        app_module, "SOURCES", (Source("computer", False, "computer.use", _poll),)
+    )
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert [s.key for s in handled] == ["t1"]
+    assert counts.get("sent") == 1
+    assert "primed" not in counts
+
+
 async def test_an_unprimed_source_whose_poll_fails_the_way_real_sources_fail_stays_unprimed(
     monkeypatch,
 ):

@@ -38,27 +38,40 @@ async def handle_signal(
     if not await store.is_fresh(signal.source, signal.key, cooldown):
         return _resolved(signal, None, [], "stale")
 
-    try:
-        verdict = await judge(signal)
-    except FilterError:
-        # A couldn't-decide, not a decided-no (fix round 1, item 2): treat it
-        # exactly like a notify.DeliveryError and leave the signal unseen so
-        # the next poll retries it. A persistent outage retrying every poll
-        # is correct and cheap — the filter call fails fast.
-        logger.warning(
-            "deferring %s: the filter could not judge it", signal.key, exc_info=True
+    if signal.source == "computer":
+        # Explicitly requested, not merely noticed: an LLM deciding a direct
+        # request is "not relevant" is the worst available failure mode
+        # (design doc: "Reporting back"). No filter call, and nothing to
+        # record - there was no filter decision to label the eval dataset
+        # with (ADR 0009's dataset measures the filter, not this bypass).
+        verdict = FilterVerdict(
+            notify=True,
+            audience=[signal.member_sub] if signal.member_sub else [],
+            urgent=False,
+            why="a family member asked for this computer task directly",
         )
-        return _resolved(signal, None, [], "deferred")
+    else:
+        try:
+            verdict = await judge(signal)
+        except FilterError:
+            # A couldn't-decide, not a decided-no (fix round 1, item 2): treat it
+            # exactly like a notify.DeliveryError and leave the signal unseen so
+            # the next poll retries it. A persistent outage retrying every poll
+            # is correct and cheap — the filter call fails fast.
+            logger.warning(
+                "deferring %s: the filter could not judge it", signal.key, exc_info=True
+            )
+            return _resolved(signal, None, [], "deferred")
 
-    # Before the gate chain, deliberately: the dataset's label is the
-    # filter's verdict, not the outcome (eval design 4.2). Best-effort -
-    # losing an eval row must never cost a notification.
-    try:
-        await store.record_decision(signal, verdict)
-    except Exception:
-        logger.warning(
-            "could not record the eval decision for %s", signal.key, exc_info=True
-        )
+        # Before the gate chain, deliberately: the dataset's label is the
+        # filter's verdict, not the outcome (eval design 4.2). Best-effort -
+        # losing an eval row must never cost a notification.
+        try:
+            await store.record_decision(signal, verdict)
+        except Exception:
+            logger.warning(
+                "could not record the eval decision for %s", signal.key, exc_info=True
+            )
 
     # The roster is only worth reading once we know somebody might be told
     # something (fix round 1, item 5): `gates.permitted` calls `get_family`,
@@ -95,7 +108,7 @@ async def handle_signal(
             already_known = True
             continue
 
-        if not verdict.urgent:
+        if not verdict.urgent and signal.source != "computer":
             local = gates.local_now(member.timezone, now)
             if gates.in_quiet_hours(local, settings.ambient_quiet_hours):
                 logger.info("holding %s for %s: quiet hours", signal.key, sub)
@@ -108,14 +121,23 @@ async def handle_signal(
                 logger.info("holding %s for %s: daily cap", signal.key, sub)
                 outcomes.append("capped")
                 continue
-        else:
+        elif verdict.urgent:
+            # Not `else:` (fix wave item 1): a computer signal also takes
+            # this bypass now, and a direct answer to a direct request is
+            # not what this warning is about - only a genuinely `urgent`
+            # verdict logs it.
             logger.warning(
                 "URGENT bypass of cap and quiet hours: source=%s key=%s member=%s why=%s",
                 signal.source, signal.key, sub, verdict.why,
             )
 
         try:
-            thread_id = await deliver(signal, member, verdict, notifier)
+            thread_id = await deliver(
+                signal, member, verdict, notifier,
+                thread_id=(
+                    signal.payload.get("thread_id") if signal.source == "computer" else None
+                ),
+            )
         except DeliveryError:
             logger.warning("deferring %s for %s", signal.key, sub, exc_info=True)
             deferred = True
