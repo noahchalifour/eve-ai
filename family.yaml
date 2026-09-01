@@ -32,6 +32,10 @@ members:
       - tools.author
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+      # Health coach: WHOOP and Oura recovery, sleep, and training load.
+      # Read-only; a bare noun like `finances` because there is no write
+      # surface to distinguish it from.
+      - health
 
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"
@@ -46,3 +50,7 @@ members:
       - memory.write_shared
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+      # Health coach: WHOOP and Oura recovery, sleep, and training load.
+      # Read-only; a bare noun like `finances` because there is no write
+      # surface to distinguish it from.
+      - health
