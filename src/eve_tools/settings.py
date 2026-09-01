@@ -33,6 +33,10 @@ class ToolsSettings(BaseSettings):
     # nothing here can answer a prompt, so an unattended login needs the
     # seed to mint its own code.
     monarch_mfa_secret: str = ""
+    # The wardrobe's photo library. Read-only use: the catalogue never writes
+    # to Immich, so an API key scoped to reading is sufficient.
+    immich_url: str = ""
+    immich_api_key: str = ""
 
 
 @lru_cache(maxsize=1)

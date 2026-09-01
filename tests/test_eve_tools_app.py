@@ -35,6 +35,20 @@ async def test_invoke_dispatches_to_the_registered_handler(monkeypatch):
     mock_get_state.assert_awaited_once_with("light.kitchen")
 
 
+async def test_invoke_dispatches_immich_album_assets(monkeypatch):
+    mock_album = AsyncMock(return_value={"assets": []})
+    monkeypatch.setattr("eve_tools.app.immich.album_assets", mock_album)
+    async with await _client() as client:
+        response = await client.post(
+            "/invoke",
+            json={"tool": "immich.album_assets", "arguments": {"album_id": "album-1"}},
+            headers={"Authorization": "Bearer test-key"},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"result": {"assets": []}}
+    mock_album.assert_awaited_once_with("album-1")
+
+
 async def test_invoke_returns_404_for_an_unknown_tool():
     async with await _client() as client:
         response = await client.post(
