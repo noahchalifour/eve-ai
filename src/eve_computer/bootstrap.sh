@@ -32,6 +32,13 @@ if [ -f "$PACKAGES_FILE" ]; then
     fi
 fi
 
-Xvfb :99 -screen 0 1920x1080x24 &
+# 1024x768, not 1920x1080: Anthropic's vision API downscales any screenshot
+# whose long edge exceeds ~1568px before the model reasons over it, so a
+# 1920x1080 screenshot would put the model's coordinates in a ~1568x882 space
+# while xdotool applied them at full resolution - a systematic ~1.22x offset
+# on every click. Staying under the threshold on both axes keeps the
+# screenshot the model sees and the coordinates xdotool receives in the same
+# space, with no scaling math needed.
+Xvfb :99 -screen 0 1024x768x24 &
 fluxbox &
 x11vnc -display :99 -forever -shared -rfbport 5900 -nopw &
