@@ -36,3 +36,15 @@ services:
               "import urllib.request as u; u.urlopen('http://localhost:8091/healthz')"]
       interval: 2s
       retries: 30
+  eve-computer:
+    build:
+      context: .
+      dockerfile: Dockerfile.eve-computer
+    environment:
+      EVE_COMPUTER_API_KEY: test-key-0123456789abcdef0123456789ab
+    ports: ["18096:8092"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+              "import urllib.request as u; u.urlopen('http://localhost:8092/healthz')"]
+      interval: 2s
+      retries: 30
