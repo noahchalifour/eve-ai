@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --group computer
 
 COPY src/eve_computer ./src/eve_computer
 RUN chmod +x ./src/eve_computer/bootstrap.sh

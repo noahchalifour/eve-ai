@@ -675,7 +675,6 @@ dependencies = [
     { name = "aegra-cli" },
     { name = "alembic" },
     { name = "caldav" },
-    { name = "claude-agent-sdk" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
     { name = "google-auth-oauthlib" },
@@ -695,6 +694,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+computer = [
+    { name = "claude-agent-sdk" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -707,7 +709,6 @@ requires-dist = [
     { name = "aegra-cli", specifier = ">=0.10.3" },
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "caldav", specifier = ">=3.2.1" },
-    { name = "claude-agent-sdk", specifier = ">=0.2.149" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "google-api-python-client", specifier = ">=2.199.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.4.0" },
@@ -727,6 +728,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+computer = [{ name = "claude-agent-sdk", specifier = ">=0.2.149" }]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
