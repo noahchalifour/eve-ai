@@ -13,7 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      # --group computer: this job collects and runs the WHOLE test suite,
+      # including tests/test_computer_app.py, which imports eve_computer -
+      # unlike a single-service Dockerfile, it needs every group's
+      # dependencies, not just the one image being built.
+      - run: uv sync --frozen --group computer
       - run: uv run pytest -m "not integration and not live and not docker" -v
 
   # Runs on every PR/push, unlike the tag-gated `image` job below: that job
