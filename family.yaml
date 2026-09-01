@@ -32,6 +32,9 @@ members:
       - tools.author
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+    # Phase 6: the Immich album holding his clothes, catalogued by
+    # `eve-wardrobe sync`. Find the id in Immich's album URL.
+    wardrobe_album: ""
 
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"
@@ -46,3 +49,6 @@ members:
       - memory.write_shared
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+    # Phase 6: the Immich album holding his clothes, catalogued by
+    # `eve-wardrobe sync`. Find the id in Immich's album URL.
+    wardrobe_album: ""
