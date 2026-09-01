@@ -893,15 +893,16 @@ async def test_the_voice_model_never_sees_a_previous_turns_persisted_frame(monke
 async def test_a_ui_actions_persisted_frame_never_reaches_a_later_turns_model(
     monkeypatch,
 ):
-    """End to end for the tap path finding 1 was about. `ui_action` writes a
-    BARE frame straight into `values.messages` (`AIMessage(content=
-    protocol.frame([operation]))` - content position 0 IS the opening
-    marker, no leading newline, nothing before it), via `ui_action -> END`.
-    A stripper that only recognized a frame preceded by a literal "\\n"
-    would leave this shape untouched, and the next ORDINARY turn on the same
-    thread would replay the raw patch JSON into the VOICE model's own
-    context. A unit test on `strip_frames` alone would not catch that gap -
-    only driving the real tap turn, then a real second turn, does."""
+    """End to end for the tap path finding 1 was about. `ui_action` answers
+    a tap with a one-line reply plus the patch, appended via `protocol.
+    append_frame` into a single AIMessage that reaches `values.messages`
+    straight through `ui_action -> END`. Driving a real tap turn followed by
+    a real ORDINARY turn on the same thread checks three things at once,
+    none of which a unit test on `strip_frames` alone would catch: the
+    persisted frame never reaches the later turn's model, the replayed
+    assistant message the frame was stripped out of is never empty
+    (Anthropic's Messages API rejects an empty non-final assistant message),
+    and role alternation still holds - no two adjacent `HumanMessage`s."""
     import json
 
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
@@ -947,8 +948,8 @@ async def test_a_ui_actions_persisted_frame_never_reaches_a_later_turns_model(
         },
         UI_CAPABLE_CONFIG,
     )
-    # Confirms the setup: the tap turn really did leave a bare frame in
-    # `values.messages` - the shape finding 1a was about.
+    # Confirms the setup: the tap turn really did leave a sentence plus an
+    # appended frame in `values.messages` - the shape finding 1a was about.
     assert any("<assistant-ui>" in (m.content or "") for m in tap_result["messages"])
 
     seen = {}

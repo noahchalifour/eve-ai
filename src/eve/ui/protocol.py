@@ -154,9 +154,11 @@ def strip_frames(text: str) -> str:
     `persist_ui` (`eve.ui.persist`) exists to make a card survive a session
     reopen, by writing the turn's surface into `messages` - text the client
     strips before it ever reaches the member or TTS. `ui_action`
-    (`eve.ui.actions`) writes the same shape for a different reason: a tap
-    on a rendered surface answers with a bare frame and no prose at all.
-    Either way `messages` is also what both the VOICE model (`eve.graph`)
+    (`eve.ui.actions`) writes the same shape for a related but different
+    reason: a tap on a rendered surface answers with a one-line reply plus
+    the tap's patch, built through the same `append_frame` both producers
+    share, rather than a model's own free-form prose. Either way `messages`
+    is also what both the VOICE model (`eve.graph`)
     and REFLEX (`eve.memory.extract`, for extraction and for the thread
     digest) read back as conversation history on every later turn. Left
     unstripped, a surface that can be multiple KiB (the protocol's own
