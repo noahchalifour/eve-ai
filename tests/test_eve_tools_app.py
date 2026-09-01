@@ -72,3 +72,39 @@ def test_home_weather_is_a_dispatchable_tool():
     from eve_tools.app import _HANDLERS
 
     assert "home.weather" in _HANDLERS
+
+
+def test_the_health_tools_are_dispatchable():
+    """The dispatch table is the whole routing layer - a handler that exists
+    but is unregistered 404s at runtime with nothing failing at import."""
+    from eve_tools.app import _HANDLERS
+
+    assert "health.get_recovery" in _HANDLERS
+    assert "health.get_sleep" in _HANDLERS
+    assert "health.get_activity" in _HANDLERS
+
+
+async def test_health_get_recovery_dispatches_with_member_and_days(monkeypatch):
+    mock_get = AsyncMock(return_value={"recovery": []})
+    monkeypatch.setattr("eve_tools.app.health.get_recovery", mock_get)
+    async with await _client() as client:
+        response = await client.post(
+            "/invoke",
+            json={"tool": "health.get_recovery",
+                  "arguments": {"member_sub": "sub-noah", "days": 3}},
+            headers={"Authorization": "Bearer test-key"},
+        )
+    assert response.status_code == 200
+    mock_get.assert_awaited_once_with("sub-noah", 3)
+
+
+async def test_health_get_recovery_defaults_days_to_one(monkeypatch):
+    mock_get = AsyncMock(return_value={"recovery": []})
+    monkeypatch.setattr("eve_tools.app.health.get_recovery", mock_get)
+    async with await _client() as client:
+        await client.post(
+            "/invoke",
+            json={"tool": "health.get_recovery", "arguments": {"member_sub": "sub-noah"}},
+            headers={"Authorization": "Bearer test-key"},
+        )
+    mock_get.assert_awaited_once_with("sub-noah", 1)
