@@ -1,5 +1,6 @@
 """tests/test_wardrobe_store.py"""
 import pytest
+from psycopg.errors import NotNullViolation
 
 pytestmark = pytest.mark.integration
 
@@ -91,3 +92,23 @@ async def test_reinserting_the_same_asset_replaces_its_rows(pool):
     )
 
     assert [i["name"] for i in await store.list_items("sub-noah")] == ["new name"]
+
+
+async def test_failed_replacement_preserves_the_asset_previous_rows(pool):
+    from eve.wardrobe import store
+
+    await store.insert_items(
+        "sub-noah", "asset-1", [{"name": "old name", "category": "top", "attrs": {}}]
+    )
+
+    with pytest.raises(NotNullViolation):
+        await store.insert_items(
+            "sub-noah",
+            "asset-1",
+            [
+                {"name": "new name", "category": "top", "attrs": {}},
+                {"name": None, "category": "top", "attrs": {}},
+            ],
+        )
+
+    assert [i["name"] for i in await store.list_items("sub-noah")] == ["old name"]

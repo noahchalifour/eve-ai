@@ -33,7 +33,7 @@ async def insert_items(member_sub: str, asset_id: str, items: list[dict]) -> Non
     would leave the surplus rows from the longer previous run behind.
     """
     pool = await get_pool()
-    async with pool.connection() as conn:
+    async with pool.connection() as conn, conn.transaction():
         await conn.execute(
             "DELETE FROM eve_wardrobe_item WHERE member_sub = %s AND asset_id = %s",
             (member_sub, asset_id),
