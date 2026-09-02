@@ -22,6 +22,12 @@ from eve_ambient.types import FilterVerdict, Signal
 
 logger = logging.getLogger(__name__)
 
+# Signals a member explicitly asked for, rather than guesses about what they
+# might want to know. The relevance filter is bypassed for these: an LLM
+# deciding the answer to a direct request is "not relevant" and swallowing
+# it is the worst failure mode available.
+_REQUESTED_SOURCES = ("computer", "coding")
+
 
 async def handle_signal(
     signal: Signal, *, now: datetime | None = None, notifier: Notifier | None = None
@@ -38,7 +44,7 @@ async def handle_signal(
     if not await store.is_fresh(signal.source, signal.key, cooldown):
         return _resolved(signal, None, [], "stale")
 
-    if signal.source == "computer":
+    if signal.source in _REQUESTED_SOURCES:
         # Explicitly requested, not merely noticed: an LLM deciding a direct
         # request is "not relevant" is the worst available failure mode
         # (design doc: "Reporting back"). No filter call, and nothing to
@@ -48,7 +54,7 @@ async def handle_signal(
             notify=True,
             audience=[signal.member_sub] if signal.member_sub else [],
             urgent=False,
-            why="a family member asked for this computer task directly",
+            why="a family member asked for this directly",
         )
     else:
         try:
@@ -108,7 +114,7 @@ async def handle_signal(
             already_known = True
             continue
 
-        if not verdict.urgent and signal.source != "computer":
+        if not verdict.urgent and signal.source not in _REQUESTED_SOURCES:
             local = gates.local_now(member.timezone, now)
             if gates.in_quiet_hours(local, settings.ambient_quiet_hours):
                 logger.info("holding %s for %s: quiet hours", signal.key, sub)
@@ -135,7 +141,9 @@ async def handle_signal(
             thread_id = await deliver(
                 signal, member, verdict, notifier,
                 thread_id=(
-                    signal.payload.get("thread_id") if signal.source == "computer" else None
+                    signal.payload.get("thread_id")
+                    if signal.source in _REQUESTED_SOURCES
+                    else None
                 ),
             )
         except DeliveryError:
