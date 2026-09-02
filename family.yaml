@@ -38,6 +38,9 @@ members:
       # Read-only; a bare noun like `finances` because there is no write
       # surface to distinguish it from.
       - health
+      # EVE-4: delegating coding work to Claude Code, Codex, or OpenCode,
+      # which open pull requests under Eve's own GitHub account.
+      - code.delegate
     # Phase 6: the Immich album holding his clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""

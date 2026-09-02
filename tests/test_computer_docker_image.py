@@ -141,3 +141,39 @@ def test_dispatching_a_task_is_accepted(computer_container):
     )
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
+
+
+def test_the_image_carries_every_coding_binary(computer_container):
+    """EVE-4 adds three ACP agents and `gh`. A missing one fails at the
+    first session, half an hour after Eve told a member she was on it."""
+    for binary in ("gh", "codex-acp", "claude-code-acp", "opencode"):
+        result = subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "sh", "-c", f"command -v {binary}"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, f"{binary} missing from the built image"
+
+
+def test_bootstrap_writes_all_three_routing_configs(computer_container):
+    """A wiped PVC must recover model routing with no human involved
+    (design doc: "Storage"). $HOME is the PVC, so these cannot be baked in."""
+    script = (
+        "EVE_COMPUTER_LITELLM_BASE_URL=https://litellm.example "
+        "EVE_COMPUTER_LITELLM_API_KEY=sk-probe "
+        "/app/src/eve_computer/bootstrap.sh >/dev/null 2>&1; "
+        "cat /home/eve/.codex/config.toml; "
+        "cat /home/eve/.config/opencode/opencode.json"
+    )
+    result = subprocess.run(
+        ["docker", "exec", CONTAINER_NAME, "sh", "-c", script],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    output = result.stdout
+
+    assert "https://litellm.example" in output
+    assert 'wire_api = "responses"' in output
+    assert "LITELLM_API_KEY" in output
+    # The key itself is never written into a config file - only the name of
+    # the environment variable holding it.
+    assert "sk-probe" not in output

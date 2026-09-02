@@ -15,6 +15,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from eve_computer import store
+from eve_computer.acp import session
+from eve_computer.acp.registry import UnknownAgent
 from eve_computer.harness import run_task
 from eve_computer.settings import get_computer_settings
 
@@ -134,3 +136,87 @@ async def delete_task_route(
     else:
         await store.set_status(task_id, "killed")
     return {"id": task_id, "status": "killed"}
+
+
+# --- Sessions (EVE-4) -------------------------------------------------
+#
+# A second lane, not a second queue. `/tasks` is serialised because one
+# machine has one X display and one mouse; a coding session needs neither,
+# so its only bound is `max_concurrent_sessions` inside session.py. Sharing
+# the GUI worker would make a half-hour conversation block a screenshot.
+
+
+class SessionRequest(BaseModel):
+    id: str
+    agent: str
+    model: str
+    repos: list[str]
+    prompt: str
+
+
+class PromptRequest(BaseModel):
+    text: str
+    # "reply" is Eve's own composed next prompt; "interjection" is a family
+    # member's correction, which the box records and never delivers itself.
+    kind: str = "reply"
+
+
+def _require_session(session_id: str):
+    found = session.get(session_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="unknown session")
+    return found
+
+
+@app.post("/sessions", status_code=202)
+async def create_session_route(
+    body: SessionRequest, authorization: str | None = Header(default=None)
+) -> dict:
+    _check_auth(authorization)
+    try:
+        await session.create(body.id, body.agent, body.model, body.repos, body.prompt)
+    except UnknownAgent as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"id": body.id, "status": "queued"}
+
+
+@app.get("/sessions/{session_id}")
+async def get_session_route(
+    session_id: str, since: int = 0, authorization: str | None = Header(default=None)
+) -> dict:
+    _check_auth(authorization)
+    return session.snapshot(_require_session(session_id), since=since)
+
+
+@app.post("/sessions/{session_id}/prompt")
+async def prompt_session_route(
+    session_id: str,
+    body: PromptRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _check_auth(authorization)
+    _require_session(session_id)
+    if body.kind == "interjection":
+        await session.enqueue(session_id, body.text)
+        return {"status": "queued"}
+    await session.send(session_id, body.text)
+    return {"status": "sent"}
+
+
+@app.post("/sessions/{session_id}/close")
+async def close_session_route(
+    session_id: str, authorization: str | None = Header(default=None)
+) -> dict:
+    _check_auth(authorization)
+    _require_session(session_id)
+    return await session.close(session_id)
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session_route(
+    session_id: str, authorization: str | None = Header(default=None)
+) -> dict:
+    _check_auth(authorization)
+    _require_session(session_id)
+    await session.kill(session_id)
+    return {"id": session_id, "status": "killed"}

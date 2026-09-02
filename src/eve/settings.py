@@ -177,6 +177,37 @@ class Settings(BaseSettings):
     # pod restart mid-run, since eve-computer keeps no task state on disk).
     computer_task_stale_minutes: int = 120
 
+    # EVE-4 (ACP tools). See docs/superpowers/specs/
+    # 2026-09-01-eve-acp-tools-design.md.
+    #
+    # Off by default for the same reason ambient_enabled and computer_enabled
+    # are: this one opens pull requests under Eve's own GitHub account, and a
+    # deployment that has not deliberately enabled it must open none.
+    #
+    # No base URL of its own: sessions run on eve-computer, so
+    # computer_base_url and computer_api_key already point at the right box.
+    coding_enabled: bool = False
+    # The tiebreak when neither the task nor the member's preferences point
+    # anywhere. Codex rides the ChatGPT subscription, so the default case
+    # costs nothing metered (spec: "Codex breaks ties").
+    coding_default_agent: str = "codex"
+    # Deliberately not ambient_poll_interval_seconds. The supervisor is a
+    # control loop with an agent waiting on the other end, not a notification
+    # pipeline; 300s of latency per conversational turn would make Eve a
+    # worse correspondent than the member she is standing in for.
+    coding_supervisor_interval_seconds: int = 20
+    coding_session_stale_minutes: int = 120
+    # Whatever the budget is, a loop that blows it has to answer in English
+    # (graph.py's _LOOP_EXHAUSTED). Hitting this parks the session and asks
+    # the member rather than stalling silently.
+    coding_max_supervisor_turns: int = 30
+    coding_catalogue_ttl_seconds: int = 3600
+    # The outermost bound. The box enforces per-turn and per-session limits
+    # of its own, but a session parked on `blocked` is not running anything
+    # for the box to time out - it is waiting on a human who may never
+    # answer, holding a subprocess, a worktree, and a concurrency slot.
+    coding_session_timeout_seconds: int = 28800
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:

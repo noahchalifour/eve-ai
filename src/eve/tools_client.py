@@ -99,3 +99,71 @@ async def get_computer_task(task_id: str, timeout: float = 15.0) -> dict | None:
     except Exception:
         logger.warning("eve-computer status check failed for %s", task_id, exc_info=True)
         return None
+
+
+# --- Coding sessions (EVE-4) ------------------------------------------
+#
+# Sessions run on eve-computer, so these reuse computer_base_url and
+# computer_api_key rather than introducing a fourth door to the same box.
+#
+# Same failure posture as everything else in this module: a returned error
+# string or None, never a raised exception. The callers are a tool whose
+# result goes to a model and a supervisor loop that must not die because
+# one session's box hiccuped.
+
+
+async def _session_request(
+    method: str, path: str, *, json_body: dict | None = None,
+    params: dict | None = None, timeout: float = 15.0,
+) -> dict | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method,
+                f"{settings.computer_base_url}{path}",
+                json=json_body,
+                params=params,
+                headers={"Authorization": f"Bearer {settings.computer_api_key}"},
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        logger.warning("eve-computer session call %s %s failed", method, path, exc_info=True)
+        return None
+
+
+async def create_coding_session(
+    session_id: str, agent: str, model: str, repos: list[str], prompt: str
+) -> str:
+    body = await _session_request(
+        "POST", "/sessions",
+        json_body={"id": session_id, "agent": agent, "model": model,
+                   "repos": repos, "prompt": prompt},
+    )
+    return "ok" if body is not None else "error: eve-computer unavailable"
+
+
+async def get_coding_session(session_id: str, since: int = 0) -> dict | None:
+    return await _session_request(
+        "GET", f"/sessions/{session_id}", params={"since": since}
+    )
+
+
+async def prompt_coding_session(session_id: str, text: str, kind: str = "reply") -> str:
+    body = await _session_request(
+        "POST", f"/sessions/{session_id}/prompt",
+        json_body={"text": text, "kind": kind},
+    )
+    return "ok" if body is not None else "error: eve-computer unavailable"
+
+
+async def close_coding_session(session_id: str) -> dict | None:
+    # Longer than the default: closing pushes branches and opens a pull
+    # request per repo, which is several network round trips to GitHub.
+    return await _session_request("POST", f"/sessions/{session_id}/close", timeout=120.0)
+
+
+async def kill_coding_session(session_id: str) -> str:
+    body = await _session_request("DELETE", f"/sessions/{session_id}")
+    return "ok" if body is not None else "error: eve-computer unavailable"

@@ -1200,3 +1200,27 @@ async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(mo
     for text in message_texts:
         assert "kitchen" not in text
         assert "All of them" not in text
+
+
+def test_the_coding_tools_are_bound_when_coding_is_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_CODING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    names = {t.name for t in graph_mod._static_tools()}
+
+    assert {"delegate_coding_task", "check_coding_session", "send_to_coding_session"} <= names
+    get_settings.cache_clear()
+
+
+def test_the_coding_tools_are_absent_when_coding_is_disabled(monkeypatch):
+    monkeypatch.setenv("EVE_CODING_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "delegate_coding_task" not in {t.name for t in graph_mod._static_tools()}
+    get_settings.cache_clear()

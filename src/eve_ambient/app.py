@@ -15,6 +15,7 @@ from hmac import compare_digest
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+from eve.coding import supervisor
 from eve.family import get_family
 from eve.settings import get_settings
 from eve_ambient import store
@@ -183,22 +184,55 @@ async def _poll_forever() -> None:
         await asyncio.sleep(interval)
 
 
+async def _supervise_forever() -> None:
+    """The coding supervisor's own tick, deliberately not the ambient one.
+
+    This is a control loop with an agent waiting on the other end, not a
+    notification pipeline: 300s of latency per conversational turn would
+    make Eve a worse correspondent than the member who delegated the work.
+
+    It only drives conversations forward. Resolved sessions are turned into
+    signals by `sources.coding.poll` on the ambient tick, which is where the
+    permission gate, the quiet hours, and the daily cap live - none of which
+    a control loop has any business bypassing.
+    """
+    interval = get_settings().coding_supervisor_interval_seconds
+    while True:
+        try:
+            await supervisor.tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Same posture as _poll_forever: the loop is the last line of
+            # defence and never dies.
+            logger.exception("the coding supervisor tick failed outright")
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     task = None
+    supervisor_task = None
     if settings.ambient_enabled:
         task = asyncio.create_task(_poll_forever())
         logger.info("ambient polling every %ss", settings.ambient_poll_interval_seconds)
     else:
         logger.info("ambient is disabled; serving health only")
+    if settings.coding_enabled:
+        supervisor_task = asyncio.create_task(_supervise_forever())
+        logger.info(
+            "coding supervisor ticking every %ss",
+            settings.coding_supervisor_interval_seconds,
+        )
     yield
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for running_task in (task, supervisor_task):
+        if running_task:
+            running_task.cancel()
+            try:
+                await running_task
+            except asyncio.CancelledError:
+                pass
     if _background:
         # A compose turn in flight at shutdown gets a chance to finish -
         # possibly after the push but before the notice row is written -
