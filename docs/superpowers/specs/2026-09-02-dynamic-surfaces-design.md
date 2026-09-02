@@ -70,8 +70,12 @@ not equally durable, and this design treats them differently:
    input surfaces, which is the driving use case — a workout tracker has
    nothing to invent because the member types every value.
 
-3. **"The surface JSON would occupy the model's own context."** *Accepted,
-   unmitigated.* See Costs below.
+3. **"The surface JSON would occupy the model's own context."** *Mostly
+   resolved.* The catalog reference lives in `skills/build-a-ui/SKILL.md` and
+   is retrieved on demand, so nothing UI-specific sits in the tool list on
+   turns that build no UI. What remains is unavoidable: a tree the model
+   authored is in that turn's tool call, and `strip_frames` cannot help,
+   because it is a tool *argument* rather than message content.
 
 ### Data comes from the tools Eve already has
 
@@ -201,13 +205,50 @@ Two decisions inside it:
   against the client's declaration. An old build still gets a text/card/badge
   summary — it can genuinely render those — and is refused only trees
   containing inputs.
-- **Rejection returns the bare diagnostic code; the legal schema lives in the
-  docstring.** `validate_operation`'s return values are the client-mirror
-  contract and `test_ui_protocol.py` asserts them exactly, so they are not
-  enriched. Showing the model the per-type property table up front means it
-  mostly does not fail; a bare `component-schema` on top of a schema it was
-  already given is usually enough to self-correct. Retries are bounded
-  structurally by `EVE_MAX_TOOL_LOOP_ITERATIONS` (6) — no new counter.
+- **Rejection returns the diagnostic code plus the legal properties for the
+  types actually present in the rejected tree.** `validate_operation`'s
+  return values are the client-mirror contract and `test_ui_protocol.py`
+  asserts them exactly, so the validator itself is not enriched; the tool
+  composes the hint from `_ALLOWED_PROPERTIES`, which it already has. Scoping
+  it to the types the model actually used keeps it near 50 tokens and, more
+  importantly, makes the retry path **self-sufficient** — it does not depend
+  on a semantic retrieval succeeding (see the skill below). Retries are
+  bounded structurally by `EVE_MAX_TOOL_LOOP_ITERATIONS` (6) — no new
+  counter.
+
+**`skills/build-a-ui/SKILL.md`** *(new)* — the catalog reference and the
+UI-building guidance, retrieved on demand by `search_skills` rather than
+carried in the tool list on every turn.
+
+This is what `search_skills` is for, in its own words: "a SKILL.md match
+returns a procedure directly as the tool's result — knowledge, not a new
+capability, so nothing about the bound-tool list changes." A matched
+procedure is returned as full content (`f"# {m.name}\n{m.content}"`), and
+filesystem `SKILL.md` files load unconditionally — `self_authoring_enabled`
+gates only Eve-authored rows, so this does not ride on a setting.
+
+It holds more than a schema could justify in a docstring: the per-type
+property table, the `stateKey` contract, the two kinds of button, and actual
+guidance — when a surface beats prose, how to keep a tree phone-sized, when
+a form is the wrong answer. Editable without a code change.
+
+`show_surface`'s docstring shrinks to what it does, that the tree must
+validate, and that the catalog lives in a skill worth searching for first.
+
+**The retrieval can miss, and correctness does not depend on it.**
+`rank_skills` is a semantic top-3 over `description` embeddings across the
+whole corpus, MCP tools included, so a UI request is not guaranteed to
+surface this skill — and as the corpus grows, less so. A miss means the model
+calls `show_surface` having guessed the schema. That is why the rejection
+hint above is self-contained rather than a pointer to the skill: guess →
+rejected with the legal properties for the types used → correct retry, with
+no second retrieval in the loop. The skill improves the *first* attempt and
+carries the taste; the rejection hint guarantees the *second*.
+
+**It costs one extra tool round when it does hit.** `search_skills` then
+`show_surface`, plus a data tool if the surface needs one, plus a possible
+retry — four of the six rounds in the worst case. Within budget, with less
+margin than before. Worth watching rather than pre-solving.
 
 **`eve/ui/actions.py`** — `parse_action` accepts `surface.submit` and reads
 `state`. `ui_action` and `UiActionError` are deleted. New `ui_submit` node:
@@ -253,11 +294,14 @@ carrying `localState` at tap time.
 `catalogId == 'weather'` branch, `weather` from all three client ID lists,
 and `weather.rangeChanged`.
 
-**Four catalog copies stay hand-synced.** `DynamicUiCapabilities.v1`,
+**Five catalog copies stay hand-synced.** `DynamicUiCapabilities.v1`,
 `DynamicSurfaceProtocol`, `DynamicSurfaceCatalog`, and the server's
 `eve.ui.protocol` each declare the catalog independently, once per layer that
 must not import the others. The client's own comment says to keep them in
-lockstep by hand. This change does not fix that; it pays it four times.
+lockstep by hand. This change does not fix that; it pays it four times — and
+adds a fifth in `skills/build-a-ui/SKILL.md`, which is prose and therefore
+the only copy no validator can catch drifting. That one is covered by a test
+asserting it against `protocol._ALLOWED_PROPERTIES` instead.
 
 ## Error handling
 
@@ -282,7 +326,10 @@ exactly-one-of rule, and `surface.submit`, and drops the `weather` cases.
 returning its diagnostic code. `test_ui_actions.py` swaps `ui_action`
 coverage for `ui_submit`'s rewrite, including a member typing frame markers
 into a text field. `test_ui_persist.py` needs no change.
-`test_ui_stream.py` covers `supports` taking a set.
+`test_ui_stream.py` covers `supports` taking a set. A skills test asserts
+`build-a-ui` parses and that its property table matches
+`protocol._ALLOWED_PROPERTIES` — a fifth copy of the catalog that would
+otherwise drift silently, and the only one no validator checks.
 
 **Client.** `dynamic_surface_protocol_test.dart` and
 `dynamic_surface_renderer_test.dart` gain the new types and drop weather;
@@ -293,11 +340,11 @@ form-submit flow test.
 
 ## Costs, accepted rather than solved
 
-**The catalog schema is in context on every turn.** `show_surface`'s
-docstring carries the per-type property table — roughly 300-400 tokens — on
-every turn a capable client is connected, whether or not a UI is asked for.
-This is ADR 0014's third objection, unmitigated, and it is the price of the
-flexibility.
+**One extra tool round per UI turn.** The catalog moved out of the tool list
+into `skills/build-a-ui/SKILL.md`, which resolves ADR 0014's third objection
+rather than paying it — nothing UI-specific sits in context on turns that
+build no UI. The trade is a `search_skills` round when a UI *is* wanted, and
+a retrieval that can miss and leave the model guessing on its first attempt.
 
 **A composed card can transcribe wrong.** Data reaches a surface through the
 model, from prose tools. ADR 0014's second objection, traded deliberately.
@@ -322,8 +369,11 @@ copies for no behavioural gain.
   and the transcript shows a readable sentence rather than JSON.
 - A surface survives a session reopen via the persisted `<assistant-ui>`
   frame, unchanged from today.
-- An invalid tree returns its diagnostic code to the model, which retries
-  within the tool loop rather than failing the turn.
+- An invalid tree returns its diagnostic code plus the legal properties for
+  the types it used, and the model retries within the tool loop rather than
+  failing the turn — without needing to retrieve the skill to do it.
+- `search_skills` surfaces `build-a-ui` for a plausible UI request, and
+  `show_surface`'s docstring carries no property table.
 - A client declaring only the twelve original ids gets non-input UIs and is
   refused input trees, with Eve answering in prose instead.
 - `show_weather`, `eve/ui/weather.py`, `ui_action`, `weather_surface.dart`
