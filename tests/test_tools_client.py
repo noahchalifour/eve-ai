@@ -186,3 +186,122 @@ async def test_get_computer_task_returns_none_when_the_box_is_unreachable(monkey
 
     respx.get("http://eve-computer.test/tasks/t1").mock(side_effect=httpx.ConnectError)
     assert await get_computer_task("t1") is None
+
+
+@respx.mock
+async def test_create_coding_session_posts_the_agent_and_model(monkeypatch):
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    route = respx.post("http://eve-computer:8092/sessions").mock(
+        return_value=HTTPXResponse(202, json={"id": "s1", "status": "queued"})
+    )
+
+    result = await tools_client.create_coding_session(
+        "s1", "codex", "chatgpt/gpt-5.6-sol", ["acme/repo"], "fix it"
+    )
+
+    assert result == "ok"
+    sent = json.loads(route.calls.last.request.content)
+    assert sent == {
+        "id": "s1", "agent": "codex", "model": "chatgpt/gpt-5.6-sol",
+        "repos": ["acme/repo"], "prompt": "fix it",
+    }
+
+
+@respx.mock
+async def test_create_coding_session_degrades_to_an_error_string():
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    respx.post("http://eve-computer:8092/sessions").mock(
+        return_value=HTTPXResponse(500)
+    )
+
+    result = await tools_client.create_coding_session("s1", "codex", "m", ["r"], "p")
+
+    assert result.startswith("error:")
+
+
+@respx.mock
+async def test_get_coding_session_passes_the_cursor():
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    route = respx.get("http://eve-computer:8092/sessions/s1").mock(
+        return_value=HTTPXResponse(200, json={"status": "idle", "turns": [], "cursor": 3})
+    )
+
+    result = await tools_client.get_coding_session("s1", since=3)
+
+    assert result["cursor"] == 3
+    assert route.calls.last.request.url.params["since"] == "3"
+
+
+@respx.mock
+async def test_get_coding_session_returns_none_when_the_box_is_unreachable():
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    respx.get("http://eve-computer:8092/sessions/s1").mock(
+        return_value=HTTPXResponse(503)
+    )
+
+    assert await tools_client.get_coding_session("s1") is None
+
+
+@respx.mock
+async def test_prompt_carries_its_kind():
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    route = respx.post("http://eve-computer:8092/sessions/s1/prompt").mock(
+        return_value=HTTPXResponse(200, json={"status": "queued"})
+    )
+
+    await tools_client.prompt_coding_session("s1", "use httpx", kind="interjection")
+
+    assert json.loads(route.calls.last.request.content)["kind"] == "interjection"
+
+
+@respx.mock
+async def test_close_returns_the_pull_requests():
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    respx.post("http://eve-computer:8092/sessions/s1/close").mock(
+        return_value=HTTPXResponse(200, json={"prs": [{"repo": "acme/repo", "pr_url": "u"}]})
+    )
+
+    result = await tools_client.close_coding_session("s1")
+
+    assert result["prs"][0]["pr_url"] == "u"
+
+
+@respx.mock
+async def test_every_session_call_sends_the_computer_bearer_token(monkeypatch):
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    # 32+ chars: Settings refuses a shorter computer_api_key outright
+    # ("a guessable value fails open"), so the header check needs a key
+    # that survives validation.
+    key = "secret-0123456789abcdef0123456789"
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", key)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    route = respx.post("http://eve-computer:8092/sessions").mock(
+        return_value=HTTPXResponse(202, json={})
+    )
+
+    await tools_client.create_coding_session("s1", "codex", "m", ["r"], "p")
+
+    assert route.calls.last.request.headers["authorization"] == f"Bearer {key}"
