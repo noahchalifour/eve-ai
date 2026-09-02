@@ -920,7 +920,13 @@ async def test_a_command_tool_and_a_plain_tool_batch_in_one_round():
     """`search_skills` returns a Command (it updates `dynamic_tools`); a data
     tool returns a string. Issuing both in one round is what makes
     `[search_skills || ask_home] -> show_surface` two rounds instead of
-    three, so the mix is worth pinning - it is library behaviour, not ours."""
+    three, so the mix is worth pinning - it is library behaviour, not ours.
+
+    Note: ToolNode must be invoked via a compiled StateGraph rather than bare
+    `ToolNode([...]).ainvoke()` because the latter raises `ValueError: Missing
+    required config key` in langgraph>=1.2.11. This StateGraph wrapper also
+    matches real usage: ToolNode always runs inside a compiled graph in
+    eve.graph.py, so testing it this way pins the actual behavior."""
     from typing import Annotated, TypedDict
     from langchain_core.messages import AIMessage, ToolMessage
     from langchain_core.tools import tool as make_tool
