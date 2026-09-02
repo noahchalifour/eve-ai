@@ -47,9 +47,10 @@ from eve.specialists.mail import ask_mail
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
-from eve.ui import protocol as ui_protocol
+from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action
 from eve.ui.persist import persist_ui
+from eve.ui.tools import show_surface
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, ask_health, search_skills, search_memory]
 
@@ -66,7 +67,7 @@ def _live_specs(state: EveState) -> list:
 
 
 def _static_tools(config: RunnableConfig | None = None) -> list:
-    """Rebuilt per call rather than fixed at import: three switches gate three
+    """Rebuilt per call rather than fixed at import: four switches gate four
     tools, and both `eve` and `tools_node` need the same answer within one
     turn. Settings are lru_cached, so this is a dict lookup.
 
@@ -81,6 +82,14 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(propose_tool)
     if settings.computer_enabled:
         tools.append(dispatch_computer_task)
+    # Not a setting but the connected client's own capability declaration
+    # (`config.configurable.assistant_ui`). A second setting for the same
+    # question would be a second thing to keep in step, and a surface emitted
+    # at a client that cannot render it goes into that thread's transcript
+    # permanently. Bound whenever the client declares anything at all; the
+    # per-type gate inside the tool is what refuses an individual tree.
+    if ui_stream.capabilities(config) is not None:
+        tools.append(show_surface)
     return tools
 
 

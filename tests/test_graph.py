@@ -862,3 +862,21 @@ async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(mo
     for text in message_texts:
         assert "kitchen" not in text
         assert "All of them" not in text
+
+
+def test_show_surface_is_bound_only_for_a_declaring_client():
+    from eve.graph import _static_tools
+
+    names = {t.name for t in _static_tools({})}
+    assert "show_surface" not in names
+
+    declared = {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["card", "text"],
+            }
+        }
+    }
+    assert "show_surface" in {t.name for t in _static_tools(declared)}
