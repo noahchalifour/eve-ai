@@ -250,6 +250,58 @@ carries the taste; the rejection hint guarantees the *second*.
 retry — four of the six rounds in the worst case. Within budget, with less
 margin than before. Worth watching rather than pre-solving.
 
+## Parallel tool calls
+
+`search_skills` and a data tool should be issued in the **same** round. This
+needs no plumbing: `ToolNode._afunc` already runs a round's calls through
+`asyncio.gather` (`tool_node.py:858`), and `_combine_tool_outputs` explicitly
+supports batching a `Command`-returning tool — which `search_skills` is, since
+it updates `dynamic_tools` — with plain-string tools, wrapping the latter as
+`{messages: [...]}` and letting LangGraph apply the list of updates.
+
+Only `show_surface` is genuinely sequential; it needs both results. So the
+worked path is `[search_skills ∥ ask_home] → show_surface`: two rounds instead
+of three, or three instead of four when a rejection forces a retry. The win is
+budget headroom as much as latency, since `_tool_rounds_this_turn` counts
+rounds rather than calls.
+
+What this needs is guidance, in `skills/build-a-ui/SKILL.md` and
+`prompts/eve.md`: search for the catalog and gather the data together, then
+build.
+
+### ADR 0014's deferred surface counter
+
+Encouraging parallel batches retires the argument that made the 8-surface cap
+safe. ADR 0014 conceded that "6 rounds is below 8 surfaces" counts *rounds*
+and assumes one call per round, and rested on the fact that `show_weather` was
+"one no-argument tool a model has no reason to call more than once" — then
+named its own trigger: "if a model starts calling `show_weather` more than
+once a turn, that reasoning stops holding and a real per-run counter is what
+to add."
+
+`show_surface` is a tool a model has plausible reason to call more than once,
+so that premise is gone and needs replacing rather than inheriting.
+
+**Still deferred, on narrower grounds.** The catastrophic failure is already
+prevented: nine creates in one frame makes the client reject the *whole*
+frame, and `persist_ui` trims to eight and logs it. What remains is a
+divergence that exists today — the live `custom` stream is uncapped, so a
+client can briefly render more surfaces than a reopened transcript shows.
+That is cosmetic and transient, and nine surfaces from one turn is
+implausible even with parallel calls.
+
+**One finding for whoever does fix it.** A counter derived from
+`state["messages"]`, the idiom `_tool_rounds_this_turn` and `persist_ui` both
+use, **cannot work here.** Parallel siblings execute against the same state
+snapshot, so each one reads zero surfaces already emitted and every one
+passes. The fix has to be run-scoped mutable state in `eve.ui.stream`, not a
+message-derived count — which is a substantial part of why it is not worth
+building for a cosmetic bound.
+
+`persist_ui` itself needs no change: it reads `ToolMessage` artifacts back to
+the last `HumanMessage`, so it collects a parallel batch correctly, and the
+batch's order is `tool_calls` order and therefore deterministic.
+
 **`eve/ui/actions.py`** — `parse_action` accepts `surface.submit` and reads
 `state`. `ui_action` and `UiActionError` are deleted. New `ui_submit` node:
 rewrites the raw envelope into a readable sentence
@@ -326,7 +378,10 @@ exactly-one-of rule, and `surface.submit`, and drops the `weather` cases.
 returning its diagnostic code. `test_ui_actions.py` swaps `ui_action`
 coverage for `ui_submit`'s rewrite, including a member typing frame markers
 into a text field. `test_ui_persist.py` needs no change.
-`test_ui_stream.py` covers `supports` taking a set. A skills test asserts
+`test_ui_stream.py` covers `supports` taking a set. One graph test batches
+`search_skills` with a plain tool in a single round and asserts both results
+land — the `Command`/plain-string mix is the part worth pinning, since it is
+library behaviour this design now depends on. A skills test asserts
 `build-a-ui` parses and that its property table matches
 `protocol._ALLOWED_PROPERTIES` — a fifth copy of the catalog that would
 otherwise drift silently, and the only one no validator checks.
@@ -340,11 +395,13 @@ form-submit flow test.
 
 ## Costs, accepted rather than solved
 
-**One extra tool round per UI turn.** The catalog moved out of the tool list
-into `skills/build-a-ui/SKILL.md`, which resolves ADR 0014's third objection
+**A retrieval that can miss.** The catalog moved out of the tool list into
+`skills/build-a-ui/SKILL.md`, which resolves ADR 0014's third objection
 rather than paying it — nothing UI-specific sits in context on turns that
-build no UI. The trade is a `search_skills` round when a UI *is* wanted, and
-a retrieval that can miss and leave the model guessing on its first attempt.
+build no UI. The round it costs is absorbed by issuing `search_skills`
+alongside the data tool (see Parallel tool calls), so what remains is the
+retrieval itself: a miss leaves the model guessing on its first attempt, and
+the rejection hint is what recovers it.
 
 **A composed card can transcribe wrong.** Data reaches a surface through the
 model, from prose tools. ADR 0014's second objection, traded deliberately.
@@ -374,6 +431,8 @@ copies for no behavioural gain.
   failing the turn — without needing to retrieve the skill to do it.
 - `search_skills` surfaces `build-a-ui` for a plausible UI request, and
   `show_surface`'s docstring carries no property table.
+- `search_skills` and a data tool issued in one round both resolve, with the
+  `Command` and plain-string results merged correctly.
 - A client declaring only the twelve original ids gets non-input UIs and is
   refused input trees, with Eve answering in prose instead.
 - `show_weather`, `eve/ui/weather.py`, `ui_action`, `weather_surface.dart`
