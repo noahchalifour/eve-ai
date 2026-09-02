@@ -35,7 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      # --group computer for the same reason the `test` job needs it: `-m
+      # docker` only *deselects* the other tiers, and pytest imports every
+      # module under `tests/` to collect them. One test module importing a
+      # computer-only dependency at module scope (tests/test_acp_*.py import
+      # `acp`) is a collection error that fails this job, whether or not it
+      # runs a single one of those tests.
+      - run: uv sync --frozen --group computer
       - run: uv run pytest -m docker -v
 
   # Publishing stays tag-only; `test` above now runs on every PR and push.
