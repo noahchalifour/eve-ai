@@ -1,6 +1,6 @@
 [project]
 name = "eve"
-version = "0.6.0"
+version = "0.7.0"
 description = "Eve, a family personal assistant graph served by Aegra"
 readme = "README.md"
 authors = [
@@ -45,6 +45,7 @@ eve-migrate = "eve.memory.db:main"
 eve-pat = "eve.pat:main"
 eve-skill = "eve.skills.cli:main"
 eve-tool = "eve.tools_authoring.cli:main"
+eve-wardrobe = "eve.wardrobe.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]

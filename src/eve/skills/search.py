@@ -79,9 +79,17 @@ async def search_skills(
             sandbox = await sandbox_specs()
         except Exception:
             sandbox = []
-    skills = load_skills(
-        mcp_tools=[*registered_mcp_tools(), *sandbox], authored=authored
-    )
+    # Eve sees only unscoped skills. A specialist-scoped procedure is reachable
+    # exclusively through that specialist's own search
+    # (eve.skills.specialist_search) - she delegates rather than acts on it,
+    # so it would be noise in her context and a procedure she cannot follow.
+    skills = [
+        skill
+        for skill in load_skills(
+            mcp_tools=[*registered_mcp_tools(), *sandbox], authored=authored
+        )
+        if skill.specialist is None
+    ]
     matches = await rank_skills(query, skills)
     if not matches:
         return Command(

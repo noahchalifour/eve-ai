@@ -33,6 +33,21 @@ class ToolsSettings(BaseSettings):
     # nothing here can answer a prompt, so an unattended login needs the
     # seed to mint its own code.
     monarch_mfa_secret: str = ""
+    # The wardrobe's photo library. Read-only use: the catalogue never writes
+    # to Immich, so an API key scoped to reading is sufficient.
+    immich_url: str = ""
+    immich_api_key: str = ""
+    # Phase: health coach. eve-tools' first writable state - one table, its
+    # own role. Deliberately a SEPARATE connection string from
+    # EVE_DATABASE_URL: that one is a superuser-ish role with every Eve table
+    # in reach, and ADR 0016's whole isolation argument is that eve-tools'
+    # role is not. Pointing this at EVE_DATABASE_URL "because it's the same
+    # database" would silently undo it.
+    database_url: str = ""
+    whoop_client_id: str = ""
+    whoop_client_secret: str = ""
+    oura_client_id: str = ""
+    oura_client_secret: str = ""
 
 
 @lru_cache(maxsize=1)

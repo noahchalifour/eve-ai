@@ -251,12 +251,15 @@ additions to `src/eve/`, and the separate `src/eve_tools/` package; see
 ## Specialists and skills
 
 Phase 3 gives `eve` a tool-calling loop (the graph's `eve <-> tools` cycle)
-that reaches three domain specialists and one extensible skills layer,
+that reaches four domain specialists and one extensible skills layer,
 without any of them holding a third-party credential directly:
 
-- **`src/eve/specialists/`** — `home.py`, `mail.py`, and `finances.py` each
-  wrap a small tool-calling agent built by `base.py`'s `build_specialist`
-  (running on `Tier.MECHANICAL`) as a single opaque tool for `eve`;
+- **`src/eve/specialists/`** — `home.py`, `mail.py`, `finances.py`, and
+  `health.py` each wrap a small tool-calling agent built by `base.py`'s
+  `build_specialist` (running on `Tier.MECHANICAL`) as a single opaque tool
+  for `eve` — health gated by the bare `health` permission, the way
+  finances is gated by `finances`, and granted to both members in
+  `family.yaml`;
   `permissions.py` enforces `family.yaml` permissions once at that
   specialist boundary and again inside `mail.py`'s `send_email`, which needs
   `mail.send` on top of the coarser `mail.read`/`mail.send` check on
@@ -295,7 +298,15 @@ without any of them holding a third-party credential directly:
   `monthlyAmountsByCategory` shape into the flat `spent`/`limit`/`period`
   budgets its callers expect. Both additions exist because `eve_ambient`'s
   mail and finances sources need those shapes, not because a specialist asked
-  for them.
+  for them. The health coach adds the service's first piece of persistent
+  state: per [ADR 0016](adr/0016-eve-tools-owns-a-credential-table.md) it
+  connects to Postgres under its own role (`EVE_TOOLS_DATABASE_URL`, kept
+  deliberately separate from Eve's `EVE_DATABASE_URL`) and reaches exactly
+  one table, `eve_oauth_token` — WHOOP rotates its refresh token on every
+  refresh, so those credentials need durable, replica-shared storage that
+  environment variables cannot provide. `health.py` fans each request out to
+  whichever of the two providers the member has connected and merges their
+  normalizers' output into one provider-agnostic shape.
 
 ## Self-authored behaviour
 
@@ -729,7 +740,7 @@ migrations, which run separately at startup against the default
 is kept as an empty list rather than deleted, so an old assertion pinning its
 old shape fails loudly instead of silently importing nothing.
 
-Three revisions exist in `alembic/versions/`, not the two originally planned:
+Five revisions exist in `alembic/versions/`, not the two originally planned:
 
 - **`0001_baseline`** reproduces the five hand-rolled entries idempotently —
   every statement is `IF NOT EXISTS` — so it is a no-op against an
@@ -748,6 +759,13 @@ Three revisions exist in `alembic/versions/`, not the two originally planned:
   backstop the approved case already had. See
   [ADR 0011](adr/0011-alembic-with-a-private-version-table.md) for the full
   rationale.
+- **`0004_eve_computer_task`** creates the `eve_computer_task` table (see
+  "Eve's computer" above).
+- **`0005_eve_oauth_token`** creates the `eve_oauth_token` table —
+  `(provider, member_sub)`-keyed rows holding each member's WHOOP and Oura
+  OAuth credentials, the one table `eve-tools`' own restricted role may
+  touch (see "Specialists and skills" and
+  [ADR 0016](adr/0016-eve-tools-owns-a-credential-table.md)).
 
 ## Ambient
 

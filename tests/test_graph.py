@@ -31,6 +31,12 @@ UI_CAPABLE_CONFIG = {
 }
 
 
+def test_the_stylist_is_bound_on_every_turn():
+    from eve.graph import _static_tools
+
+    assert "ask_stylist" in [t.name for t in _static_tools()]
+
+
 def _fake_factory(_tier):
     return FakeToolCallingModel(messages=iter([AIMessage(content="Hi Noah.")]))
 
@@ -614,7 +620,7 @@ def test_write_skill_is_unbound_by_default(monkeypatch):
     names = {t.name for t in graph_mod._static_tools()}
     assert "write_skill" not in names
     # The Phase 3/4 toolset is untouched.
-    assert {"ask_home", "ask_mail", "ask_finances", "search_skills",
+    assert {"ask_home", "ask_mail", "ask_finances", "ask_health", "search_skills",
             "search_memory"} <= names
 
 

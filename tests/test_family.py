@@ -60,3 +60,30 @@ def test_the_shipped_roster_grants_calendar_read_to_someone():
     else would say so."""
     family = Family.from_yaml(Path("family.yaml"))
     assert any(m.can("calendar.read") for m in family.members())
+
+
+def test_a_member_without_a_wardrobe_album_gets_none(tmp_path):
+    path = tmp_path / "family.yaml"
+    path.write_text(
+        "members:\n"
+        "  - sub: 'sub-1'\n"
+        "    name: 'Noah'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+    )
+    family = Family.from_yaml(path)
+    assert family.get("sub-1").wardrobe_album is None
+
+
+def test_a_wardrobe_album_is_read_from_the_roster(tmp_path):
+    path = tmp_path / "family.yaml"
+    path.write_text(
+        "members:\n"
+        "  - sub: 'sub-1'\n"
+        "    name: 'Noah'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+        "    wardrobe_album: 'album-uuid-1'\n"
+    )
+    family = Family.from_yaml(path)
+    assert family.get("sub-1").wardrobe_album == "album-uuid-1"
