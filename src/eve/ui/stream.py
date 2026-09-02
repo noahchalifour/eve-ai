@@ -32,8 +32,14 @@ def capabilities(config: RunnableConfig | None) -> dict | None:
     return declared if isinstance(declared, dict) else None
 
 
-def supports(config: RunnableConfig | None, catalog_id: str) -> bool:
-    """Fails CLOSED.
+def supports(
+    config: RunnableConfig | None, catalog_ids: set[str] | frozenset[str]
+) -> bool:
+    """Whether the client declared EVERY id in `catalog_ids`. Fails CLOSED.
+
+    A set rather than one id, because a model-authored tree uses many types
+    at once and the gate has to be all-or-nothing: a surface is emitted whole
+    or not at all, and there is no partial render to fall back to.
 
     A client that declared nothing cannot render anything, and a surface is
     not free to emit at it: `eve.ui.persist` writes the same operation into
@@ -49,7 +55,9 @@ def supports(config: RunnableConfig | None, catalog_id: str) -> bool:
     if declared.get("catalogVersion") != protocol.CATALOG_VERSION:
         return False
     ids = declared.get("catalogIds")
-    return isinstance(ids, list) and catalog_id in ids
+    if not isinstance(ids, list):
+        return False
+    return set(catalog_ids).issubset(ids)
 
 
 def emit(operation: dict) -> bool:
