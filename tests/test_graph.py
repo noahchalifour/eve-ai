@@ -914,3 +914,60 @@ def test_a_submit_envelope_routes_through_ui_submit():
         _route_after_context({"messages": [HumanMessage(content="hi")]}, declared)
         == "recall"
     )
+
+
+async def test_a_command_tool_and_a_plain_tool_batch_in_one_round():
+    """`search_skills` returns a Command (it updates `dynamic_tools`); a data
+    tool returns a string. Issuing both in one round is what makes
+    `[search_skills || ask_home] -> show_surface` two rounds instead of
+    three, so the mix is worth pinning - it is library behaviour, not ours."""
+    from typing import Annotated, TypedDict
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.tools import tool as make_tool
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.graph.message import add_messages
+    from langgraph.prebuilt import ToolNode
+    from langgraph.types import Command
+
+    class State(TypedDict):
+        messages: Annotated[list, add_messages]
+        dynamic_tools: list
+
+    @make_tool
+    def plain(text: str) -> str:
+        """A plain tool."""
+        return f"plain:{text}"
+
+    @make_tool
+    def commanding(text: str) -> Command:
+        """A Command-returning tool."""
+        return Command(
+            update={
+                "messages": [ToolMessage(f"cmd:{text}", tool_call_id="call-2")],
+                "dynamic_tools": [],
+            }
+        )
+
+    builder = StateGraph(State)
+    tools_node = ToolNode([plain, commanding])
+    builder.add_node("tools", tools_node)
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()
+
+    message = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "plain", "args": {"text": "a"}, "id": "call-1", "type": "tool_call"},
+            {
+                "name": "commanding",
+                "args": {"text": "b"},
+                "id": "call-2",
+                "type": "tool_call",
+            },
+        ],
+    )
+    result = await graph.ainvoke({"messages": [message], "dynamic_tools": []})
+    rendered = repr(result)
+    assert "plain:a" in rendered
+    assert "cmd:b" in rendered
