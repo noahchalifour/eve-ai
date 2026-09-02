@@ -21,7 +21,7 @@ import re
 PROTOCOL = "assistant-ui/1.0"
 CATALOG_VERSION = "1"
 
-# The closed V1 catalog. The same twelve ids are legal as a surface's
+# The closed V1 catalog. The same fourteen ids are legal as a surface's
 # `catalogId` AND as a component's `type` - the client checks both against one
 # set (`DynamicSurfaceProtocol._componentTypes`), so this file does too.
 CATALOG_IDS = frozenset(
@@ -38,11 +38,14 @@ CATALOG_IDS = frozenset(
         "button",
         "segmentedSelection",
         "expandable",
+        "textField",
+        "numberField",
     }
 )
 
-# Emptied with the weather surface. Task 2 refills it with `surface.submit`.
-ACTION_IDS: frozenset[str] = frozenset()
+# One interactive contract: a button that hands the surface's localState back
+# to Eve as a turn. A provider cannot invent an action.
+ACTION_IDS = frozenset({"surface.submit"})
 
 MAX_SURFACES_PER_TURN = 8
 MAX_COMPONENTS = 64
@@ -61,9 +64,11 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
     "text": frozenset({"text"}),
     "icon": frozenset({"name"}),
     "badge": frozenset({"label"}),
-    "button": frozenset({"label", "actionId", "actionValue"}),
+    "button": frozenset({"label", "actionId", "actionValue", "setState"}),
     "segmentedSelection": frozenset({"options", "selected", "actionId", "actionValue"}),
     "expandable": frozenset({"label", "expanded"}),
+    "textField": frozenset({"stateKey", "label"}),
+    "numberField": frozenset({"stateKey", "label"}),
     "column": frozenset(),
     "row": frozenset(),
     "list": frozenset(),
@@ -364,12 +369,32 @@ def _validate_properties(component_type: str, properties: object) -> str | None:
         error = _validate_property(key, value)
         if error:
             return error
+    if component_type == "button":
+        # Exactly one, never both and never neither. Both would be one tap
+        # with two meanings in an order the protocol never states; neither
+        # renders a live control that silently ignores taps, which is worse
+        # than the fallback because it says nothing is wrong.
+        declared = ("actionId" in properties) + ("setState" in properties)
+        if declared != 1:
+            return "component-schema"
     return None
 
 
 def _validate_property(key: str, value: object) -> str | None:
     if key in _STRING_PROPERTIES:
         return _string_or_binding(value)
+    if key == "stateKey":
+        # A literal key, never a binding: it names a localState slot to
+        # WRITE, and `$data.` resolves against read-only surface data. The
+        # `$` check is the whole point - without it `$data.reps` validates
+        # and the client writes to a key literally called "$data.reps".
+        if not isinstance(value, str) or not value or value.startswith("$"):
+            return "component-schema"
+        return validate_json_value(value)
+    if key == "setState":
+        if not isinstance(value, dict):
+            return "component-schema"
+        return validate_json_value(value)
     if key == "columns":
         legal = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 6
         return None if legal else "component-schema"

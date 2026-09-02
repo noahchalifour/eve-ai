@@ -21,25 +21,18 @@ def _encoded(envelope=None) -> str:
     return f"<assistant-ui-action>\n{body}\n</assistant-ui-action>"
 
 
-def test_no_action_is_recognised_while_action_ids_is_empty():
-    """Task 1 empties `ACTION_IDS`; Task 2 refills it and this test is
-    replaced by the `surface.submit` cases."""
-    assert parse_action(_encoded()) is None
-
-
-def test_a_wrapped_envelope_is_recognised_as_valid_json():
+def test_a_wrapped_envelope_is_recognised():
     """The client wraps unconditionally on every provider, LangGraph
     included - `langgraph_agent_service.dart` calls `encodeAction` with no
-    branch. However, while ACTION_IDS is empty, all envelopes return None."""
-    # This would be an envelope if surface.submit were in ACTION_IDS
-    assert parse_action(_encoded()) is None
+    branch."""
+    assert parse_action(_encoded()) == ENVELOPE
 
 
-def test_a_bare_envelope_is_also_not_recognised():
+def test_a_bare_envelope_is_also_recognised():
     """Tolerated so a future client that drops the markers on a native
     channel still works, rather than silently falling through to the model as
-    a wall of JSON. But while ACTION_IDS is empty, it returns None."""
-    assert parse_action(json.dumps(ENVELOPE)) is None
+    a wall of JSON."""
+    assert parse_action(json.dumps(ENVELOPE)) == ENVELOPE
 
 
 def test_ordinary_member_speech_is_not_an_action():
@@ -62,7 +55,7 @@ def test_the_wrong_protocol_version_is_not_an_action():
 
 
 def test_an_action_id_outside_the_v1_contract_is_rejected():
-    """While ACTION_IDS is empty, no action is in the contract."""
+    """Only surface.submit is in the contract."""
     assert parse_action(_encoded({**ENVELOPE, "actionId": "lights.toggle"})) is None
 
 

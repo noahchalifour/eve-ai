@@ -106,7 +106,7 @@ def test_grid_columns_must_be_an_int_between_one_and_six():
     assert protocol.validate_operation(_surface(components=grid(True))) == "component-schema"
 
 
-def test_no_actions_are_legal_while_action_ids_is_empty():
+def test_only_surface_submit_is_a_legal_action_id():
     def button(action_id):
         return [
             {
@@ -117,7 +117,7 @@ def test_no_actions_are_legal_while_action_ids_is_empty():
             }
         ]
 
-    assert protocol.validate_operation(_surface(components=button("surface.submit"))) == "action-schema"
+    assert protocol.validate_operation(_surface(components=button("surface.submit"))) is None
     assert protocol.validate_operation(_surface(components=button("lights.toggle"))) == "action-schema"
 
 
@@ -306,3 +306,161 @@ def test_append_frame_appends_a_new_block_to_list_content():
         {"type": "text", "text": f"\n{protocol.frame([operation])}"},
     ]
     assert protocol.strip_frames_from_content(result) == blocks
+
+
+def _create(components: list[dict]) -> dict:
+    return {
+        "protocol": "assistant-ui/1.0",
+        "op": "create",
+        "surface": {
+            "surfaceId": "sf-1",
+            "catalogId": "column",
+            "catalogVersion": "1",
+            "components": components,
+        },
+    }
+
+
+def test_a_text_field_declares_a_state_key_and_a_label():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "textField",
+                "properties": {"stateKey": "exercise", "label": "Exercise"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_number_field_declares_a_state_key_and_a_label():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "numberField",
+                "properties": {"stateKey": "reps", "label": "Reps"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_state_key_may_not_be_a_binding():
+    """`stateKey` names a localState slot to WRITE. A `$data.` binding
+    resolves against read-only surface data, so accepting one here would
+    describe a write to a value the client cannot address."""
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "textField",
+                "properties": {"stateKey": "$data.reps", "label": "Reps"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_an_input_rejects_an_undeclared_property():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "numberField",
+                "properties": {"stateKey": "reps", "placeholder": "8"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_a_button_may_set_local_state():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Clear", "setState": {"reps": 0}},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_button_may_submit():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Save", "actionId": "surface.submit"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_button_may_not_do_both():
+    """Both would mean one tap with two meanings, and the client would have
+    to pick an order the protocol never states."""
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {
+                    "label": "Save",
+                    "actionId": "surface.submit",
+                    "setState": {"done": True},
+                },
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_a_button_may_not_do_neither():
+    """A button that does nothing renders as a live control that silently
+    ignores taps - worse than the whole-surface fallback, which at least
+    says something is wrong."""
+    operation = _create([{"id": "c1", "type": "button", "properties": {"label": "Save"}}])
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_set_state_must_be_a_json_object():
+    operation = _create(
+        [{"id": "c1", "type": "button", "properties": {"label": "Go", "setState": 3}}]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_set_state_values_obey_the_string_ceiling():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Go", "setState": {"note": "x" * 2049}},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "string-limit"
+
+
+def test_surface_submit_is_the_only_action():
+    assert protocol.ACTION_IDS == frozenset({"surface.submit"})
+
+
+def test_an_unknown_action_id_is_rejected():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Go", "actionId": "surface.explode"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "action-schema"
