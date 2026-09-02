@@ -880,3 +880,37 @@ def test_show_surface_is_bound_only_for_a_declaring_client():
         }
     }
     assert "show_surface" in {t.name for t in _static_tools(declared)}
+
+
+def test_a_submit_envelope_routes_through_ui_submit():
+    import json
+
+    from langchain_core.messages import HumanMessage
+
+    from eve.graph import _route_after_context
+
+    envelope = json.dumps(
+        {
+            "protocol": "assistant-ui/1.0",
+            "sessionId": "s-1",
+            "surfaceId": "sf-1",
+            "actionId": "surface.submit",
+            "state": {"reps": 8},
+        }
+    )
+    declared = {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["card"],
+            }
+        }
+    }
+    state = {"messages": [HumanMessage(content=envelope)]}
+    assert _route_after_context(state, declared) == "ui_submit"
+    assert _route_after_context(state, {}) == "recall"
+    assert (
+        _route_after_context({"messages": [HumanMessage(content="hi")]}, declared)
+        == "recall"
+    )

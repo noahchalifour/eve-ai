@@ -48,7 +48,7 @@ from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol, stream as ui_stream
-from eve.ui.actions import parse_action
+from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
 from eve.ui.tools import show_surface
 
@@ -167,13 +167,28 @@ def _tool_rounds_this_turn(messages: list) -> int:
 
 
 def _route_after_context(state: EveState, config: RunnableConfig) -> str:
-    """Every turn goes to `recall`.
+    """A Save tap arrives as ordinary user text, because the client re-runs
+    the turn with the user message's content replaced by an action envelope.
 
-    The weather surface's model-less tap branch is gone; Task 6 restores a
-    branch here for `surface.submit`, which routes to a node that rewrites
-    the envelope and then continues to `recall` rather than ending the turn.
+    It routes to `ui_submit`, which rewrites the envelope into a sentence and
+    continues to `recall` - NOT to END, the way the weather tap did. A submit
+    has no predetermined answer, and Eve is about to decide where to put
+    something, which is exactly when she wants memory context.
+
+    Gated on `ui_stream.capabilities`, not just `parse_action`, so the
+    fail-closed constraint holds: an undeclared client's envelope becomes
+    ordinary member speech, no frame is emitted, and a normal model answer
+    comes back.
+
+    Branching after `load_context` rather than at START is deliberate -
+    `load_context` is pure local computation (ADR 0002).
     """
-    return "recall"
+    messages = state["messages"]
+    if not messages or not isinstance(messages[-1], HumanMessage):
+        return "recall"
+    if not parse_action(messages[-1].content):
+        return "recall"
+    return "ui_submit" if ui_stream.capabilities(config) is not None else "recall"
 
 
 def build_graph(
@@ -222,8 +237,14 @@ def build_graph(
     builder.add_node("persist_ui", persist_ui)
     builder.add_node("extract", extract_fn)
     builder.add_node("suggest", suggest_fn)
+    builder.add_node("ui_submit", ui_submit)
     builder.add_edge(START, "load_context")
-    builder.add_edge("load_context", "recall")
+    builder.add_conditional_edges(
+        "load_context",
+        _route_after_context,
+        {"ui_submit": "ui_submit", "recall": "recall"},
+    )
+    builder.add_edge("ui_submit", "recall")
     builder.add_edge("recall", "eve")
     # Bounded by `eve`'s own `_tool_rounds_this_turn` check, not by
     # LangGraph's recursion_limit: that default is 10007
