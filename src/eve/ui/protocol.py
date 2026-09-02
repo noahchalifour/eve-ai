@@ -95,10 +95,9 @@ def frame(operations: list[dict]) -> str:
 
 
 def append_frame(content: str | list, operations: list[dict]) -> str | list:
-    """The one builder both frame producers share: `eve.ui.persist.persist_ui`
-    (a model's own final answer plus this turn's `create` operations) and
-    `eve.ui.actions.ui_action` (a one-line reply plus the tap's `patch`). One
-    contract rather than two conventions for the same shape, so
+    """The one builder for frame producers: `eve.ui.persist.persist_ui`
+    uses this to append a model's surfaces into the final AI message. One
+    contract rather than multiple conventions for the same shape, so
     `strip_frames`/`strip_frames_from_content` only ever have to invert what
     THIS function produces.
 
@@ -150,26 +149,21 @@ _FRAME_SUFFIX = re.compile(
 
 
 def strip_frames(text: str) -> str:
-    """Undo what `persist_ui` (and `ui_action`) did to an AIMessage's
-    content, for every place a persisted message is fed back into a prompt
-    rather than shown to the member.
+    """Undo what `persist_ui` did to an AIMessage's content, for every place
+    a persisted message is fed back into a prompt rather than shown to the member.
 
     `persist_ui` (`eve.ui.persist`) exists to make a card survive a session
     reopen, by writing the turn's surface into `messages` - text the client
-    strips before it ever reaches the member or TTS. `ui_action`
-    (`eve.ui.actions`) writes the same shape for a related but different
-    reason: a tap on a rendered surface answers with a one-line reply plus
-    the tap's patch, built through the same `append_frame` both producers
-    share, rather than a model's own free-form prose. Either way `messages`
-    is also what both the VOICE model (`eve.graph`)
-    and REFLEX (`eve.memory.extract`, for extraction and for the thread
-    digest) read back as conversation history on every later turn. Left
-    unstripped, a surface that can be multiple KiB (the protocol's own
-    ceiling is 48 KiB) is fed into every subsequent prompt, REFLEX can mint
-    memories out of the JSON, and the VOICE model gets a worked example of
-    the frame syntax in its own prior output to imitate - a self-composed
-    frame in `content` would reach the client having passed through none of
-    `validate_operation`, unlike a real one which is gated by `stream.emit`.
+    strips before it ever reaches the member or TTS. The `messages` is also
+    what both the VOICE model (`eve.graph`) and REFLEX
+    (`eve.memory.extract`, for extraction and for the thread digest) read back
+    as conversation history on every later turn. Left unstripped, a surface
+    that can be multiple KiB (the protocol's own ceiling is 48 KiB) is fed
+    into every subsequent prompt, REFLEX can mint memories out of the JSON,
+    and the VOICE model gets a worked example of the frame syntax in its own
+    prior output to imitate - a self-composed frame in `content` would reach
+    the client having passed through none of `validate_operation`, unlike a
+    real one which is gated by `stream.emit`.
 
     A no-op on the near-totality of turns that carry no frame at all.
     """

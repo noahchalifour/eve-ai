@@ -214,12 +214,10 @@ def test_strip_frames_is_exactly_inverse_to_frame():
 
 
 def test_strip_frames_strips_a_bare_frame_with_nothing_before_it():
-    """`eve.ui.actions.ui_action` writes `AIMessage(content=frame([op]))`
-    directly - a tap on a rendered surface answers with a bare frame and no
-    prose at all, so content position 0 IS the opening marker. A stripper
-    that only recognized a frame preceded by a literal "\\n" would leave
-    this shape - which reaches `values.messages` on `ui_action -> END` just
-    like any other turn - completely untouched."""
+    """Some operations are appended as AIMessage(content=frame([op])) directly
+    with no prose at all, so content position 0 IS the opening marker. A
+    stripper that only recognized a frame preceded by a literal "\\n" would
+    leave this shape completely untouched."""
     operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
     bare = protocol.frame([operation])
 
@@ -279,9 +277,9 @@ def test_strip_frames_from_content_is_a_no_op_on_a_frameless_list():
 
 
 def test_append_frame_prepends_nothing_to_falsy_content():
-    """`eve.ui.actions.ui_action` and `eve.ui.persist.persist_ui` share this
-    builder now; falsy content (nothing to say ahead of the frame) gets the
-    frame back bare - the shape `strip_frames`'s `\\A` branch exists for."""
+    """Frame producers use `append_frame` as a shared builder; falsy content
+    (nothing to say ahead of the frame) gets the frame back bare - the shape
+    `strip_frames`'s `\\A` branch exists for."""
     operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
     assert protocol.append_frame("", [operation]) == protocol.frame([operation])
     assert protocol.strip_frames(protocol.append_frame("", [operation])) == ""

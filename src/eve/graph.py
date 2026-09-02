@@ -1,8 +1,6 @@
 """Eve's graph.
 
-                          +-> ui_action ------------------------------------> END
-    START -> load_context-+
-                          +-> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
+    START -> load_context -> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
@@ -19,14 +17,6 @@ routing to `persist_ui`, or emits tool calls, routing to `tools` and back.
 `persist_ui` copies this turn's `create` operations - streamed live on
 `custom` and never stored - into the final AI message, so a card survives a
 reopened session; see `eve.ui.persist` for why.
-
-`ui_action` is the other branch out of `load_context`: a tap on a rendered
-surface calls no model. It re-reads the tapped range from Home Assistant,
-emits one patch, and ends the turn - see `_route_after_context` for why it
-sits after `load_context` rather than at START, and why it skips both
-`recall` and `extract` (and so also skips `persist_ui`: `ui_action` writes
-its own `<assistant-ui>` frame inline into the AIMessage it returns, see
-`eve.ui.actions.ui_action`).
 
 The system prompt is rebuilt from scratch every turn and passed to the model
 without being appended to `messages`, so persona, member-context and memory
@@ -58,7 +48,6 @@ from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol
-from eve.ui import stream as ui_stream
 from eve.ui.actions import parse_action
 from eve.ui.persist import persist_ui
 
