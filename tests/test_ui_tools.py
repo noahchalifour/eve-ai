@@ -70,8 +70,14 @@ def written(monkeypatch):
 
 
 async def test_a_valid_tree_is_emitted_and_returned_as_an_artifact(written):
-    # Invoke via coroutine to get both content and artifact (what ToolNode does internally)
-    content, artifact = await tools.show_surface.coroutine(TRACKER, CONFIG)
+    # Invoke via ainvoke with ToolCall-shaped input (how ToolNode invokes tools in production)
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": TRACKER}, "id": "test-1"},
+        config=CONFIG,
+    )
+    # Result is a ToolMessage with content and artifact attributes
+    content = result.content
+    artifact = result.artifact
     assert len(written) == 1
     assert written[0]["assistant_ui"]["op"] == "create"
     assert artifact is not None
@@ -91,7 +97,12 @@ async def test_an_invalid_tree_returns_a_diagnostic_the_model_can_act_on(written
             "properties": {"stateKey": "reps", "placeholder": "8"},
         }
     ]
-    content, artifact = await tools.show_surface.coroutine(bad, CONFIG)
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": bad}, "id": "test-2"},
+        config=CONFIG,
+    )
+    content = result.content
+    artifact = result.artifact
     assert artifact is None
     assert written == []
     assert "component-schema" in content
@@ -100,18 +111,32 @@ async def test_an_invalid_tree_returns_a_diagnostic_the_model_can_act_on(written
 
 
 async def test_an_old_client_is_refused_only_the_types_it_lacks(written):
-    content, artifact = await tools.show_surface.coroutine(TRACKER, OLD_CLIENT)
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": TRACKER}, "id": "test-3"},
+        config=OLD_CLIENT,
+    )
+    content = result.content
+    artifact = result.artifact
     assert artifact is None
     assert written == []
     assert "numberField" in content
 
     plain = [{"id": "c1", "type": "text", "properties": {"text": "Hello"}}]
-    _, artifact = await tools.show_surface.coroutine(plain, OLD_CLIENT)
-    assert artifact is not None
+    result2 = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": plain}, "id": "test-4"},
+        config=OLD_CLIENT,
+    )
+    artifact2 = result2.artifact
+    assert artifact2 is not None
 
 
 async def test_a_client_that_declared_nothing_gets_words(written):
-    content, artifact = await tools.show_surface.coroutine(TRACKER, {})
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": TRACKER}, "id": "test-5"},
+        config={},
+    )
+    content = result.content
+    artifact = result.artifact
     assert artifact is None
     assert written == []
     assert "cannot" in content.lower() or "can't" in content.lower()
@@ -122,7 +147,12 @@ async def test_a_rejected_emission_never_returns_an_artifact(monkeypatch):
     artifact anyway would make `persist_ui` write a frame for a card the
     member never saw."""
     monkeypatch.setattr(tools.stream, "emit", lambda operation: False)
-    content, artifact = await tools.show_surface.coroutine(TRACKER, CONFIG)
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": TRACKER}, "id": "test-6"},
+        config=CONFIG,
+    )
+    content = result.content
+    artifact = result.artifact
     assert artifact is None
     assert "words" in content.lower()
 
