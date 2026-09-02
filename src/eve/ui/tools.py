@@ -9,8 +9,10 @@ silent drop the client would otherwise perform.
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import tool
 
 from eve.ui import protocol, stream, surface
 
@@ -40,7 +42,8 @@ def schema_hint(types: set[str]) -> str:
     return "\n".join(lines)
 
 
-async def _show_surface_impl(
+@tool
+async def show_surface(
     components: list, config: RunnableConfig
 ) -> tuple[str, dict | None]:
     """Put an interactive UI on screen: a form, a tracker, a summary card.
@@ -86,26 +89,7 @@ async def _show_surface_impl(
     )
 
 
-class _ShowSurfaceTool(StructuredTool):
-    """Custom tool that returns the full tuple for testing."""
-    response_format: str = "content_and_artifact"
-    _impl_func: any = None  # Store the async implementation function
-
-    async def ainvoke(self, input, config=None, **kwargs):
-        """Override to return the full tuple instead of extracting content."""
-        # Call the implementation function directly to get the full tuple
-        if isinstance(input, dict) and "components" in input:
-            components = input["components"]
-            if self._impl_func:
-                return await self._impl_func(components, config)
-        # Fallback for other input formats
-        return await super().ainvoke(input, config=config, **kwargs)
-
-
-show_surface = _ShowSurfaceTool.from_function(
-    func=_show_surface_impl,
-    name="show_surface",
-    description="Put an interactive UI on screen: a form, a tracker, a summary card."
-)
-# Store the implementation function for direct calls
-show_surface._impl_func = _show_surface_impl
+# Mark this tool as returning both content and artifact, for agent/model binding.
+# This tells the model (when bound in an agent) that this tool returns structured
+# output with both content and an artifact component, enabling rich tool results.
+show_surface.response_format = "content_and_artifact"

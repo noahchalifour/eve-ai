@@ -70,9 +70,8 @@ def written(monkeypatch):
 
 
 async def test_a_valid_tree_is_emitted_and_returned_as_an_artifact(written):
-    content, artifact = await tools.show_surface.ainvoke(
-        {"components": TRACKER}, config=CONFIG
-    )
+    # Invoke via coroutine to get both content and artifact (what ToolNode does internally)
+    content, artifact = await tools.show_surface.coroutine(TRACKER, CONFIG)
     assert len(written) == 1
     assert written[0]["assistant_ui"]["op"] == "create"
     assert artifact is not None
@@ -92,9 +91,7 @@ async def test_an_invalid_tree_returns_a_diagnostic_the_model_can_act_on(written
             "properties": {"stateKey": "reps", "placeholder": "8"},
         }
     ]
-    content, artifact = await tools.show_surface.ainvoke(
-        {"components": bad}, config=CONFIG
-    )
+    content, artifact = await tools.show_surface.coroutine(bad, CONFIG)
     assert artifact is None
     assert written == []
     assert "component-schema" in content
@@ -103,24 +100,18 @@ async def test_an_invalid_tree_returns_a_diagnostic_the_model_can_act_on(written
 
 
 async def test_an_old_client_is_refused_only_the_types_it_lacks(written):
-    content, artifact = await tools.show_surface.ainvoke(
-        {"components": TRACKER}, config=OLD_CLIENT
-    )
+    content, artifact = await tools.show_surface.coroutine(TRACKER, OLD_CLIENT)
     assert artifact is None
     assert written == []
     assert "numberField" in content
 
     plain = [{"id": "c1", "type": "text", "properties": {"text": "Hello"}}]
-    _, artifact = await tools.show_surface.ainvoke(
-        {"components": plain}, config=OLD_CLIENT
-    )
+    _, artifact = await tools.show_surface.coroutine(plain, OLD_CLIENT)
     assert artifact is not None
 
 
 async def test_a_client_that_declared_nothing_gets_words(written):
-    content, artifact = await tools.show_surface.ainvoke(
-        {"components": TRACKER}, config={}
-    )
+    content, artifact = await tools.show_surface.coroutine(TRACKER, {})
     assert artifact is None
     assert written == []
     assert "cannot" in content.lower() or "can't" in content.lower()
@@ -131,9 +122,7 @@ async def test_a_rejected_emission_never_returns_an_artifact(monkeypatch):
     artifact anyway would make `persist_ui` write a frame for a card the
     member never saw."""
     monkeypatch.setattr(tools.stream, "emit", lambda operation: False)
-    content, artifact = await tools.show_surface.ainvoke(
-        {"components": TRACKER}, config=CONFIG
-    )
+    content, artifact = await tools.show_surface.coroutine(TRACKER, CONFIG)
     assert artifact is None
     assert "words" in content.lower()
 
