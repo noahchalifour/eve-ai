@@ -13,29 +13,25 @@ from eve.ui import protocol
 
 def _surface(**overrides) -> dict:
     surface = {
-        "surfaceId": "wx-1",
-        "catalogId": "weather",
+        "surfaceId": "sf-1",
+        "catalogId": "column",
         "catalogVersion": "1",
         "components": [
             {
-                "id": "weather",
-                "type": "weather",
-                "properties": {
-                    "location": "$data.location",
-                    "condition": "$data.condition",
-                    "temperature": "$data.temperature",
-                },
+                "id": "c1",
+                "type": "card",
+                "properties": {"title": "Test"},
                 "children": [],
             }
         ],
-        "data": {"location": "Home", "condition": "Sunny", "temperature": 21},
+        "data": {},
         "localState": {},
     }
     surface.update(overrides)
     return {"protocol": protocol.PROTOCOL, "op": "create", "surface": surface}
 
 
-def test_a_well_formed_weather_create_is_accepted():
+def test_a_well_formed_create_is_accepted():
     assert protocol.validate_operation(_surface()) is None
 
 
@@ -110,7 +106,7 @@ def test_grid_columns_must_be_an_int_between_one_and_six():
     assert protocol.validate_operation(_surface(components=grid(True))) == "component-schema"
 
 
-def test_only_weather_rangechanged_is_a_legal_action_id():
+def test_no_actions_are_legal_while_action_ids_is_empty():
     def button(action_id):
         return [
             {
@@ -121,7 +117,7 @@ def test_only_weather_rangechanged_is_a_legal_action_id():
             }
         ]
 
-    assert protocol.validate_operation(_surface(components=button("weather.rangeChanged"))) is None
+    assert protocol.validate_operation(_surface(components=button("surface.submit"))) == "action-schema"
     assert protocol.validate_operation(_surface(components=button("lights.toggle"))) == "action-schema"
 
 
@@ -141,7 +137,7 @@ def test_a_tree_deeper_than_eight_is_rejected():
 
 
 def test_a_string_longer_than_the_limit_is_rejected():
-    data = {"location": "x" * (protocol.MAX_STRING + 1)}
+    data = {"note": "x" * (protocol.MAX_STRING + 1)}
     assert protocol.validate_operation(_surface(data=data)) == "string-limit"
 
 

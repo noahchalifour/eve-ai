@@ -59,9 +59,8 @@ from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol
 from eve.ui import stream as ui_stream
-from eve.ui.actions import parse_action, ui_action
+from eve.ui.actions import parse_action
 from eve.ui.persist import persist_ui
-from eve.ui.tools import show_weather
 
 _BASE_TOOLS = [ask_home, ask_mail, ask_finances, ask_health, search_skills, search_memory]
 
@@ -82,12 +81,6 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
     tools, and both `eve` and `tools_node` need the same answer within one
     turn. Settings are lru_cached, so this is a dict lookup.
 
-    `show_weather`'s switch is not a setting but the connected client's own
-    capability declaration (`config.configurable.assistant_ui`). A second
-    setting for the same question would be a second thing to keep in step, and
-    a surface emitted at a client that cannot render it goes into that
-    thread's transcript permanently.
-
     `config` defaults to None so a caller with no run config - and the tests
     that predate this parameter - get the pre-dynamic-UI tool list.
     """
@@ -99,8 +92,6 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(propose_tool)
     if settings.computer_enabled:
         tools.append(dispatch_computer_task)
-    if ui_stream.supports(config, "weather"):
-        tools.append(show_weather)
     return tools
 
 
@@ -178,32 +169,13 @@ def _tool_rounds_this_turn(messages: list) -> int:
 
 
 def _route_after_context(state: EveState, config: RunnableConfig) -> str:
-    """A UI tap arrives as ordinary user text, because the client re-runs the
-    turn with the user message's content replaced by an action envelope. It
-    carries no question for a model to answer, so it skips `recall` (an
-    embedding call and a Postgres read for nothing) and `extract` (whose input
-    would be a JSON envelope): the whole turn is one HTTP call and one frame.
+    """Every turn goes to `recall`.
 
-    Branching after `load_context` rather than at START is deliberate -
-    `load_context` is pure local computation (ADR 0002), and the member
-    timezone the forecast labels need comes from it.
-
-    Gated on `ui_stream.supports`, not just `parse_action`, because the plan's
-    global fail-closed constraint ("no declaration ... emit nothing and answer
-    in prose") has to be satisfied somewhere, and `ui_action` cannot satisfy
-    it: it has no model to answer in prose with, so it could only raise (wrong
-    - an undeclared client cannot interpret an SSE error) or return silently
-    (wrong - the member gets no answer at all). Routing an undeclared client's
-    envelope to `recall` instead makes it ordinary member speech: no frame
-    emitted, nothing persisted beyond the envelope text itself, and a normal
-    model answer.
+    The weather surface's model-less tap branch is gone; Task 6 restores a
+    branch here for `surface.submit`, which routes to a node that rewrites
+    the envelope and then continues to `recall` rather than ending the turn.
     """
-    messages = state["messages"]
-    if not messages or not isinstance(messages[-1], HumanMessage):
-        return "recall"
-    if not parse_action(messages[-1].content):
-        return "recall"
-    return "ui_action" if ui_stream.supports(config, "weather") else "recall"
+    return "recall"
 
 
 def build_graph(
@@ -246,7 +218,6 @@ def build_graph(
 
     builder = StateGraph(EveState)
     builder.add_node("load_context", load_context)
-    builder.add_node("ui_action", ui_action)
     builder.add_node("recall", recall_fn)
     builder.add_node("eve", eve)
     builder.add_node("tools", tools_node)
@@ -254,12 +225,7 @@ def build_graph(
     builder.add_node("extract", extract_fn)
     builder.add_node("suggest", suggest_fn)
     builder.add_edge(START, "load_context")
-    builder.add_conditional_edges(
-        "load_context",
-        _route_after_context,
-        {"ui_action": "ui_action", "recall": "recall"},
-    )
-    builder.add_edge("ui_action", END)
+    builder.add_edge("load_context", "recall")
     builder.add_edge("recall", "eve")
     # Bounded by `eve`'s own `_tool_rounds_this_turn` check, not by
     # LangGraph's recursion_limit: that default is 10007

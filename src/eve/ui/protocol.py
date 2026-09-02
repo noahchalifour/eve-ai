@@ -10,7 +10,7 @@ line that never leaves the phone. Validating before we emit turns that
 invisible drop into a server-side diagnostic.
 
 Pure module: no LangGraph, no I/O, no Eve state. `eve.ui.stream` owns the
-emission, `eve.ui.weather` owns the one surface V1 ships.
+emission, `eve.ui.surface` owns the model-authored surface builder.
 """
 
 from __future__ import annotations
@@ -21,12 +21,11 @@ import re
 PROTOCOL = "assistant-ui/1.0"
 CATALOG_VERSION = "1"
 
-# The closed V1 catalog. The same thirteen ids are legal as a surface's
+# The closed V1 catalog. The same twelve ids are legal as a surface's
 # `catalogId` AND as a component's `type` - the client checks both against one
 # set (`DynamicSurfaceProtocol._componentTypes`), so this file does too.
 CATALOG_IDS = frozenset(
     {
-        "weather",
         "column",
         "row",
         "card",
@@ -42,8 +41,8 @@ CATALOG_IDS = frozenset(
     }
 )
 
-# V1 has exactly one interactive contract. A provider cannot invent an action.
-ACTION_IDS = frozenset({"weather.rangeChanged"})
+# Emptied with the weather surface. Task 2 refills it with `surface.submit`.
+ACTION_IDS: frozenset[str] = frozenset()
 
 MAX_SURFACES_PER_TURN = 8
 MAX_COMPONENTS = 64
@@ -57,7 +56,6 @@ OPENING_MARKER = "<assistant-ui>\n"
 CLOSING_MARKER = "\n</assistant-ui>"
 
 _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
-    "weather": frozenset({"location", "condition", "temperature"}),
     "card": frozenset({"title"}),
     "grid": frozenset({"columns"}),
     "text": frozenset({"text"}),
@@ -73,7 +71,7 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
 }
 
 _STRING_PROPERTIES = frozenset(
-    {"location", "condition", "title", "text", "name", "label", "selected"}
+    {"title", "text", "name", "label", "selected"}
 )
 
 # Every segment must start with a letter or an underscore. This rules out the
@@ -372,8 +370,6 @@ def _validate_properties(component_type: str, properties: object) -> str | None:
 def _validate_property(key: str, value: object) -> str | None:
     if key in _STRING_PROPERTIES:
         return _string_or_binding(value)
-    if key == "temperature":
-        return _number_or_binding(value)
     if key == "columns":
         legal = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 6
         return None if legal else "component-schema"
@@ -403,15 +399,3 @@ def _string_or_binding(value: object) -> str | None:
     if value.startswith("$") and not _BINDING.match(value):
         return "binding"
     return validate_json_value(value)
-
-
-def _number_or_binding(value: object) -> str | None:
-    if isinstance(value, bool):
-        return "component-schema"
-    if isinstance(value, (int, float)):
-        return None
-    if isinstance(value, str):
-        if _BINDING.match(value):
-            return None
-        return "binding" if value.startswith("$") else "component-schema"
-    return "component-schema"

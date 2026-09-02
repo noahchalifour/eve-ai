@@ -17,7 +17,7 @@ def _create(surface_id: str) -> dict:
         "op": "create",
         "surface": {
             "surfaceId": surface_id,
-            "catalogId": "weather",
+            "catalogId": "column",
             "catalogVersion": "1",
             "components": [],
             "data": {},
@@ -28,9 +28,9 @@ def _create(surface_id: str) -> dict:
 
 def _tool_message(surface_id: str, call_id: str = "c1") -> ToolMessage:
     return ToolMessage(
-        content="Weather card shown.",
+        content="Surface shown.",
         tool_call_id=call_id,
-        name="show_weather",
+        name="show_surface",
         artifact=_create(surface_id),
     )
 

@@ -7,7 +7,7 @@ from eve.ui import protocol, stream
 CAPABILITIES = {
     "protocol": "assistant-ui/1.0",
     "catalogVersion": "1",
-    "catalogIds": ["weather", "text", "card"],
+    "catalogIds": ["text", "card", "column"],
 }
 
 
@@ -16,13 +16,13 @@ def _config(**overrides) -> dict:
     return {"configurable": {"assistant_ui": declared}}
 
 
-def _create(surface_id: str = "wx-1") -> dict:
+def _create(surface_id: str = "sf-1") -> dict:
     return {
         "protocol": protocol.PROTOCOL,
         "op": "create",
         "surface": {
             "surfaceId": surface_id,
-            "catalogId": "weather",
+            "catalogId": "column",
             "catalogVersion": "1",
             "components": [],
             "data": {},
@@ -48,7 +48,7 @@ def test_capabilities_tolerate_a_config_that_declares_nothing():
 
 
 def test_supports_is_true_only_for_a_declared_catalog_id():
-    assert stream.supports(_config(), "weather") is True
+    assert stream.supports(_config(), "text") is True
     assert stream.supports(_config(), "segmentedSelection") is False
 
 
@@ -56,10 +56,10 @@ def test_supports_fails_closed():
     """A client that declared nothing cannot render anything. Emitting at it
     would put an unreadable frame in the transcript forever, since history is
     replayed from the AI message text."""
-    assert stream.supports(None, "weather") is False
-    assert stream.supports(_config(protocol="assistant-ui/2.0"), "weather") is False
-    assert stream.supports(_config(catalogVersion="2"), "weather") is False
-    assert stream.supports(_config(catalogIds="weather"), "weather") is False
+    assert stream.supports(None, "text") is False
+    assert stream.supports(_config(protocol="assistant-ui/2.0"), "text") is False
+    assert stream.supports(_config(catalogVersion="2"), "text") is False
+    assert stream.supports(_config(catalogIds="text"), "text") is False
 
 
 def test_emit_writes_the_operation_under_the_assistant_ui_key(monkeypatch):
