@@ -32,6 +32,9 @@ members:
       - tools.author
       # Phase 6: dispatching a task to her own computer.
       - computer.use
+      # EVE-4: delegating coding work to Claude Code, Codex, or OpenCode,
+      # which open pull requests under Eve's own GitHub account.
+      - code.delegate
 
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"

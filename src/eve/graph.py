@@ -41,6 +41,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from eve import context
+from eve.coding.dispatch import (
+    check_coding_session,
+    delegate_coding_task,
+    send_to_coding_session,
+)
 from eve.computer.dispatch import dispatch_computer_task
 from eve.context import load_context
 from eve.memory import extract as memory_extract, recall as memory_recall
@@ -98,6 +103,10 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(propose_tool)
     if settings.computer_enabled:
         tools.append(dispatch_computer_task)
+    if settings.coding_enabled:
+        tools.append(delegate_coding_task)
+        tools.append(check_coding_session)
+        tools.append(send_to_coding_session)
     if ui_stream.supports(config, "weather"):
         tools.append(show_weather)
     return tools
