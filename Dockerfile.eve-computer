@@ -15,7 +15,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
 # already pulls the manylinux wheel with the linux/amd64 binary baked in.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb fluxbox x11vnc chromium fonts-liberation imagemagick xdotool \
-        git curl ripgrep ffmpeg jq sudo nodejs npm ca-certificates gh \
+        git curl ripgrep ffmpeg jq sudo nodejs npm ca-certificates gh xterm \
     && npm install -g @openai/codex @zed-industries/claude-code-acp opencode-ai \
     && mkdir -p /opt/codex-acp \
     && curl -fsSL "https://github.com/zed-industries/codex-acp/releases/download/v0.16.0/codex-acp-0.16.0-$(uname -m)-unknown-linux-gnu.tar.gz" \

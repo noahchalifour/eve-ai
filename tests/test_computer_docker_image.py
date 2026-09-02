@@ -83,7 +83,7 @@ def test_the_gui_tool_dependencies_are_present(computer_container):
     """Smoke-level coverage for the one piece nothing else can test without a
     real X server (Task 12's note): the binaries the GUI tool shells out to
     actually exist in the built image."""
-    for binary in ("xdotool", "import", "Xvfb", "x11vnc", "codex"):
+    for binary in ("xdotool", "import", "Xvfb", "x11vnc", "codex", "xterm"):
         result = subprocess.run(
             ["docker", "exec", CONTAINER_NAME, "which", binary],
             capture_output=True, text=True,
