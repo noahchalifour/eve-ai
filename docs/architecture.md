@@ -494,6 +494,44 @@ checkbox in your account (ADR 0015). Until that login exists, every
 delegated coding session fails loudly at `git push`, with the failure
 riding in the pull-request result Eve reports.
 
+**The session lane (EVE-4).** Beside `/tasks` lives a second concurrency
+lane: ACP coding sessions (`POST /sessions`, `GET /sessions/{id}`,
+`POST /sessions/{id}/prompt`, `POST /sessions/{id}/close`,
+`DELETE /sessions/{id}`), served by `src/eve_computer/acp/` -
+`client.py` (the protocol's client half: auto-approves permission requests,
+serves `fs/*` confined to the session root), `registry.py` (agent + model →
+argv and environment, three entries), `repo.py` (clone, worktree add/remove,
+push, `gh pr create`; no ACP types), and `session.py` (the state machine,
+the only file importing both client and repo). The GUI queue stays
+serialised because one machine has one mouse; a coding session needs no
+display, so its only bound is `max_concurrent_sessions` - a half-hour
+conversation must not block a screenshot. The box records and never
+classifies: a finished turn is `idle`, full stop (ADR 0016).
+
+On Eve's side, `src/eve/coding/` mirrors it: `store.py` (every
+`eve_coding_session` statement - `alembic/versions/0005_eve_coding_session.py`,
+the row beside `eve_computer_task`), `catalogue.py` (LiteLLM's live
+`/v1/models`, cached, with the `ocp/*` deny-list), `dispatch.py` (the three
+tools - `delegate_coding_task`, `check_coding_session`,
+`send_to_coding_session` - behind the `code.delegate` permission, checked
+before any HTTP call), and `supervisor.py` (the only place an `idle` turn
+is classified: poll the box, decide reply/done/escalate on `Tier.CODE`,
+act).
+
+**The supervisor loop.** `eve-ambient` now runs two `asyncio` loops:
+`_poll_forever` at the ambient interval, and `_supervise_forever` at
+`coding_supervisor_interval_seconds` (20s) - a control loop with an agent
+waiting on the other end cannot wait five minutes. The fast loop advances
+conversations; the slow ambient tick is where resolved sessions become
+`coding` signals through `eve_ambient.sources.coding`, carrying the
+permission gate, quiet hours, and the daily cap that a control loop has no
+business bypassing. Both call `supervisor.tick()`, which is idempotent over
+already-resolved sessions.
+
+See
+[`docs/superpowers/specs/2026-09-01-eve-acp-tools-design.md`](docs/superpowers/specs/2026-09-01-eve-acp-tools-design.md)
+and [ADR 0016](docs/adr/0016-the-box-runs-the-protocol-eve-holds-the-judgement.md).
+
 ## Aegra and `aegra.json`
 
 Eve does not run its own server process. `aegra.json` at the repository root

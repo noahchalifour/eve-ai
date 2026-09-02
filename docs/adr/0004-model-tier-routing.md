@@ -87,3 +87,30 @@ a Responses-API request onto the fallback's Messages API correctly. That is
 exactly the kind of untested API-shape assumption that sank the original OCP
 fallback plan above, so it is probed live, not inferred -
 `tests/test_live_models.py::test_fallback_model_emits_tool_calls`.
+
+## Amendment (2026-09-01, EVE-4)
+
+Delegated coding sessions are a new and much heavier consumer of the same
+ChatGPT subscription this ADR routes the tiers through. Three things follow.
+
+**Codex through LiteLLM still rides the subscription.** LiteLLM fronts the
+ChatGPT/Codex sign-in itself, so pointing `codex-acp` at the proxy keeps
+eve-computer's zero-metered-spend property rather than abandoning it. Same
+for OpenCode on a `chatgpt/*` model. The one agent with real metered spend
+is Claude Code, on `anthropic/claude-sonnet-5`. Codex is therefore the
+tiebreak agent when nothing else points anywhere.
+
+**Rate limits, not dollars, are the thing to watch.** `REFLEX` was moved off
+this credential precisely so it would not consume the limits Noah uses for
+his own work. A coding agent running for half an hour is a far heavier
+consumer than any chat turn. The session bounds are the throttle.
+
+**The refused model set is not enumerated anywhere in the repository.** The
+probe above found `gpt-5.3-codex`, `-codex-spark`, `-instant`,
+`-chat-latest`, and `gpt-5.4-pro` all rejected by the sign-in, and LiteLLM
+still lists them - so Eve can pick one and it will fail. That is accepted:
+those failures are LOUD, at the first prompt, with the backend saying why.
+Only `ocp/*` is denied (`eve/coding/catalogue.py`), because it fails
+SILENTLY - the proxy strips tool definitions, and a coding agent that cannot
+call tools answers fluently and changes nothing. Loud failures need no
+registry; silent ones do.
