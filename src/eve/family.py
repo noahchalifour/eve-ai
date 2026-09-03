@@ -26,6 +26,11 @@ class Member:
     role: str
     timezone: str
     permissions: frozenset[str]
+    # The Immich album holding this member's clothes. Optional: a member
+    # without one has no wardrobe, which the stylist reports rather than
+    # erroring on. Non-secret and per-member, so it belongs in the roster
+    # rather than in settings.
+    wardrobe_album: str | None = None
 
     def can(self, permission: str) -> bool:
         return permission in self.permissions
@@ -46,6 +51,7 @@ class Family:
                     role=entry["role"],
                     timezone=entry["timezone"],
                     permissions=frozenset(entry.get("permissions", [])),
+                    wardrobe_album=entry.get("wardrobe_album") or None,
                 )
                 for entry in raw.get("members", [])
             ]

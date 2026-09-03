@@ -5,13 +5,26 @@ import pytest
 from eve.computer import dispatch
 
 
-def _config(permissions=("computer.use",), thread_id="thread-1"):
+def _state(permissions=("computer.use",)):
     return {
-        "configurable": {
-            "member": {"sub": "sub-noah", "permissions": list(permissions)},
-            "thread_id": thread_id,
-        }
+        "messages": [],
+        "member": {
+            "sub": "sub-noah",
+            "name": "Noah",
+            "role": "user",
+            "timezone": "America/Los_Angeles",
+            "permissions": list(permissions),
+            "local_time": "2024-01-01T12:00:00",
+        },
+        "system_prompt": "You are Eve, a family AI assistant.",
+        "memory": None,
+        "dynamic_tools": [],
+        "suggestions": [],
     }
+
+
+def _config(thread_id="thread-1"):
+    return {"configurable": {"thread_id": thread_id}}
 
 
 async def test_a_member_without_the_permission_is_denied(monkeypatch):
@@ -19,7 +32,7 @@ async def test_a_member_without_the_permission_is_denied(monkeypatch):
     monkeypatch.setattr(dispatch, "dispatch_task", dispatch_task)
 
     result = await dispatch.dispatch_computer_task.ainvoke(
-        {"goal": "book a flight"}, config=_config(permissions=())
+        {"goal": "book a flight", "state": _state(permissions=())}, config=_config()
     )
 
     assert "Permission denied" in result
@@ -33,7 +46,7 @@ async def test_a_permitted_member_dispatches_and_records_the_task(monkeypatch):
     monkeypatch.setattr(dispatch, "create_task", create_task)
 
     result = await dispatch.dispatch_computer_task.ainvoke(
-        {"goal": "book a flight"}, config=_config()
+        {"goal": "book a flight", "state": _state()}, config=_config()
     )
 
     assert "I'm on it" in result
@@ -53,7 +66,7 @@ async def test_a_dispatch_failure_is_returned_and_nothing_is_recorded(monkeypatc
     monkeypatch.setattr(dispatch, "create_task", create_task)
 
     result = await dispatch.dispatch_computer_task.ainvoke(
-        {"goal": "book a flight"}, config=_config()
+        {"goal": "book a flight", "state": _state()}, config=_config()
     )
 
     assert result.startswith("error:")
@@ -65,7 +78,7 @@ async def test_no_thread_id_is_refused_before_dispatching(monkeypatch):
     monkeypatch.setattr(dispatch, "dispatch_task", dispatch_task)
 
     result = await dispatch.dispatch_computer_task.ainvoke(
-        {"goal": "book a flight"}, config=_config(thread_id=None)
+        {"goal": "book a flight", "state": _state()}, config=_config(thread_id=None)
     )
 
     assert result.startswith("error:")

@@ -31,6 +31,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from eve import context
+from eve.coding.dispatch import (
+    check_coding_session,
+    delegate_coding_task,
+    send_to_coding_session,
+)
 from eve.computer.dispatch import dispatch_computer_task
 from eve.context import load_context
 from eve.memory import extract as memory_extract, recall as memory_recall
@@ -44,6 +49,7 @@ from eve.specialists.finances import ask_finances
 from eve.specialists.health import ask_health
 from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
+from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
@@ -52,7 +58,15 @@ from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
 from eve.ui.tools import show_surface
 
-_BASE_TOOLS = [ask_home, ask_mail, ask_finances, ask_health, search_skills, search_memory]
+_BASE_TOOLS = [
+    ask_home,
+    ask_mail,
+    ask_finances,
+    ask_stylist,
+    ask_health,
+    search_skills,
+    search_memory,
+]
 
 
 def _live_specs(state: EveState) -> list:
@@ -67,7 +81,7 @@ def _live_specs(state: EveState) -> list:
 
 
 def _static_tools(config: RunnableConfig | None = None) -> list:
-    """Rebuilt per call rather than fixed at import: four switches gate four
+    """Rebuilt per call rather than fixed at import: five switches gate five
     tools, and both `eve` and `tools_node` need the same answer within one
     turn. Settings are lru_cached, so this is a dict lookup.
 
@@ -82,6 +96,10 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(propose_tool)
     if settings.computer_enabled:
         tools.append(dispatch_computer_task)
+    if settings.coding_enabled:
+        tools.append(delegate_coding_task)
+        tools.append(check_coding_session)
+        tools.append(send_to_coding_session)
     # Not a setting but the connected client's own capability declaration
     # (`config.configurable.assistant_ui`). A second setting for the same
     # question would be a second thing to keep in step, and a surface emitted

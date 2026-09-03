@@ -17,6 +17,12 @@ NOAH = Member(
 CONFIG = {"configurable": {"langgraph_auth_user": {"identity": "sub-noah"}}}
 
 
+def test_the_stylist_is_bound_on_every_turn():
+    from eve.graph import _static_tools
+
+    assert "ask_stylist" in [t.name for t in _static_tools()]
+
+
 def _fake_factory(_tier):
     return FakeToolCallingModel(messages=iter([AIMessage(content="Hi Noah.")]))
 
@@ -977,3 +983,27 @@ async def test_a_command_tool_and_a_plain_tool_batch_in_one_round():
     rendered = repr(result)
     assert "plain:a" in rendered
     assert "cmd:b" in rendered
+
+
+def test_the_coding_tools_are_bound_when_coding_is_enabled(monkeypatch):
+    monkeypatch.setenv("EVE_CODING_ENABLED", "true")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    names = {t.name for t in graph_mod._static_tools()}
+
+    assert {"delegate_coding_task", "check_coding_session", "send_to_coding_session"} <= names
+    get_settings.cache_clear()
+
+
+def test_the_coding_tools_are_absent_when_coding_is_disabled(monkeypatch):
+    monkeypatch.setenv("EVE_CODING_ENABLED", "false")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    from eve import graph as graph_mod
+
+    assert "delegate_coding_task" not in {t.name for t in graph_mod._static_tools()}
+    get_settings.cache_clear()

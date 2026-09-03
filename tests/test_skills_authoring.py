@@ -40,11 +40,12 @@ def test_serialize_round_trips_through_the_shared_parser():
     text = serialize_procedure(
         "book-the-dog-sitter", "How to book the dog sitter.", "1. Text Sam.\n2. Confirm."
     )
-    name, description, body = parse_skill_text(text, "fallback")
+    name, description, body, specialist = parse_skill_text(text, "fallback")
 
     assert name == "book-the-dog-sitter"
     assert description == "How to book the dog sitter."
     assert body == "1. Text Sam.\n2. Confirm."
+    assert specialist is None
 
 
 def test_serialize_round_trips_a_description_containing_a_colon():
@@ -61,18 +62,19 @@ def test_serialize_round_trips_a_description_containing_a_colon():
         "How to book the sitter: call Sam first.",
         "1. Text Sam.\n2. Confirm.",
     )
-    name, description, body = parse_skill_text(text, "fallback")
+    name, description, body, specialist = parse_skill_text(text, "fallback")
 
     assert name == "book-the-dog-sitter"
     assert description == "How to book the sitter: call Sam first."
     assert body == "1. Text Sam.\n2. Confirm."
+    assert specialist is None
 
 
 def test_parse_skill_text_falls_back_without_frontmatter():
     from eve.skills.registry import parse_skill_text
 
-    name, description, body = parse_skill_text("just a body", "fallback")
-    assert (name, description, body) == ("fallback", "", "just a body")
+    name, description, body, specialist = parse_skill_text("just a body", "fallback")
+    assert (name, description, body, specialist) == ("fallback", "", "just a body", None)
 
 
 async def test_write_skill_adds_a_procedure_row(monkeypatch):

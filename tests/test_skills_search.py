@@ -1,9 +1,42 @@
+from unittest.mock import AsyncMock
+
 from langchain_core.messages import ToolMessage
 
 from eve.skills.registry import Skill
 from eve.skills.search import rank_skills, search_skills
 from eve.skills.types import DynamicToolSpec
 from tests.test_specialists_base import MEMBER, STATE
+
+
+async def test_eve_never_sees_a_specialist_scoped_skill(tmp_path, monkeypatch):
+    """A scoped skill must not reach Eve's own search - she delegates rather
+    than dresses, and a procedure she cannot act on is noise in her context."""
+    from eve.settings import get_settings
+    from eve.skills import search as search_module
+
+    (tmp_path / "dress-for-the-day").mkdir()
+    (tmp_path / "dress-for-the-day" / "SKILL.md").write_text(
+        "---\nname: dress-for-the-day\ndescription: how to assemble an outfit\n"
+        "specialist: stylist\n---\nAnchor on one item."
+    )
+    monkeypatch.setenv("EVE_SKILLS_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        search_module, "embed_query", AsyncMock(return_value=[1.0, 0.0, 0.0])
+    )
+
+    result = await search_module.search_skills.ainvoke(
+        {
+            "name": "search_skills",
+            "args": {"query": "what should I wear", "state": STATE},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+    )
+
+    message = result.update["messages"][0]
+    assert "dress-for-the-day" not in message.content
+    assert "Anchor on one item" not in message.content
 
 
 async def _fake_embed(text: str) -> list[float]:

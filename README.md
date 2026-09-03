@@ -50,6 +50,17 @@ Four boundaries are permanent, not phases yet to come:
   own accounts and compute - which is a different thing from authoring
   capability over the family's credentials. See
   [ADR 0015](docs/adr/0015-granted-identity-vs-authored-capability.md).
+
+  EVE-4 extends this once more, and the consequence is worth stating rather
+  than discovering: **Eve can now open pull requests against this
+  repository.** The README says a tool needing a secret is "an `eve-tools`
+  handler in a pull request, forever." She can now write that pull request.
+
+  This does not weaken the boundary; it routes through it. The gate was never
+  "Eve cannot propose" - it was "a human merges." That gate is exactly where
+  it was, and unlike the `propose_tool` interrupt, this one is a code review
+  in GitHub with a diff, CI, and no 11pm approval prompt. It is a better
+  instance of the same gate.
 - **Eve does not rewrite her own persona.** `prompts/eve.md` is
   human-authored. Phase 5a lets her write rules *under* it; nothing lets her
   edit it.

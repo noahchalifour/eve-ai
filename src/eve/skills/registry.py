@@ -23,10 +23,17 @@ class Skill:
     kind: str  # "procedure" | "mcp_tool"
     content: str
     spec: DynamicToolSpec | None = None
+    # None means the skill is Eve's own. A name means it belongs to that
+    # specialist alone: Eve's search filters it out, and that specialist's
+    # search filters everything else out (design doc, "Scoped skills").
+    specialist: str | None = None
 
 
-def parse_skill_text(text: str, fallback_name: str) -> tuple[str, str, str]:
-    """Split a SKILL.md-shaped document into (name, description, body).
+def parse_skill_text(
+    text: str, fallback_name: str
+) -> tuple[str, str, str, str | None]:
+    """Split a SKILL.md-shaped document into
+    (name, description, body, specialist).
 
     One parser for two sources: files on disk and Eve-authored procedure rows,
     which serialize to this same shape (eve.skills.authoring). `eve_memory`
@@ -42,12 +49,21 @@ def parse_skill_text(text: str, fallback_name: str) -> tuple[str, str, str]:
         meta.get("name", fallback_name),
         meta.get("description", ""),
         body.strip(),
+        meta.get("specialist") or None,
     )
 
 
 def _load_skill_md(path) -> Skill:
-    name, description, body = parse_skill_text(path.read_text(), path.parent.name)
-    return Skill(name=name, description=description, kind="procedure", content=body)
+    name, description, body, specialist = parse_skill_text(
+        path.read_text(), path.parent.name
+    )
+    return Skill(
+        name=name,
+        description=description,
+        kind="procedure",
+        content=body,
+        specialist=specialist,
+    )
 
 
 def load_skills(
@@ -68,12 +84,16 @@ def load_skills(
         else []
     )
     for row in authored or []:
-        name, description, body = parse_skill_text(
+        name, description, body, specialist = parse_skill_text(
             row.content, row.subject or str(row.id)
         )
         procedures.append(
             Skill(
-                name=name, description=description, kind="procedure", content=body
+                name=name,
+                description=description,
+                kind="procedure",
+                content=body,
+                specialist=specialist,
             )
         )
     mcp_skills = [

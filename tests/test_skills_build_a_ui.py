@@ -15,7 +15,7 @@ SKILL = Path(__file__).resolve().parents[1] / "skills" / "build-a-ui" / "SKILL.m
 
 def _documented() -> dict[str, set[str]]:
     """Every `- \x60type\x60: prop, prop` line in the skill body."""
-    name, _description, body = parse_skill_text(SKILL.read_text(), "build-a-ui")
+    name, _description, body, _specialist = parse_skill_text(SKILL.read_text(), "build-a-ui")
     assert name == "build-a-ui"
     found = {}
     for line in body.splitlines():
@@ -43,5 +43,5 @@ def test_every_documented_property_matches_the_validator():
 def test_the_skill_has_a_description_for_semantic_ranking():
     """`rank_skills` embeds `description or name`, so an empty description
     would make this skill unfindable for every phrasing but its own slug."""
-    _name, description, _body = parse_skill_text(SKILL.read_text(), "build-a-ui")
+    _name, description, _body, _specialist = parse_skill_text(SKILL.read_text(), "build-a-ui")
     assert len(description) > 40

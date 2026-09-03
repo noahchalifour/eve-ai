@@ -1,0 +1,18 @@
+# Written to ~/.codex/config.toml by bootstrap.sh on every container start.
+# $HOME is the PVC, so this cannot be baked into the image - and writing it
+# every start is what lets a wiped PVC recover routing with no human.
+#
+# No `model` key: the model is chosen per session by Eve and arrives as
+# `codex-acp --model <name>` (spec: "Agent and model are both chosen per
+# task"). Pinning one here would silently override her choice.
+#
+# `env_key` names the variable holding the key; the key itself is never
+# written into this file. `experimental_bearer_token` would inline it and is
+# deliberately not used.
+model_provider = "litellm"
+
+[model_providers.litellm]
+name = "LiteLLM"
+base_url = "__LITELLM_BASE_URL__/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"

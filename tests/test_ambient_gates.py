@@ -142,3 +142,11 @@ def test_the_cap_window_starts_at_the_members_own_midnight():
 def test_an_unknown_timezone_falls_back_to_utc_rather_than_raising():
     now = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
     assert gates.day_start_utc("Mars/Olympus", now) == datetime(2026, 8, 24, tzinfo=UTC)
+
+
+def test_coding_is_mapped_to_its_permission():
+    """gates.py fails closed on an unmapped source. Without this entry every
+    delegated coding result would silently notify nobody."""
+    from eve_ambient.gates import SOURCE_PERMISSION
+
+    assert SOURCE_PERMISSION["coding"] == "code.delegate"

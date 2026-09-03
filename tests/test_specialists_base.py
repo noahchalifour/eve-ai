@@ -25,6 +25,14 @@ STATE: EveState = {
 CONFIG = {"configurable": {}}
 
 
+class _AgentStub:
+    async def ainvoke(self, _payload, _config):
+        return {"messages": [AIMessage(content="done")]}
+
+
+_AGENT_STUB = _AgentStub()
+
+
 @tool
 async def get_widget(name: str) -> str:
     """Look up a widget."""
@@ -33,6 +41,27 @@ async def get_widget(name: str) -> str:
 
 def _factory_with(*ai_messages):
     return lambda _tier: FakeToolCallingModel(messages=iter(ai_messages))
+
+
+async def test_every_specialist_gets_a_scoped_skills_search(monkeypatch):
+    captured = {}
+
+    def _fake_create_agent(model, tools, system_prompt):
+        captured["tools"] = tools
+        return _AGENT_STUB
+
+    monkeypatch.setattr("eve.specialists.base.create_agent", _fake_create_agent)
+
+    specialist = build_specialist(
+        name="widgets",
+        tools=[get_widget],
+        system_prompt="You handle widgets.",
+        permission="home.control",
+        model_factory=_factory_with(AIMessage(content="done")),
+    )
+    await specialist.ainvoke({"request": "hello", "state": STATE}, config=CONFIG)
+
+    assert [t.name for t in captured["tools"]] == ["get_widget", "search_skills"]
 
 
 async def test_denies_the_call_before_touching_the_model():

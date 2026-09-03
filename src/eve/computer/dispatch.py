@@ -6,23 +6,28 @@ main container, before the HTTP call), applied a third time."""
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from eve.computer.store import create_task
 from eve.specialists.permissions import permission_denial
+from eve.state import EveState
 from eve.tools_client import dispatch_task
 
 
 @tool
-async def dispatch_computer_task(goal: str, config: RunnableConfig) -> str:
+async def dispatch_computer_task(
+    goal: str, state: Annotated[EveState, InjectedState], config: RunnableConfig
+) -> str:
     """Dispatch a task to Eve's own computer: a persistent Linux desktop with
     a browser, a shell, and her own accounts. Use this for anything that
     needs a real account, a real browser, or a real shell rather than
     something answerable directly. Returns immediately; the result is
     reported later, in a separate message, once the task finishes."""
-    member = config["configurable"]["member"]
+    member = state["member"]
     denial = permission_denial(member.get("permissions", []), "computer.use")
     if denial:
         return denial
