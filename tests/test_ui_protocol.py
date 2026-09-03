@@ -462,3 +462,20 @@ def test_an_unknown_action_id_is_rejected():
         ]
     )
     assert protocol.validate_operation(operation) == "action-schema"
+
+
+def test_a_segmented_selection_may_set_local_state():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "segmentedSelection",
+                "properties": {
+                    "options": ["option1", "option2"],
+                    "selected": "option1",
+                    "setState": {"choice": "option1"},
+                },
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
