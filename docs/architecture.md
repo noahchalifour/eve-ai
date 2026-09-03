@@ -17,9 +17,9 @@ for its own design and definition of done.
 ## The graph
 
 ```
-                          ┌─> ui_action ────────────────────────────────> END
-START -> load_context ────┤
-                          └─> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
+                          ┌─> ui_submit ─┐
+START -> load_context ────┤              ▼
+                          └────────────> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
 ```
 
 Eight nodes, wired in `src/eve/graph.py`:
@@ -29,7 +29,20 @@ Eight nodes, wired in `src/eve/graph.py`:
   `config["configurable"]["langgraph_auth_user"]`, resolves the matching
   entry in `family.yaml`, stamps the member's local time, and assembles the
   initial system prompt from `prompts/eve.md` plus member context. It performs
-  no memory I/O and makes no model call.
+  no memory I/O and makes no model call. `graph.py`'s `_route_after_context`
+  then routes to `ui_submit` when the last human message is a `surface.submit`
+  action envelope the connected client declared support for, or to `recall`
+  otherwise — an undeclared client's envelope becomes ordinary member speech.
+- **`ui_submit`** (`src/eve/ui/actions.py`) answers a Save tap on a
+  model-authored surface. The client re-runs the turn with the user message's
+  content replaced by an `<assistant-ui-action>` envelope; `ui_submit` calls
+  no model, rewrites the envelope's `state` into a readable sentence — the
+  envelope's `state` IS trusted, unlike `data`, since the member's typed
+  values are the only source of truth for them — and replaces the raw
+  envelope with that sentence in the transcript. It always continues to
+  `recall`, not `END`: a submit has no predetermined answer, and Eve is about
+  to decide where the values go, which is exactly when she wants memory
+  context. See [ADR 0017](adr/0017-model-authored-surfaces.md).
 - **`recall`** (`src/eve/memory/recall.py`) loads profile, household and thread
   digest memory, starts lexical episodic search immediately, and races one
   embedding call against a bounded budget for the vector arm. A timeout or
@@ -49,15 +62,6 @@ Eight nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
-- **`ui_action`** (`src/eve/ui/actions.py`) answers a tap on a rendered
-  dynamic surface. The client re-runs the turn with the user message's content
-  replaced by an `<assistant-ui-action>` envelope, so `load_context` routes it
-  here instead of to `recall`: the branch calls no model, re-reads the
-  forecast from Home Assistant rather than trusting the envelope's `data`,
-  emits one `patch` on the `custom` stream, and replaces the raw envelope in
-  the transcript with a readable sentence. It is the one place in Eve where a
-  failed external call raises rather than returning a string — see
-  [ADR 0014](adr/0014-dynamic-ui-is-server-built.md).
 - **`persist_ui`** (`src/eve/ui/persist.py`) copies whatever surfaces the turn
   emitted into the final AI message as a portable `<assistant-ui>` frame.
   `custom` frames are streamed and never stored, and the client replays a
@@ -132,9 +136,9 @@ src/eve/
   ui/
     protocol.py     # the assistant-ui/1.0 contract, its validator, the portable frame
     stream.py       # client capabilities in, custom-mode frames out
-    weather.py      # the weather surface, built from HA's forecast; no model output
-    tools.py        # show_weather: the model's whole share of the feature
-    actions.py      # inbound action envelope + the model-free ui_action node
+    surface.py      # assemble a model-authored component tree into a create operation
+    tools.py        # show_surface: the one tool for any model-authored UI
+    actions.py      # inbound action envelope + the model-free ui_submit node
     persist.py      # copy this turn's surfaces into the AI message for history
   eval/
     types.py        # DatasetItem, ItemResult, RunScore -- shapes only
@@ -908,8 +912,8 @@ turns to `budget`, not after.
 and its `custom` handler accepts only the `assistant_ui` key - so the frame
 this node emits is dropped on the floor. The client change is tracked as
 Linear OPENA-14. Chips are deliberately NOT modelled as an `assistant-ui/1.0`
-surface: that protocol allowlists `actionId` to exactly
-`weather.rangeChanged`, and a tapped surface button sends an
+surface: that protocol allowlists `actionId` to exactly `surface.submit`,
+and a tapped surface button sends an
 `<assistant-ui-action>` JSON envelope as the user text rather than a plain
 member utterance.
 
@@ -1194,3 +1198,4 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0013 — Reply suggestions are a separate REFLEX call](adr/0013-suggestions-are-a-separate-reflex-call.md)
 - [ADR 0014 — Dynamic UI surfaces are built server-side and only triggered by the model](adr/0014-dynamic-ui-is-server-built.md)
 - [ADR 0015 — A granted identity is not authored credentialed capability](adr/0015-granted-identity-vs-authored-capability.md)
+- [ADR 0017 — The model authors surface structure; the server owns the envelope](adr/0017-model-authored-surfaces.md)
