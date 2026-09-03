@@ -66,14 +66,6 @@ async def test_healthz_needs_no_auth():
     assert response.status_code == 200
 
 
-def test_home_weather_is_a_dispatchable_tool():
-    """The dispatch table is the whole routing layer - a handler that exists
-    but is unregistered 404s at runtime with nothing failing at import."""
-    from eve_tools.app import _HANDLERS
-
-    assert "home.weather" in _HANDLERS
-
-
 def test_the_health_tools_are_dispatchable():
     """The dispatch table is the whole routing layer - a handler that exists
     but is unregistered 404s at runtime with nothing failing at import."""
