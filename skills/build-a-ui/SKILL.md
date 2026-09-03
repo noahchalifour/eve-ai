@@ -45,7 +45,7 @@ Every component needs a unique `id` and a `type`. Layout components take
 - `textField`: label, stateKey
 - `numberField`: label, stateKey
 - `button`: actionId, actionValue, label, setState
-- `segmentedSelection`: actionId, actionValue, options, selected, setState
+- `segmentedSelection`: actionId, actionValue, options, selected
 
 `grid.columns` is 1-6. `expandable.expanded` is a boolean. A `button` must
 have exactly one of `actionId` or `setState` - both is two meanings for one

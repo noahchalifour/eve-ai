@@ -65,7 +65,7 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
     "icon": frozenset({"name"}),
     "badge": frozenset({"label"}),
     "button": frozenset({"label", "actionId", "actionValue", "setState"}),
-    "segmentedSelection": frozenset({"options", "selected", "actionId", "actionValue", "setState"}),
+    "segmentedSelection": frozenset({"options", "selected", "actionId", "actionValue"}),
     "expandable": frozenset({"label", "expanded"}),
     "textField": frozenset({"stateKey", "label"}),
     "numberField": frozenset({"stateKey", "label"}),
