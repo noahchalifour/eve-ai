@@ -77,8 +77,10 @@ building for a cosmetic bound.
 **The envelope's `state` IS trusted**, inverting ADR 0014's rule that the
 envelope is never trusted and is re-read from Home Assistant instead. There
 is nothing to re-read: the member's typed values are the source of truth.
-`validate_json_value` still caps every string, and `readable_submission`
-strips frame markers from typed text.
+`parse_action` runs every `state` value through `validate_json_value` before
+trusting it - an oversized or otherwise invalid value makes the whole
+envelope unrecognized, the same as any other malformed one - and
+`readable_submission` strips frame markers from typed text.
 
 **`ui_action` is gone, and with it the codebase's only raising node.** ADR
 0014's caveat that "`ui_action` raises where the rest of Eve returns a

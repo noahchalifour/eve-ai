@@ -83,6 +83,20 @@ def test_a_submit_envelope_is_recognised():
     assert parse_action(_encoded(SUBMIT)) == SUBMIT
 
 
+def test_a_submit_envelope_with_an_oversized_state_value_is_rejected():
+    """`validate_json_value`'s 2,048-character ceiling on every string
+    applies to `state` too, enforced here in `parse_action` rather than left
+    as an unenforced claim - an oversized value makes the whole envelope
+    unrecognized, the same as any other malformed one, never a crash."""
+    oversized = {**SUBMIT, "state": {"note": "x" * 2049}}
+    assert parse_action(_encoded(oversized)) is None
+
+
+def test_a_submit_envelope_with_a_normal_sized_state_still_parses():
+    normal = {**SUBMIT, "state": {"note": "x" * 2048}}
+    assert parse_action(_encoded(normal)) == normal
+
+
 def test_ordinary_member_speech_is_still_not_an_action():
     assert parse_action("what's the weather like?") is None
     assert parse_action("") is None

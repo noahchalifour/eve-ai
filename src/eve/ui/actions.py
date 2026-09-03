@@ -36,6 +36,15 @@ def parse_action(text: object) -> dict | None:
     The envelope's `data` (the surface's current contents) is deliberately not
     trusted or used by any caller: it arrives from the client and the
     requested range is re-read from Home Assistant instead.
+
+    The envelope's `state`, by contrast, IS trusted once it gets past here
+    (see `ui_submit`) - so each of its values is run through
+    `protocol.validate_json_value` on the way in, the same JSON-safety and
+    2,048-character string ceiling the client itself enforces. A `state`
+    carrying an oversized or otherwise invalid value is treated as an
+    unrecognized envelope, exactly like a malformed one: this returns `None`
+    rather than raising, per the codebase's constraint that every external
+    input degrades to a returned value.
     """
     if not isinstance(text, str):
         return None
@@ -57,6 +66,11 @@ def parse_action(text: object) -> dict | None:
     surface_id = envelope.get("surfaceId")
     if not isinstance(surface_id, str) or not surface_id:
         return None
+    state = envelope.get("state")
+    if isinstance(state, dict):
+        for value in state.values():
+            if protocol.validate_json_value(value) is not None:
+                return None
     return envelope
 
 
@@ -101,8 +115,10 @@ async def ui_submit(state: EveState) -> dict:
 
     The envelope's `state` IS trusted, which inverts ADR 0014's rule that the
     envelope is never trusted. There is nothing to re-read: the member's
-    typed values are the source of truth. `validate_json_value` still capped
-    every string at 2,048 characters on the way in.
+    typed values are the source of truth. `parse_action` runs every `state`
+    value through `protocol.validate_json_value` on the way in, so this is
+    reached only once every value is JSON-safe and every string is under the
+    2,048-character ceiling.
     """
     last = state["messages"][-1]
     envelope = parse_action(last.content)
