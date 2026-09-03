@@ -7,7 +7,7 @@ from eve.ui import protocol, stream
 CAPABILITIES = {
     "protocol": "assistant-ui/1.0",
     "catalogVersion": "1",
-    "catalogIds": ["weather", "text", "card"],
+    "catalogIds": ["text", "card", "column"],
 }
 
 
@@ -16,13 +16,13 @@ def _config(**overrides) -> dict:
     return {"configurable": {"assistant_ui": declared}}
 
 
-def _create(surface_id: str = "wx-1") -> dict:
+def _create(surface_id: str = "sf-1") -> dict:
     return {
         "protocol": protocol.PROTOCOL,
         "op": "create",
         "surface": {
             "surfaceId": surface_id,
-            "catalogId": "weather",
+            "catalogId": "column",
             "catalogVersion": "1",
             "components": [],
             "data": {},
@@ -48,18 +48,18 @@ def test_capabilities_tolerate_a_config_that_declares_nothing():
 
 
 def test_supports_is_true_only_for_a_declared_catalog_id():
-    assert stream.supports(_config(), "weather") is True
-    assert stream.supports(_config(), "segmentedSelection") is False
+    assert stream.supports(_config(), {"text"}) is True
+    assert stream.supports(_config(), {"segmentedSelection"}) is False
 
 
 def test_supports_fails_closed():
     """A client that declared nothing cannot render anything. Emitting at it
     would put an unreadable frame in the transcript forever, since history is
     replayed from the AI message text."""
-    assert stream.supports(None, "weather") is False
-    assert stream.supports(_config(protocol="assistant-ui/2.0"), "weather") is False
-    assert stream.supports(_config(catalogVersion="2"), "weather") is False
-    assert stream.supports(_config(catalogIds="weather"), "weather") is False
+    assert stream.supports(None, {"text"}) is False
+    assert stream.supports(_config(protocol="assistant-ui/2.0"), {"text"}) is False
+    assert stream.supports(_config(catalogVersion="2"), {"text"}) is False
+    assert stream.supports(_config(catalogIds="text"), {"text"}) is False
 
 
 def test_emit_writes_the_operation_under_the_assistant_ui_key(monkeypatch):
@@ -99,3 +99,28 @@ def test_emit_logs_only_structural_diagnostics(caplog):
 
     assert "catalog" in caplog.text
     assert "Privacy Lane" not in caplog.text
+
+
+def test_supports_requires_every_requested_type():
+    assert stream.supports(_config(catalogIds=["card", "text"]), {"card", "text"}) is True
+    assert stream.supports(_config(catalogIds=["card", "text"]), {"card", "numberField"}) is False
+
+
+def test_an_older_client_still_gets_the_types_it_declared():
+    """Per-type gating rather than a version check is what keeps a phone on
+    an old build useful: it can genuinely render a text/card summary, and is
+    refused only the trees containing inputs."""
+    old = _config(catalogIds=["column", "row", "card", "text", "badge"])
+    assert stream.supports(old, {"card", "text"}) is True
+    assert stream.supports(old, {"card", "textField"}) is False
+
+
+def test_an_empty_request_is_supported_by_any_declaring_client():
+    """A tree of zero components is degenerate but not a capability
+    failure - `validate_operation` is what rejects it, with a diagnostic."""
+    assert stream.supports(_config(catalogIds=["card"]), set()) is True
+
+
+def test_an_undeclared_client_supports_nothing():
+    assert stream.supports(None, {"card"}) is False
+    assert stream.supports({}, set()) is False

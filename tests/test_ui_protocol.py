@@ -13,29 +13,25 @@ from eve.ui import protocol
 
 def _surface(**overrides) -> dict:
     surface = {
-        "surfaceId": "wx-1",
-        "catalogId": "weather",
+        "surfaceId": "sf-1",
+        "catalogId": "column",
         "catalogVersion": "1",
         "components": [
             {
-                "id": "weather",
-                "type": "weather",
-                "properties": {
-                    "location": "$data.location",
-                    "condition": "$data.condition",
-                    "temperature": "$data.temperature",
-                },
+                "id": "c1",
+                "type": "card",
+                "properties": {"title": "Test"},
                 "children": [],
             }
         ],
-        "data": {"location": "Home", "condition": "Sunny", "temperature": 21},
+        "data": {},
         "localState": {},
     }
     surface.update(overrides)
     return {"protocol": protocol.PROTOCOL, "op": "create", "surface": surface}
 
 
-def test_a_well_formed_weather_create_is_accepted():
+def test_a_well_formed_create_is_accepted():
     assert protocol.validate_operation(_surface()) is None
 
 
@@ -110,7 +106,7 @@ def test_grid_columns_must_be_an_int_between_one_and_six():
     assert protocol.validate_operation(_surface(components=grid(True))) == "component-schema"
 
 
-def test_only_weather_rangechanged_is_a_legal_action_id():
+def test_only_surface_submit_is_a_legal_action_id():
     def button(action_id):
         return [
             {
@@ -121,7 +117,7 @@ def test_only_weather_rangechanged_is_a_legal_action_id():
             }
         ]
 
-    assert protocol.validate_operation(_surface(components=button("weather.rangeChanged"))) is None
+    assert protocol.validate_operation(_surface(components=button("surface.submit"))) is None
     assert protocol.validate_operation(_surface(components=button("lights.toggle"))) == "action-schema"
 
 
@@ -141,7 +137,7 @@ def test_a_tree_deeper_than_eight_is_rejected():
 
 
 def test_a_string_longer_than_the_limit_is_rejected():
-    data = {"location": "x" * (protocol.MAX_STRING + 1)}
+    data = {"note": "x" * (protocol.MAX_STRING + 1)}
     assert protocol.validate_operation(_surface(data=data)) == "string-limit"
 
 
@@ -218,12 +214,10 @@ def test_strip_frames_is_exactly_inverse_to_frame():
 
 
 def test_strip_frames_strips_a_bare_frame_with_nothing_before_it():
-    """`eve.ui.actions.ui_action` writes `AIMessage(content=frame([op]))`
-    directly - a tap on a rendered surface answers with a bare frame and no
-    prose at all, so content position 0 IS the opening marker. A stripper
-    that only recognized a frame preceded by a literal "\\n" would leave
-    this shape - which reaches `values.messages` on `ui_action -> END` just
-    like any other turn - completely untouched."""
+    """Some operations are appended as AIMessage(content=frame([op])) directly
+    with no prose at all, so content position 0 IS the opening marker. A
+    stripper that only recognized a frame preceded by a literal "\\n" would
+    leave this shape completely untouched."""
     operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
     bare = protocol.frame([operation])
 
@@ -283,9 +277,9 @@ def test_strip_frames_from_content_is_a_no_op_on_a_frameless_list():
 
 
 def test_append_frame_prepends_nothing_to_falsy_content():
-    """`eve.ui.actions.ui_action` and `eve.ui.persist.persist_ui` share this
-    builder now; falsy content (nothing to say ahead of the frame) gets the
-    frame back bare - the shape `strip_frames`'s `\\A` branch exists for."""
+    """Frame producers use `append_frame` as a shared builder; falsy content
+    (nothing to say ahead of the frame) gets the frame back bare - the shape
+    `strip_frames`'s `\\A` branch exists for."""
     operation = {"protocol": protocol.PROTOCOL, "op": "delete", "surfaceId": "wx-1"}
     assert protocol.append_frame("", [operation]) == protocol.frame([operation])
     assert protocol.strip_frames(protocol.append_frame("", [operation])) == ""
@@ -310,3 +304,163 @@ def test_append_frame_appends_a_new_block_to_list_content():
         {"type": "text", "text": f"\n{protocol.frame([operation])}"},
     ]
     assert protocol.strip_frames_from_content(result) == blocks
+
+
+def _create(components: list[dict]) -> dict:
+    return {
+        "protocol": "assistant-ui/1.0",
+        "op": "create",
+        "surface": {
+            "surfaceId": "sf-1",
+            "catalogId": "column",
+            "catalogVersion": "1",
+            "components": components,
+        },
+    }
+
+
+def test_a_text_field_declares_a_state_key_and_a_label():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "textField",
+                "properties": {"stateKey": "exercise", "label": "Exercise"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_number_field_declares_a_state_key_and_a_label():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "numberField",
+                "properties": {"stateKey": "reps", "label": "Reps"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_state_key_may_not_be_a_binding():
+    """`stateKey` names a localState slot to WRITE. A `$data.` binding
+    resolves against read-only surface data, so accepting one here would
+    describe a write to a value the client cannot address."""
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "textField",
+                "properties": {"stateKey": "$data.reps", "label": "Reps"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_an_input_rejects_an_undeclared_property():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "numberField",
+                "properties": {"stateKey": "reps", "placeholder": "8"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_a_button_may_set_local_state():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Clear", "setState": {"reps": 0}},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_button_may_submit():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Save", "actionId": "surface.submit"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) is None
+
+
+def test_a_button_may_not_do_both():
+    """Both would mean one tap with two meanings, and the client would have
+    to pick an order the protocol never states."""
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {
+                    "label": "Save",
+                    "actionId": "surface.submit",
+                    "setState": {"done": True},
+                },
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_a_button_may_not_do_neither():
+    """A button that does nothing renders as a live control that silently
+    ignores taps - worse than the whole-surface fallback, which at least
+    says something is wrong."""
+    operation = _create([{"id": "c1", "type": "button", "properties": {"label": "Save"}}])
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_set_state_must_be_a_json_object():
+    operation = _create(
+        [{"id": "c1", "type": "button", "properties": {"label": "Go", "setState": 3}}]
+    )
+    assert protocol.validate_operation(operation) == "component-schema"
+
+
+def test_set_state_values_obey_the_string_ceiling():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Go", "setState": {"note": "x" * 2049}},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "string-limit"
+
+
+def test_surface_submit_is_the_only_action():
+    assert protocol.ACTION_IDS == frozenset({"surface.submit"})
+
+
+def test_an_unknown_action_id_is_rejected():
+    operation = _create(
+        [
+            {
+                "id": "c1",
+                "type": "button",
+                "properties": {"label": "Go", "actionId": "surface.explode"},
+            }
+        ]
+    )
+    assert protocol.validate_operation(operation) == "action-schema"
+
+

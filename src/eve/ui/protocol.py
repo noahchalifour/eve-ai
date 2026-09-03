@@ -10,7 +10,7 @@ line that never leaves the phone. Validating before we emit turns that
 invisible drop into a server-side diagnostic.
 
 Pure module: no LangGraph, no I/O, no Eve state. `eve.ui.stream` owns the
-emission, `eve.ui.weather` owns the one surface V1 ships.
+emission, `eve.ui.surface` owns the model-authored surface builder.
 """
 
 from __future__ import annotations
@@ -21,12 +21,11 @@ import re
 PROTOCOL = "assistant-ui/1.0"
 CATALOG_VERSION = "1"
 
-# The closed V1 catalog. The same thirteen ids are legal as a surface's
+# The closed V1 catalog. The same fourteen ids are legal as a surface's
 # `catalogId` AND as a component's `type` - the client checks both against one
 # set (`DynamicSurfaceProtocol._componentTypes`), so this file does too.
 CATALOG_IDS = frozenset(
     {
-        "weather",
         "column",
         "row",
         "card",
@@ -39,11 +38,14 @@ CATALOG_IDS = frozenset(
         "button",
         "segmentedSelection",
         "expandable",
+        "textField",
+        "numberField",
     }
 )
 
-# V1 has exactly one interactive contract. A provider cannot invent an action.
-ACTION_IDS = frozenset({"weather.rangeChanged"})
+# One interactive contract: a button that hands the surface's localState back
+# to Eve as a turn. A provider cannot invent an action.
+ACTION_IDS = frozenset({"surface.submit"})
 
 MAX_SURFACES_PER_TURN = 8
 MAX_COMPONENTS = 64
@@ -57,15 +59,16 @@ OPENING_MARKER = "<assistant-ui>\n"
 CLOSING_MARKER = "\n</assistant-ui>"
 
 _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
-    "weather": frozenset({"location", "condition", "temperature"}),
     "card": frozenset({"title"}),
     "grid": frozenset({"columns"}),
     "text": frozenset({"text"}),
     "icon": frozenset({"name"}),
     "badge": frozenset({"label"}),
-    "button": frozenset({"label", "actionId", "actionValue"}),
+    "button": frozenset({"label", "actionId", "actionValue", "setState"}),
     "segmentedSelection": frozenset({"options", "selected", "actionId", "actionValue"}),
     "expandable": frozenset({"label", "expanded"}),
+    "textField": frozenset({"stateKey", "label"}),
+    "numberField": frozenset({"stateKey", "label"}),
     "column": frozenset(),
     "row": frozenset(),
     "list": frozenset(),
@@ -73,7 +76,7 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
 }
 
 _STRING_PROPERTIES = frozenset(
-    {"location", "condition", "title", "text", "name", "label", "selected"}
+    {"title", "text", "name", "label", "selected"}
 )
 
 # Every segment must start with a letter or an underscore. This rules out the
@@ -92,10 +95,9 @@ def frame(operations: list[dict]) -> str:
 
 
 def append_frame(content: str | list, operations: list[dict]) -> str | list:
-    """The one builder both frame producers share: `eve.ui.persist.persist_ui`
-    (a model's own final answer plus this turn's `create` operations) and
-    `eve.ui.actions.ui_action` (a one-line reply plus the tap's `patch`). One
-    contract rather than two conventions for the same shape, so
+    """The one builder for frame producers: `eve.ui.persist.persist_ui`
+    uses this to append a model's surfaces into the final AI message. One
+    contract rather than multiple conventions for the same shape, so
     `strip_frames`/`strip_frames_from_content` only ever have to invert what
     THIS function produces.
 
@@ -147,26 +149,21 @@ _FRAME_SUFFIX = re.compile(
 
 
 def strip_frames(text: str) -> str:
-    """Undo what `persist_ui` (and `ui_action`) did to an AIMessage's
-    content, for every place a persisted message is fed back into a prompt
-    rather than shown to the member.
+    """Undo what `persist_ui` did to an AIMessage's content, for every place
+    a persisted message is fed back into a prompt rather than shown to the member.
 
     `persist_ui` (`eve.ui.persist`) exists to make a card survive a session
     reopen, by writing the turn's surface into `messages` - text the client
-    strips before it ever reaches the member or TTS. `ui_action`
-    (`eve.ui.actions`) writes the same shape for a related but different
-    reason: a tap on a rendered surface answers with a one-line reply plus
-    the tap's patch, built through the same `append_frame` both producers
-    share, rather than a model's own free-form prose. Either way `messages`
-    is also what both the VOICE model (`eve.graph`)
-    and REFLEX (`eve.memory.extract`, for extraction and for the thread
-    digest) read back as conversation history on every later turn. Left
-    unstripped, a surface that can be multiple KiB (the protocol's own
-    ceiling is 48 KiB) is fed into every subsequent prompt, REFLEX can mint
-    memories out of the JSON, and the VOICE model gets a worked example of
-    the frame syntax in its own prior output to imitate - a self-composed
-    frame in `content` would reach the client having passed through none of
-    `validate_operation`, unlike a real one which is gated by `stream.emit`.
+    strips before it ever reaches the member or TTS. The `messages` is also
+    what both the VOICE model (`eve.graph`) and REFLEX
+    (`eve.memory.extract`, for extraction and for the thread digest) read back
+    as conversation history on every later turn. Left unstripped, a surface
+    that can be multiple KiB (the protocol's own ceiling is 48 KiB) is fed
+    into every subsequent prompt, REFLEX can mint memories out of the JSON,
+    and the VOICE model gets a worked example of the frame syntax in its own
+    prior output to imitate - a self-composed frame in `content` would reach
+    the client having passed through none of `validate_operation`, unlike a
+    real one which is gated by `stream.emit`.
 
     A no-op on the near-totality of turns that carry no frame at all.
     """
@@ -366,14 +363,32 @@ def _validate_properties(component_type: str, properties: object) -> str | None:
         error = _validate_property(key, value)
         if error:
             return error
+    if component_type == "button":
+        # Exactly one, never both and never neither. Both would be one tap
+        # with two meanings in an order the protocol never states; neither
+        # renders a live control that silently ignores taps, which is worse
+        # than the fallback because it says nothing is wrong.
+        declared = ("actionId" in properties) + ("setState" in properties)
+        if declared != 1:
+            return "component-schema"
     return None
 
 
 def _validate_property(key: str, value: object) -> str | None:
     if key in _STRING_PROPERTIES:
         return _string_or_binding(value)
-    if key == "temperature":
-        return _number_or_binding(value)
+    if key == "stateKey":
+        # A literal key, never a binding: it names a localState slot to
+        # WRITE, and `$data.` resolves against read-only surface data. The
+        # `$` check is the whole point - without it `$data.reps` validates
+        # and the client writes to a key literally called "$data.reps".
+        if not isinstance(value, str) or not value or value.startswith("$"):
+            return "component-schema"
+        return validate_json_value(value)
+    if key == "setState":
+        if not isinstance(value, dict):
+            return "component-schema"
+        return validate_json_value(value)
     if key == "columns":
         legal = isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 6
         return None if legal else "component-schema"
@@ -403,15 +418,3 @@ def _string_or_binding(value: object) -> str | None:
     if value.startswith("$") and not _BINDING.match(value):
         return "binding"
     return validate_json_value(value)
-
-
-def _number_or_binding(value: object) -> str | None:
-    if isinstance(value, bool):
-        return "component-schema"
-    if isinstance(value, (int, float)):
-        return None
-    if isinstance(value, str):
-        if _BINDING.match(value):
-            return None
-        return "binding" if value.startswith("$") else "component-schema"
-    return "component-schema"

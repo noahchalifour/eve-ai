@@ -16,20 +16,6 @@ NOAH = Member(
 )
 CONFIG = {"configurable": {"langgraph_auth_user": {"identity": "sub-noah"}}}
 
-# A client that declared the `weather` catalog - the only config under which
-# `_route_after_context` may route an action envelope to `ui_action` rather
-# than falling it through to `recall` as ordinary member speech.
-UI_CAPABLE_CONFIG = {
-    "configurable": {
-        "langgraph_auth_user": {"identity": "sub-noah"},
-        "assistant_ui": {
-            "protocol": "assistant-ui/1.0",
-            "catalogVersion": "1",
-            "catalogIds": ["weather"],
-        },
-    }
-}
-
 
 def test_the_stylist_is_bound_on_every_turn():
     from eve.graph import _static_tools
@@ -666,164 +652,6 @@ def test_dispatch_computer_task_is_unbound_by_default(monkeypatch):
     assert "dispatch_computer_task" not in {t.name for t in graph_mod._static_tools()}
 
 
-def test_show_weather_is_bound_only_when_the_client_declared_the_catalog():
-    """Binding it unconditionally would put a tool in front of the model that
-    can only ever answer "your app can't render this" - and would let a
-    surface into a transcript no client will ever replay."""
-    from eve.graph import _static_tools
-
-    declared = {
-        "configurable": {
-            "assistant_ui": {
-                "protocol": "assistant-ui/1.0",
-                "catalogVersion": "1",
-                "catalogIds": ["weather"],
-            }
-        }
-    }
-
-    assert "show_weather" in {tool.name for tool in _static_tools(declared)}
-    assert "show_weather" not in {tool.name for tool in _static_tools(None)}
-    assert "show_weather" not in {tool.name for tool in _static_tools()}
-
-
-async def test_a_ui_action_turn_skips_recall_the_model_and_extraction(monkeypatch):
-    """An action turn has no question in it. Routing it through `recall` would
-    spend an embedding call and a Postgres read on a tap, and routing it
-    through `extract` would feed a JSON envelope to the extractor."""
-    import json
-
-    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
-    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-
-    called = {"recall": False, "model": False, "extract": False}
-
-    async def spy_recall(state, config):
-        called["recall"] = True
-        return {"memory": None}
-
-    async def spy_extract(state, config):
-        called["extract"] = True
-        return {}
-
-    def spy_factory(_tier):
-        called["model"] = True
-        return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
-
-    async def fake_invoke(tool, arguments, **kwargs):
-        return json.dumps(
-            {
-                "location": "Home",
-                "condition": "sunny",
-                "temperature": 20,
-                "hourly": [],
-                "daily": [
-                    {
-                        "datetime": "2026-09-05T12:00:00+00:00",
-                        "condition": "rainy",
-                        "temperature": 17,
-                    }
-                ],
-            }
-        )
-
-    monkeypatch.setattr("eve.ui.actions.invoke", fake_invoke)
-
-    envelope = json.dumps(
-        {
-            "protocol": "assistant-ui/1.0",
-            "sessionId": "s1",
-            "surfaceId": "wx-1",
-            "actionId": "weather.rangeChanged",
-            "value": "daily",
-            "data": {},
-        }
-    )
-    app = build_graph(
-        model_factory=spy_factory, recall_fn=spy_recall, extract_fn=spy_extract
-    ).compile()
-
-    frames = []
-    async for mode, chunk in app.astream(
-        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
-        UI_CAPABLE_CONFIG,
-        stream_mode=["custom"],
-    ):
-        frames.append(chunk)
-
-    assert [frame["assistant_ui"]["op"] for frame in frames] == ["patch"]
-    assert called == {"recall": False, "model": False, "extract": False}
-
-
-async def test_an_action_envelope_falls_through_to_recall_when_the_client_declared_nothing(
-    monkeypatch,
-):
-    """The plan's fail-closed constraint - no declaration, wrong protocol,
-    wrong catalog version, or catalog id absent => emit nothing and answer in
-    prose - has to be enforced at the route, not inside `ui_action`: that node
-    has no model to answer in prose with, so it could only raise (wrong for a
-    client that cannot interpret an SSE error) or return silently (wrong - no
-    answer at all). `CONFIG` here declares no `assistant_ui` capability at
-    all, so the same envelope that reaches `ui_action` under
-    `UI_CAPABLE_CONFIG` above must instead be treated as ordinary member
-    speech: no custom frame, no patch, and a normal model answer."""
-    import json
-
-    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
-    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-
-    called = {"recall": False}
-
-    async def spy_recall(state, config):
-        called["recall"] = True
-        return {"memory": None}
-
-    async def fail_invoke(tool, arguments, **kwargs):
-        raise AssertionError("home.weather must not be called when routed to recall")
-
-    monkeypatch.setattr("eve.ui.actions.invoke", fail_invoke)
-
-    envelope = json.dumps(
-        {
-            "protocol": "assistant-ui/1.0",
-            "sessionId": "s1",
-            "surfaceId": "wx-1",
-            "actionId": "weather.rangeChanged",
-            "value": "daily",
-            "data": {},
-        }
-    )
-    app = build_graph(
-        model_factory=_fake_factory,
-        recall_fn=spy_recall,
-        extract_fn=_no_extract,
-        # A fake, not the real node: this test is about the ui_action/recall
-        # route, not about suggestions, and the real node would otherwise
-        # make a live REFLEX call and add its own (unrelated) custom frame.
-        suggest_fn=_no_suggest,
-    ).compile()
-
-    frames = []
-    async for mode, chunk in app.astream(
-        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
-        CONFIG,
-        stream_mode=["custom"],
-    ):
-        frames.append(chunk)
-
-    assert frames == []
-    assert called["recall"] is True
-
-    # And no `<assistant-ui>` frame was persisted into the transcript either -
-    # the raw envelope is untouched, exactly as an ordinary member message
-    # would be.
-    result = await app.ainvoke(
-        {"messages": [HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")]},
-        CONFIG,
-    )
-    assert all("<assistant-ui>" not in (m.content or "") for m in result["messages"])
-
-
 async def test_ordinary_speech_still_routes_through_recall(monkeypatch):
     monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
     monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
@@ -841,72 +669,6 @@ async def test_ordinary_speech_still_routes_through_recall(monkeypatch):
 
     assert called["recall"] is True
     assert result["messages"][-1].content == "Hi Noah."
-
-
-async def test_a_weather_turn_ends_with_the_surface_in_the_transcript(monkeypatch):
-    """End to end for the durability guarantee: the card is streamed live on
-    `custom` AND left in the persisted AI message, because the client replays
-    a reopened session from `values.messages` alone."""
-    import json
-
-    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
-    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-
-    async def fake_invoke(tool, arguments, **kwargs):
-        return json.dumps(
-            {
-                "location": "Home",
-                "condition": "sunny",
-                "temperature": 20,
-                "hourly": [
-                    {
-                        "datetime": "2026-08-31T18:00:00+00:00",
-                        "condition": "sunny",
-                        "temperature": 22,
-                    }
-                ],
-                "daily": [],
-            }
-        )
-
-    monkeypatch.setattr("eve.ui.tools.invoke", fake_invoke)
-
-    call = {"name": "show_weather", "args": {}, "id": "call-wx", "type": "tool_call"}
-
-    # See the comment in test_eve_calls_a_tool_and_returns_the_final_answer:
-    # one shared instance across revisits, mirroring `get_model`'s caching -
-    # a plain factory would hand back a freshly-reset iterator on the second
-    # visit to `eve` and replay the tool call forever.
-    fake_model = FakeToolCallingModel(
-        messages=iter(
-            [
-                AIMessage(content="", tool_calls=[call]),
-                AIMessage(content="Lovely out there."),
-            ]
-        )
-    )
-
-    def factory(_tier):
-        return fake_model
-
-    config = {
-        "configurable": {
-            **CONFIG["configurable"],
-            "assistant_ui": {
-                "protocol": "assistant-ui/1.0",
-                "catalogVersion": "1",
-                "catalogIds": ["weather"],
-            },
-        }
-    }
-    app = build_graph(
-        model_factory=factory, recall_fn=_no_recall, extract_fn=_no_extract
-    ).compile()
-    result = await app.ainvoke({"messages": [HumanMessage("what's the weather?")]}, config)
-
-    final = result["messages"][-1]
-    assert final.content.startswith("Lovely out there.\n<assistant-ui>\n")
-    assert '"op":"create"' in final.content
 
 
 async def test_the_voice_model_never_sees_a_previous_turns_persisted_frame(monkeypatch):
@@ -954,100 +716,6 @@ async def test_the_voice_model_never_sees_a_previous_turns_persisted_frame(monke
 
     replayed = next(m for m in seen["messages"] if m.id == "a1")
     assert replayed.content == "Lovely out there."
-
-
-async def test_a_ui_actions_persisted_frame_never_reaches_a_later_turns_model(
-    monkeypatch,
-):
-    """End to end for the tap path finding 1 was about. `ui_action` answers
-    a tap with a one-line reply plus the patch, appended via `protocol.
-    append_frame` into a single AIMessage that reaches `values.messages`
-    straight through `ui_action -> END`. Driving a real tap turn followed by
-    a real ORDINARY turn on the same thread checks three things at once,
-    none of which a unit test on `strip_frames` alone would catch: the
-    persisted frame never reaches the later turn's model, the replayed
-    assistant message the frame was stripped out of is never empty
-    (Anthropic's Messages API rejects an empty non-final assistant message),
-    and role alternation still holds - no two adjacent `HumanMessage`s."""
-    import json
-
-    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
-    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
-
-    async def fake_invoke(tool, arguments, **kwargs):
-        return json.dumps(
-            {
-                "location": "Home",
-                "condition": "sunny",
-                "temperature": 20,
-                "hourly": [],
-                "daily": [
-                    {
-                        "datetime": "2026-09-05T12:00:00+00:00",
-                        "condition": "rainy",
-                        "temperature": 17,
-                    }
-                ],
-            }
-        )
-
-    monkeypatch.setattr("eve.ui.actions.invoke", fake_invoke)
-
-    envelope = json.dumps(
-        {
-            "protocol": "assistant-ui/1.0",
-            "sessionId": "s1",
-            "surfaceId": "wx-1",
-            "actionId": "weather.rangeChanged",
-            "value": "daily",
-            "data": {},
-        }
-    )
-    tap_app = build_graph(
-        model_factory=_fake_factory, recall_fn=_no_recall, extract_fn=_no_extract
-    ).compile()
-    tap_result = await tap_app.ainvoke(
-        {
-            "messages": [
-                HumanMessage(f"<assistant-ui-action>\n{envelope}\n</assistant-ui-action>")
-            ]
-        },
-        UI_CAPABLE_CONFIG,
-    )
-    # Confirms the setup: the tap turn really did leave a sentence plus an
-    # appended frame in `values.messages` - the shape finding 1a was about.
-    assert any("<assistant-ui>" in (m.content or "") for m in tap_result["messages"])
-
-    seen = {}
-
-    class RecordingModel(FakeToolCallingModel):
-        async def ainvoke(self, input, config=None, **kwargs):
-            seen["messages"] = input
-            return AIMessage(content="Sure thing.")
-
-    ordinary_app = build_graph(
-        model_factory=lambda _t: RecordingModel(messages=iter([])),
-        recall_fn=_no_recall,
-        extract_fn=_no_extract,
-    ).compile()
-    await ordinary_app.ainvoke(
-        {"messages": [*tap_result["messages"], HumanMessage("thanks")]}, CONFIG
-    )
-
-    assert all("<assistant-ui>" not in (m.content or "") for m in seen["messages"])
-    # Finding 1: frame-free is not the same as non-empty. `ui_action` used to
-    # write the tap's AIMessage as a bare frame with nothing else in it, so
-    # stripping the frame back out left `content=""` - a message that
-    # survives round-tripping through `<assistant-ui>` markers but is still
-    # illegal on replay: Anthropic's Messages API (the proxy's own fallback
-    # tier) rejects an empty non-final assistant message, and dropping the
-    # message instead would leave two `HumanMessage`s adjacent, which
-    # Anthropic is equally strict about. Both invariants, once, end to end.
-    assert all((m.content or "") != "" for m in seen["messages"])
-    for previous, current in zip(seen["messages"], seen["messages"][1:]):
-        assert not (
-            isinstance(previous, HumanMessage) and isinstance(current, HumanMessage)
-        )
 
 
 async def test_suggestions_reach_final_state(monkeypatch):
@@ -1200,6 +868,121 @@ async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(mo
     for text in message_texts:
         assert "kitchen" not in text
         assert "All of them" not in text
+
+
+def test_show_surface_is_bound_only_for_a_declaring_client():
+    from eve.graph import _static_tools
+
+    names = {t.name for t in _static_tools({})}
+    assert "show_surface" not in names
+
+    declared = {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["card", "text"],
+            }
+        }
+    }
+    assert "show_surface" in {t.name for t in _static_tools(declared)}
+
+
+def test_a_submit_envelope_routes_through_ui_submit():
+    import json
+
+    from langchain_core.messages import HumanMessage
+
+    from eve.graph import _route_after_context
+
+    envelope = json.dumps(
+        {
+            "protocol": "assistant-ui/1.0",
+            "sessionId": "s-1",
+            "surfaceId": "sf-1",
+            "actionId": "surface.submit",
+            "state": {"reps": 8},
+        }
+    )
+    declared = {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": ["card"],
+            }
+        }
+    }
+    state = {"messages": [HumanMessage(content=envelope)]}
+    assert _route_after_context(state, declared) == "ui_submit"
+    assert _route_after_context(state, {}) == "recall"
+    assert (
+        _route_after_context({"messages": [HumanMessage(content="hi")]}, declared)
+        == "recall"
+    )
+
+
+async def test_a_command_tool_and_a_plain_tool_batch_in_one_round():
+    """`search_skills` returns a Command (it updates `dynamic_tools`); a data
+    tool returns a string. Issuing both in one round is what makes
+    `[search_skills || ask_home] -> show_surface` two rounds instead of
+    three, so the mix is worth pinning - it is library behaviour, not ours.
+
+    Note: ToolNode must be invoked via a compiled StateGraph rather than bare
+    `ToolNode([...]).ainvoke()` because the latter raises `ValueError: Missing
+    required config key` in langgraph>=1.2.11. This StateGraph wrapper also
+    matches real usage: ToolNode always runs inside a compiled graph in
+    eve.graph.py, so testing it this way pins the actual behavior."""
+    from typing import Annotated, TypedDict
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.tools import tool as make_tool
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.graph.message import add_messages
+    from langgraph.prebuilt import ToolNode
+    from langgraph.types import Command
+
+    class State(TypedDict):
+        messages: Annotated[list, add_messages]
+        dynamic_tools: list
+
+    @make_tool
+    def plain(text: str) -> str:
+        """A plain tool."""
+        return f"plain:{text}"
+
+    @make_tool
+    def commanding(text: str) -> Command:
+        """A Command-returning tool."""
+        return Command(
+            update={
+                "messages": [ToolMessage(f"cmd:{text}", tool_call_id="call-2")],
+                "dynamic_tools": [],
+            }
+        )
+
+    builder = StateGraph(State)
+    tools_node = ToolNode([plain, commanding])
+    builder.add_node("tools", tools_node)
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()
+
+    message = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "plain", "args": {"text": "a"}, "id": "call-1", "type": "tool_call"},
+            {
+                "name": "commanding",
+                "args": {"text": "b"},
+                "id": "call-2",
+                "type": "tool_call",
+            },
+        ],
+    )
+    result = await graph.ainvoke({"messages": [message], "dynamic_tools": []})
+    rendered = repr(result)
+    assert "plain:a" in rendered
+    assert "cmd:b" in rendered
 
 
 def test_the_coding_tools_are_bound_when_coding_is_enabled(monkeypatch):
