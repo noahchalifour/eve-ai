@@ -391,3 +391,164 @@ async def test_a_model_factory_failure_yields_no_chips(monkeypatch):
 
     monkeypatch.setattr(suggest_mod, "get_model", factory)
     assert await suggest_mod.suggest(_state(), {}) == {"suggestions": []}
+
+
+# --- openers: chips for a chat with nothing in it yet (ADR 0018) -------------
+#
+# Same discipline as the `suggest` tests above: every failure path returns
+# `[]`, so the tests that care whether a skip was a working skip or a broken
+# call assert on `model.calls` rather than on the empty list alone.
+
+
+def _empty_state(memory=None):
+    """A brand new thread: no messages at all, which is exactly what the
+    client's openers request sends."""
+    return {
+        "messages": [],
+        "member": MEMBER,
+        "system_prompt": "",
+        "memory": memory,
+        "dynamic_tools": [],
+        "suggestions": [],
+    }
+
+
+def test_the_openers_prompt_file_loads_and_asks_for_openings():
+    prompt = suggest_mod.load_openers_prompt()
+    assert "first person" in prompt.lower()
+    assert "opening" in prompt.lower()
+
+
+def test_openers_are_requested_only_by_an_explicit_true():
+    """Fails CLOSED to a normal turn. This flag stops Eve answering at all, so
+    a stray non-empty string must not silently mute her."""
+    assert suggest_mod.openers_requested({"configurable": {"suggestions_only": True}})
+    assert not suggest_mod.openers_requested({"configurable": {"suggestions_only": "yes"}})
+    assert not suggest_mod.openers_requested({"configurable": {"suggestions_only": 1}})
+    assert not suggest_mod.openers_requested({"configurable": {}})
+    assert not suggest_mod.openers_requested({})
+    assert not suggest_mod.openers_requested(None)
+
+
+async def test_openers_turn_a_good_response_into_chips(monkeypatch):
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?", "Any mail?"])
+    ))
+    result = await suggest_mod.openers(_empty_state(), {})
+    assert result == {"suggestions": ["What's on today?", "Any mail?"]}
+    assert model.calls == 1
+
+
+async def test_openers_carry_the_member_and_their_local_time(monkeypatch):
+    """Who is asking and when are the only two signals an empty chat has. An
+    opener that ignores both is a canned prompt with extra steps."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"])
+    ))
+    await suggest_mod.openers(_empty_state(), {})
+
+    assert "Noah" in model.prompt
+    assert "2026-08-31 09:00 EDT" in model.prompt
+
+
+async def test_openers_never_render_an_empty_exchange_section(monkeypatch):
+    """A REFLEX model reading `Noah:` followed by nothing fills the blank in,
+    which produces exactly the continuation-shaped chip openers must not."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"])
+    ))
+    await suggest_mod.openers(_empty_state(), {})
+
+    assert "The exchange" not in model.prompt
+
+
+async def test_openers_read_profile_and_rules_but_not_household_or_episodic(monkeypatch):
+    """Same narrow bundle as `suggest`, for the same reason: what shapes a
+    plausible member utterance is who they are, not what Eve needs to answer."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"])
+    ))
+    memory: MemoryBundle = {
+        "profile": [_memory("profile", "PROFILE_MARKER vegetarian")],
+        "household": [_memory("household", "HOUSEHOLD_MARKER quiet hours after 9pm")],
+        "episodic": [_memory("episodic", "EPISODIC_MARKER asked about the thermostat")],
+        "rules": [_memory("rule", "RULES_MARKER always confirm before locking doors")],
+        "digest": None,
+        "vector_used": False,
+        "latency_ms": 0.0,
+    }
+
+    await suggest_mod.openers(_empty_state(memory=memory), {})
+
+    assert "PROFILE_MARKER" in model.prompt
+    assert "RULES_MARKER" in model.prompt
+    assert "HOUSEHOLD_MARKER" not in model.prompt
+    assert "EPISODIC_MARKER" not in model.prompt
+
+
+async def test_openers_skip_a_thread_that_already_has_an_exchange(monkeypatch):
+    """Openers are for an EMPTY chat. A member mid-conversation gets
+    continuations from `suggest`; offering four ways to start one instead
+    would be worse than offering nothing."""
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"])
+    ))
+
+    assert await suggest_mod.openers(_state(), {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_openers_respect_the_kill_switch(monkeypatch):
+    """One switch for both chip flavours: a deployment that turned chips off
+    must not have them reappear on a different route."""
+    monkeypatch.setenv("EVE_SUGGEST_ENABLED", "false")
+    model = _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"])
+    ))
+
+    assert await suggest_mod.openers(_empty_state(), {}) == {"suggestions": []}
+    assert model.calls == 0
+
+
+async def test_openers_are_bounded_by_the_same_budget(monkeypatch):
+    """An empty canvas waiting on a slow REFLEX call is a blank screen, so the
+    budget matters more here than it does after an answer has streamed."""
+    monkeypatch.setenv("EVE_SUGGEST_BUDGET_MS", "0")
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["What's on today?"]), delay=0.05
+    ))
+    assert await suggest_mod.openers(_empty_state(), {}) == {"suggestions": []}
+
+
+async def test_openers_degrade_to_no_chips_on_every_failure(monkeypatch):
+    """The empty canvas shows nothing at all when this fails, which is the
+    designed fallback - never an error, never a placeholder."""
+    for error in (
+        OutputParserException("unknown tool"),
+        RuntimeError("gemini is down"),
+    ):
+        _install(monkeypatch, FakeModel(error=error))
+        assert await suggest_mod.openers(_empty_state(), {}) == {"suggestions": []}
+
+
+async def test_openers_emit_the_same_custom_frame_as_suggest(monkeypatch):
+    """The client has ONE `suggestions` handler. Openers arriving under a
+    different key would need a second one for no behavioural difference."""
+    written = []
+    monkeypatch.setattr(suggest_mod, "get_stream_writer", lambda: written.append)
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Any mail?"])
+    ))
+
+    result = await suggest_mod.openers(_empty_state(), {})
+
+    assert written == [{"suggestions": ["Any mail?"]}]
+    assert result["suggestions"] == written[0]["suggestions"]
+
+
+async def test_openers_survive_a_state_missing_member(monkeypatch):
+    """Degrade to no chips, not a KeyError out of the node."""
+    _install(monkeypatch, FakeModel(
+        result=suggest_mod.Suggestions(suggestions=["Any mail?"])
+    ))
+    assert await suggest_mod.openers({}, {}) == {"suggestions": []}

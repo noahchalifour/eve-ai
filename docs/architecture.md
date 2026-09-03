@@ -17,12 +17,12 @@ for its own design and definition of done.
 ## The graph
 
 ```
-                          ┌─> ui_submit ─┐
-START -> load_context ────┤              ▼
-                          └────────────> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
+                          ┌─> ui_submit ─┐          ┌─> openers ─────────────────────────────────> END
+START -> load_context ────┤              ▼          │
+                          └────────────> recall ────┴─> eve <-> tools -> persist_ui -> extract -> suggest -> END
 ```
 
-Eight nodes, wired in `src/eve/graph.py`:
+Nine nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
@@ -92,6 +92,15 @@ Eight nodes, wired in `src/eve/graph.py`:
   never loses a reply to it. Ambient-driven turns, the loop-exhausted reply,
   and a turn with no human message are skipped before the model is
   constructed. See ADR 0013.
+- **`openers`** (`src/eve/suggest.py`, beside `suggest`) answers the other
+  chip question: what might this member say *first*, on a chat with nothing
+  in it yet. Reached only when a client sets
+  `config.configurable.suggestions_only` to exactly `True`, in which case
+  `recall` routes here instead of to `eve`. It is the whole turn - no VOICE
+  call, no answer, no message appended, and no `extract`/`suggest` after it.
+  It emits the same `{"suggestions": [...]}` `custom` frame, shares
+  `suggest`'s budget and failure discipline, and is gated by the same
+  `EVE_SUGGEST_ENABLED` switch. See ADR 0018.
 
 The latency contract in [ADR 0002](adr/0002-no-llm-before-first-token.md)
 forbids a *generative* model call before the first streamed token.
@@ -958,15 +967,55 @@ turns to `budget`, not after.
 **Eval.** `eve/eval/replay.py` injects a no-op through `build_graph`'s
 `suggest_fn` seam, so replays neither pay for chips nor score them.
 
-**The Flutter client cannot see this yet.** It requests only `messages` and
-`custom` stream modes, reads only `values.messages` when restoring a thread,
-and its `custom` handler accepts only the `assistant_ui` key - so the frame
-this node emits is dropped on the floor. The client change is tracked as
-Linear OPENA-14. Chips are deliberately NOT modelled as an `assistant-ui/1.0`
-surface: that protocol allowlists `actionId` to exactly `surface.submit`,
-and a tapped surface button sends an
-`<assistant-ui-action>` JSON envelope as the user text rather than a plain
-member utterance.
+Chips are deliberately NOT modelled as an `assistant-ui/1.0` surface: that
+protocol allowlists `actionId` to exactly `surface.submit`, and a tapped
+surface button sends an `<assistant-ui-action>` JSON envelope as the user
+text rather than a plain member utterance.
+
+### Openers — chips for an empty chat
+
+`suggest` answers "what next?", which needs an exchange to continue. The
+screen a member actually lands on has none, so it got `[]` by design and the
+Flutter client filled it with three hard-coded prompts. Those prompts are
+gone; `openers` is what replaced them. See ADR 0018.
+
+**How a client asks.** `config.configurable.suggestions_only = true` on an
+otherwise ordinary run with empty input. `configurable`, not run metadata,
+because LangGraph indexes metadata and rejects non-scalars there — the same
+reason `assistant_ui` rides there. Read with `is True` and **fails closed**
+to a normal turn: a flag that stops Eve answering must not be trippable by a
+stray string.
+
+**What the run does.** `load_context -> recall -> openers -> END`. It never
+reaches `eve`, so there is no VOICE call and no answer. It appends **no
+message**, so the thread stays exactly as empty as it was — nothing in the
+transcript, nothing for `listSessions` to title, nothing for the next turn to
+read as history. It skips `extract` (no exchange to mine) and `suggest`
+(which would overwrite the openers with `[]`).
+
+**Why it still runs `recall`.** Profile and rules are what make an opener
+reflect who is asking rather than being a canned prompt with extra steps —
+the whole reason this lives on the server. `recall` makes no embedding call
+on an empty query, so this costs the always-on lookup only.
+
+**What it reads.** The member's name, role and local time, plus profile and
+rules — the same narrow bundle `suggest` uses, and deliberately no household
+or episodic memory. No exchange section is rendered at all: a REFLEX model
+shown `Noah:` followed by nothing fills the blank in, producing exactly the
+continuation-shaped chip openers must not be. The prompt is
+`prompts/openers.md`.
+
+**Everything else is shared with `suggest`** — `clean`, the `custom` frame
+and state-channel exits, `TAG_NOSTREAM`, `EVE_SUGGEST_BUDGET_MS`, and the
+`EVE_SUGGEST_ENABLED` kill switch (one switch, so chips turned off cannot
+reappear on a different route). Observability is a separate prefix,
+`eve.openers.outcome`, so the two flavours stay separable in Langfuse.
+`build_graph` grows an `openers_fn` seam alongside the other three.
+
+**Transport.** The Flutter client sends this against `POST /runs/stream`
+(stateless), so showing an empty canvas creates no thread row. Aegra
+implements that endpoint with an ephemeral thread it deletes on completion
+(`aegra_api/api/stateless_runs.py`); LangGraph Platform supports it too.
 
 ## Eval harness
 
@@ -1250,3 +1299,4 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0014 — Dynamic UI surfaces are built server-side and only triggered by the model](adr/0014-dynamic-ui-is-server-built.md)
 - [ADR 0015 — A granted identity is not authored credentialed capability](adr/0015-granted-identity-vs-authored-capability.md)
 - [ADR 0017 — The model authors surface structure; the server owns the envelope](adr/0017-model-authored-surfaces.md)
+- [ADR 0018 — Openers are a thread-free, chip-only run](adr/0018-openers-are-a-thread-free-chip-only-run.md)
