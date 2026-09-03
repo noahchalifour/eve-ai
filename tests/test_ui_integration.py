@@ -8,8 +8,8 @@ starts eve-tools and the stub HA itself. Marked `integration` because it binds
 real ports and spawns real processes.
 
 Weather surface integration tests were deleted in Task 1 (feat(ui)!: delete the
-weather surface). Dynamic surface integration tests will be added when the
-show_surface tool is implemented in Task 5.
+weather surface). This file is currently empty, pending future dynamic-surface
+integration coverage - nothing in the plan schedules that work yet.
 """
 
 from __future__ import annotations
