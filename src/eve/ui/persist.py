@@ -80,9 +80,9 @@ def _with_frame(message: AIMessage, operations: list[dict]) -> AIMessage:
     `additional_kwargs`, `name` and `tool_calls` off the final message of
     every surface turn - the same id is not enough on its own.
 
-    `protocol.append_frame` is the one builder this shares with
-    `eve.ui.actions.ui_action`, so `strip_frames`/`strip_frames_from_content`
-    only ever have one shape to invert."""
+    `protocol.append_frame` is the one builder a frame is ever produced with -
+    `persist_ui` is its sole producer - so `strip_frames`/
+    `strip_frames_from_content` only ever have one shape to invert."""
     return message.model_copy(
         update={"content": protocol.append_frame(message.content, operations)}
     )
