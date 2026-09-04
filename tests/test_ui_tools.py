@@ -181,3 +181,31 @@ def test_the_docstring_carries_no_property_table():
     assert "numberField" not in doc
     # Generous, but it fails loudly if someone pastes the table back in.
     assert len(doc) < 900
+
+
+async def test_an_invented_component_names_the_catalog_not_the_client(written):
+    """OPENA-17: a model authoring `Text`/`Checkbox` was told the member's
+    app could not render them - unactionable, and false. The retry has to be
+    self-sufficient, so the message names the catalog."""
+    invented = [
+        {
+            "id": "c1",
+            "type": "Card",
+            "properties": {"title": "Workout"},
+            "children": [{"id": "c2", "type": "Checkbox", "properties": {}}],
+        }
+    ]
+    result = await tools.show_surface.ainvoke(
+        {
+            "type": "tool_call",
+            "name": "show_surface",
+            "args": {"components": invented},
+            "id": "test-7",
+        },
+        config=CONFIG,
+    )
+    assert result.artifact is None
+    assert written == []
+    assert "Card, Checkbox" in result.content
+    assert "cannot render" not in result.content
+    assert "segmentedSelection" in result.content

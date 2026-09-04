@@ -20,6 +20,11 @@ _NO_CLIENT_SUPPORT = (
     "This member's app cannot render {missing}. Answer in words instead, or "
     "build the surface again using only the components it does support."
 )
+_NO_SUCH_COMPONENT = (
+    "No such component: {unknown}. The catalog is exactly these, "
+    "case-sensitive: {catalog}. Rebuild the tree using only those and call "
+    "show_surface again."
+)
 _REJECTED = "The surface was rejected before it could be shown. Answer in words instead."
 
 
@@ -58,6 +63,20 @@ async def show_surface(
     something. Prefer prose when the answer is a sentence.
     """
     requested = surface.component_types(components)
+    unknown = requested - protocol.CATALOG_IDS
+    if unknown:
+        # Not a client problem, and saying it was one is what OPENA-17 hit:
+        # a model that authored `Text`/`Checkbox` was told the member's app
+        # could not render them, which is unactionable and reads as a phone
+        # too old. Naming the catalog makes the retry self-sufficient, the
+        # same way `schema_hint` does for a property error.
+        return (
+            _NO_SUCH_COMPONENT.format(
+                unknown=", ".join(sorted(unknown)),
+                catalog=", ".join(sorted(protocol.CATALOG_IDS)),
+            ),
+            None,
+        )
     if not stream.supports(config, requested):
         declared = stream.capabilities(config) or {}
         ids = declared.get("catalogIds")
