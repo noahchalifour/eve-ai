@@ -1007,3 +1007,156 @@ def test_the_coding_tools_are_absent_when_coding_is_disabled(monkeypatch):
 
     assert "delegate_coding_task" not in {t.name for t in graph_mod._static_tools()}
     get_settings.cache_clear()
+
+
+# --- the openers route (ADR 0018) -------------------------------------------
+
+OPENERS_CONFIG = {
+    "configurable": {
+        "langgraph_auth_user": {"identity": "sub-noah"},
+        "suggestions_only": True,
+    }
+}
+
+
+async def test_an_openers_request_never_calls_the_voice_model(monkeypatch):
+    """The whole point of the route. A client showing an empty chat wants
+    chips, not an answer - and a VOICE call here would both cost money and
+    append a message nobody asked Eve to say."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    called = []
+
+    def factory(_tier):
+        called.append("eve")
+        return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
+
+    async def openers(state, config):
+        return {"suggestions": ["What's on today?"]}
+
+    app = build_graph(
+        model_factory=factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+        openers_fn=openers,
+    ).compile()
+    result = await app.ainvoke({"messages": []}, OPENERS_CONFIG)
+
+    assert called == []
+    assert result["suggestions"] == ["What's on today?"]
+
+
+async def test_an_openers_request_appends_no_message(monkeypatch):
+    """An empty chat asking for openers must stay an empty chat. A message
+    appended here would show up in the timeline, in the drawer's title
+    derivation, and in the next turn's history."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def openers(state, config):
+        return {"suggestions": ["Any mail?"]}
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+        openers_fn=openers,
+    ).compile()
+    result = await app.ainvoke({"messages": []}, OPENERS_CONFIG)
+
+    assert result["messages"] == []
+
+
+async def test_an_openers_request_still_runs_recall_but_not_extract_or_suggest(
+    monkeypatch,
+):
+    """Recall is what makes an opener reflect who is asking. Extract has no
+    exchange to mine, and `suggest` would overwrite the openers just emitted
+    with an empty continuation list."""
+    order = []
+
+    async def recall(state, config):
+        order.append("recall")
+        return {"memory": None}
+
+    async def extract(state, config):
+        order.append("extract")
+        return {}
+
+    async def suggest(state, config):
+        order.append("suggest")
+        return {"suggestions": []}
+
+    async def openers(state, config):
+        order.append("openers")
+        return {"suggestions": ["Any mail?"]}
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=recall,
+        extract_fn=extract,
+        suggest_fn=suggest,
+        openers_fn=openers,
+    ).compile()
+    result = await app.ainvoke({"messages": []}, OPENERS_CONFIG)
+
+    assert order == ["recall", "openers"]
+    assert result["suggestions"] == ["Any mail?"]
+
+
+async def test_without_the_flag_a_normal_turn_is_unchanged(monkeypatch):
+    """The route is opt-in. Every existing client and every graph consumer
+    that never sends the flag must reach `eve` exactly as before."""
+    order = []
+
+    async def openers(state, config):
+        order.append("openers")
+        return {"suggestions": []}
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+        openers_fn=openers,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert order == []
+    assert result["messages"][-1].content == "Hi Noah."
+
+
+async def test_a_non_true_flag_falls_back_to_a_normal_turn(monkeypatch):
+    """Fails CLOSED: the flag stops Eve answering, so anything but an explicit
+    `True` must leave her answering."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def openers(state, config):
+        raise AssertionError("openers must not be reached")
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+        openers_fn=openers,
+    ).compile()
+    config = {
+        "configurable": {
+            "langgraph_auth_user": {"identity": "sub-noah"},
+            "suggestions_only": "yes",
+        }
+    }
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, config)
+
+    assert result["messages"][-1].content == "Hi Noah."

@@ -51,7 +51,7 @@ from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
-from eve.suggest import suggest as suggest_node
+from eve.suggest import openers as openers_node, openers_requested, suggest as suggest_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action, ui_submit
@@ -198,9 +198,18 @@ def _route_after_context(state: EveState, config: RunnableConfig) -> str:
     ordinary member speech, no frame is emitted, and a normal model answer
     comes back.
 
+    A client showing an empty chat asks for opening chips with
+    `config.configurable.suggestions_only`, and routes to `recall` -> `openers`,
+    skipping `eve` entirely. That branch is checked FIRST and unconditionally:
+    it is the one route that must never reach the VOICE model, and an empty
+    input carries no message for the two checks below to read anyway. See
+    ADR 0018.
+
     Branching after `load_context` rather than at START is deliberate -
     `load_context` is pure local computation (ADR 0002).
     """
+    if openers_requested(config):
+        return "recall"
     messages = state["messages"]
     if not messages or not isinstance(messages[-1], HumanMessage):
         return "recall"
@@ -209,11 +218,27 @@ def _route_after_context(state: EveState, config: RunnableConfig) -> str:
     return "ui_submit" if ui_stream.capabilities(config) is not None else "recall"
 
 
+def _route_after_recall(state: EveState, config: RunnableConfig) -> str:
+    """`openers` or the normal answer.
+
+    Split from `_route_after_context` rather than folded into it because the
+    openers route still wants memory: `recall` is what makes an opener reflect
+    who is asking rather than being a generic placeholder, which is the whole
+    reason this feature is not just three canned prompts in the client.
+
+    `recall` with no human text does no embedding call (`eve.memory.recall`
+    skips the vector arm on an empty query), so the cost of routing through it
+    is the always-on profile/rules lookup and nothing else.
+    """
+    return "openers" if openers_requested(config) else "eve"
+
+
 def build_graph(
     model_factory=get_model,
     recall_fn=memory_recall,
     extract_fn=memory_extract,
     suggest_fn=suggest_node,
+    openers_fn=openers_node,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         if _tool_rounds_this_turn(state["messages"]) >= (
@@ -255,6 +280,7 @@ def build_graph(
     builder.add_node("persist_ui", persist_ui)
     builder.add_node("extract", extract_fn)
     builder.add_node("suggest", suggest_fn)
+    builder.add_node("openers", openers_fn)
     builder.add_node("ui_submit", ui_submit)
     builder.add_edge(START, "load_context")
     builder.add_conditional_edges(
@@ -263,7 +289,14 @@ def build_graph(
         {"ui_submit": "ui_submit", "recall": "recall"},
     )
     builder.add_edge("ui_submit", "recall")
-    builder.add_edge("recall", "eve")
+    # `openers` ends the turn on its own: no VOICE call, no answer, nothing
+    # appended to the thread. It goes straight to END rather than through
+    # `extract`/`suggest`, because there is no exchange to mine facts from and
+    # continuation chips would overwrite the openers just emitted.
+    builder.add_conditional_edges(
+        "recall", _route_after_recall, {"openers": "openers", "eve": "eve"}
+    )
+    builder.add_edge("openers", END)
     # Bounded by `eve`'s own `_tool_rounds_this_turn` check, not by
     # LangGraph's recursion_limit: that default is 10007
     # (langgraph/_internal/_config.py's DEFAULT_RECURSION_LIMIT), `.compile()`
