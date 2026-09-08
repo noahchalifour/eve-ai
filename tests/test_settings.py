@@ -83,7 +83,7 @@ def test_memory_defaults_match_the_spec():
 
 
 def test_phase_3_settings_have_sane_defaults():
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.tools_base_url == "http://eve-tools:8090"
     assert s.tools_api_key == ""
     assert s.skills_dir == Path("skills")

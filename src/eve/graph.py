@@ -1,6 +1,6 @@
 """Eve's graph.
 
-    START -> load_context -> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> END
+    START -> load_context -> recall -> eve <-> tools -> persist_ui -> extract -> suggest -> title -> END
 
 `load_context` is pure local computation. `recall` is the one place ADR 0002
 bends: a single bounded, cancellable embedding call, which ships lexical-only
@@ -52,6 +52,7 @@ from eve.specialists.mail import ask_mail
 from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.suggest import openers as openers_node, openers_requested, suggest as suggest_node
+from eve.title import title as title_node
 from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action, ui_submit
@@ -239,6 +240,7 @@ def build_graph(
     extract_fn=memory_extract,
     suggest_fn=suggest_node,
     openers_fn=openers_node,
+    title_fn=title_node,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         if _tool_rounds_this_turn(state["messages"]) >= (
@@ -280,6 +282,7 @@ def build_graph(
     builder.add_node("persist_ui", persist_ui)
     builder.add_node("extract", extract_fn)
     builder.add_node("suggest", suggest_fn)
+    builder.add_node("title", title_fn)
     builder.add_node("openers", openers_fn)
     builder.add_node("ui_submit", ui_submit)
     builder.add_edge(START, "load_context")
@@ -314,7 +317,10 @@ def build_graph(
     # pays max() rather than sum(). Reversing them serialises two calls for
     # no gain. See ADR 0013.
     builder.add_edge("extract", "suggest")
-    builder.add_edge("suggest", END)
+    # Title metadata is written after both the reply and chips are streamed;
+    # it must never compete with the first token or reply completion.
+    builder.add_edge("suggest", "title")
+    builder.add_edge("title", END)
     return builder
 
 
