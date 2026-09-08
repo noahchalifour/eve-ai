@@ -19,10 +19,10 @@ for its own design and definition of done.
 ```
                           ┌─> ui_submit ─┐          ┌─> openers ─────────────────────────────────> END
 START -> load_context ────┤              ▼          │
-                          └────────────> recall ────┴─> eve <-> tools -> persist_ui -> extract -> suggest -> END
+                          └────────────> recall ────┴─> eve <-> tools -> persist_ui -> extract -> suggest -> title -> END
 ```
 
-Nine nodes, wired in `src/eve/graph.py`:
+Ten nodes, wired in `src/eve/graph.py`:
 
 - **`load_context`** (`src/eve/context.py`) performs no model call. It reads
   the authenticated principal from
@@ -92,6 +92,13 @@ Nine nodes, wired in `src/eve/graph.py`:
   never loses a reply to it. Ambient-driven turns, the loop-exhausted reply,
   and a turn with no human message are skipped before the model is
   constructed. See ADR 0013.
+- **`title`** (`src/eve/title.py`) runs after `suggest`, when Eve's answer is
+  already streamed. For a member-authored, untitled first exchange it makes one
+  bounded `REFLEX` structured-output call and replaces Aegra's first-message
+  fallback in `thread.metadata.thread_name`. Missing thread metadata, ambient
+  turns, timeouts, malformed output, and storage failures are all no-ops: a
+  title can never fail the answer; its bounded work happens after reply text
+  has already streamed.
 - **`openers`** (`src/eve/suggest.py`, beside `suggest`) answers the other
   chip question: what might this member say *first*, on a chat with nothing
   in it yet. Reached only when a client sets
