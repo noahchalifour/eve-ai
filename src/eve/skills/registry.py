@@ -8,12 +8,16 @@ cache here.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import yaml
 
 from eve.settings import get_settings
 from eve.skills.types import DynamicToolSpec
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -78,11 +82,27 @@ def load_skills(
     only wanted the filesystem corpus pays for a round trip.
     """
     skills_dir = get_settings().skills_dir
-    procedures = (
-        [_load_skill_md(p) for p in sorted(skills_dir.glob("*/SKILL.md"))]
-        if skills_dir.exists()
-        else []
-    )
+    # Absolute, because `skills_dir` defaults to the RELATIVE path `skills`
+    # and so resolves against the process CWD. A deployment that forgets to
+    # ship the directory (the eve-ai image did, for its whole life) returns
+    # an empty corpus here and `search_skills` answers "No matching skill or
+    # tool found." to every query - indistinguishable, without this line,
+    # from a corpus that simply had no good match.
+    if not skills_dir.exists():
+        logger.warning(
+            "skills directory not found at %s (cwd %s); no filesystem "
+            "procedures will be searchable",
+            skills_dir.absolute(),
+            Path.cwd(),
+        )
+        procedures = []
+    else:
+        procedures = [_load_skill_md(p) for p in sorted(skills_dir.glob("*/SKILL.md"))]
+        if not procedures:
+            logger.warning(
+                "skills directory %s contains no */SKILL.md files",
+                skills_dir.absolute(),
+            )
     for row in authored or []:
         name, description, body, specialist = parse_skill_text(
             row.content, row.subject or str(row.id)

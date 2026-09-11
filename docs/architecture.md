@@ -62,6 +62,14 @@ Ten nodes, wired in `src/eve/graph.py`:
   per turn by `eve` itself — LangGraph's own recursion limit defaults to
   10007, which is no bound at all on a paid model. Any tool that raises
   degrades to an error string tool-message rather than ending the run.
+  `show_surface` is bound here only when the connected client declares
+  `config.configurable.assistant_ui`, and that declaration also **describes**
+  it: `_static_tools` intersects the declared `catalogIds` with the server
+  catalog and builds the tool's argument schema from the result
+  (`src/eve/ui/schema.py`), so the legal component types reach the model as
+  tool-call grammar on the first attempt rather than through a
+  `search_skills` retrieval that has to succeed first. An older client is
+  described by a smaller schema instead of being refused after the fact.
 - **`persist_ui`** (`src/eve/ui/persist.py`) copies whatever surfaces the turn
   emitted into the final AI message as a portable `<assistant-ui>` frame.
   `custom` frames are streamed and never stored, and the client replays a
@@ -152,6 +160,7 @@ src/eve/
   ui/
     protocol.py     # the assistant-ui/1.0 contract, its validator, the portable frame
     stream.py       # client capabilities in, custom-mode frames out
+    schema.py       # the catalog, projected into show_surface's argument schema
     surface.py      # assemble a model-authored component tree into a create operation
     tools.py        # show_surface: the one tool for any model-authored UI
     actions.py      # inbound action envelope + the model-free ui_submit node

@@ -12,6 +12,14 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
 COPY prompts ./prompts
+# `Settings.skills_dir` is the relative path `skills`, resolved against this
+# WORKDIR. Without this line `search_skills` returns "No matching skill or
+# tool found." for EVERY query in the built image - `load_skills` globs a
+# directory that does not exist and returns an empty corpus, so the
+# `build-a-ui` catalog the dynamic-UI tool points the model at is
+# unreachable in production while resolving fine in a dev checkout.
+# `tests/test_skills_in_image.py` is what keeps this line here.
+COPY skills ./skills
 COPY family.yaml aegra.json README.md ./
 COPY alembic.ini ./
 COPY alembic ./alembic

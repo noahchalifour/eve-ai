@@ -10,6 +10,7 @@ Postgres across every turn (design doc section 5.1).
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from langchain_core.messages import ToolMessage
@@ -25,6 +26,8 @@ from eve.skills.mcp_registry import registered_mcp_tools
 from eve.skills.registry import Skill, load_skills
 from eve.state import EveState
 from eve.tools_authoring.registry import sandbox_specs
+
+logger = logging.getLogger(__name__)
 
 
 def _dot(a: list[float], b: list[float]) -> float:
@@ -92,6 +95,17 @@ async def search_skills(
     ]
     matches = await rank_skills(query, skills)
     if not matches:
+        # `rank_skills` has no score floor - given a non-empty corpus it
+        # always returns its top_k. So reaching here means the corpus itself
+        # was EMPTY, which is a deployment fault (an unshipped skills
+        # directory), not a semantic miss. Saying so is the difference
+        # between a one-line fix and re-debugging the ranker.
+        logger.warning(
+            "search_skills found nothing for %r: the searchable corpus holds "
+            "%d skills",
+            query,
+            len(skills),
+        )
         return Command(
             update={
                 "messages": [

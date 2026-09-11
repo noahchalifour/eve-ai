@@ -97,3 +97,52 @@ against `protocol._ALLOWED_PROPERTIES` instead.
 **Old threads lose their weather cards.** Frames from before this change stay
 in the transcript and now render the neutral fallback, because
 `weather_surface.dart` is deleted.
+
+## Amendment (2026-09-08): the catalog also rides the tool schema
+
+Consequence 3 above rested on a premise that turned out to be false in
+production: that the catalog "lives in `skills/build-a-ui/SKILL.md` where
+`search_skills` retrieves it on demand."
+
+It did not. `Settings.skills_dir` is the relative path `skills`, and the
+production `Dockerfile` never copied that directory into the image - so
+`load_skills()` globbed a path that did not exist, `search_skills` answered
+"No matching skill or tool found." to every query ever made against the
+deployment, and the model reached `show_surface` with no catalog at all. It
+authored React component names (`Button`, `Card`, `DateInput`), and the
+retry path could not converge either: the rejection named the catalog ids
+but no properties and no structure, so the next attempt fixed the type names
+and then failed on a missing `id` - reported as the bare code `string`,
+which names a type rather than a field. The turn burned its
+`EVE_MAX_TOOL_LOOP_ITERATIONS` budget without rendering anything.
+
+Three things change, and the decision above is otherwise untouched:
+
+1. **The image ships `skills/`**, and both `load_skills` and `search_skills`
+   log a warning rather than returning an empty corpus silently.
+   `tests/test_skills_in_image.py` asserts it against the built artifact,
+   because no unit test can - every other skills test either points
+   `EVE_SKILLS_DIR` at a `tmp_path` or runs from the repo root, where the
+   bug is invisible.
+2. **The catalog is projected into `show_surface`'s argument schema**
+   (`eve.ui.schema`), built per client from the `catalogIds` that client
+   already declares, so correctness no longer depends on a retrieval
+   succeeding first. Consequence 3's context argument is weakened but not
+   discarded: the schema costs ~2 KiB on turns a capable client is
+   connected, against a retrieval plus up to six correction rounds when it
+   is absent. `children` is expanded inline to three levels rather than by
+   `$ref`, because `convert_to_openai_tool` flattens a recursive reference
+   to `{}` and would delete every constraint below the first level.
+3. **The rejection names the defect.** A missing `id` says so instead of
+   returning `string`, and every hint leads with the required structure.
+   This is consequence 1's "self-sufficient retry" honoured properly - it
+   was only ever true for property errors.
+
+**The count of hand-synced copies is unchanged at five.** `eve.ui.schema`
+derives from `protocol.CATALOG_IDS` and `protocol._ALLOWED_PROPERTIES`
+rather than restating them, and `tests/test_ui_schema.py` pins it to those
+tables field by field. The skill keeps its property table - it is still the
+fifth copy, and still guarded by `tests/test_skills_build_a_ui.py` - but it
+is no longer load-bearing for rendering: it now carries the judgement a
+schema cannot, namely whether a surface is the right answer and what makes a
+good one.
