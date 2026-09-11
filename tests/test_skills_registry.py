@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from eve.skills import mcp_registry
@@ -75,13 +76,35 @@ def test_loads_a_skill_md_with_frontmatter(tmp_path, monkeypatch):
     assert "first name" in skills[0].content
 
 
-def test_missing_skills_dir_yields_no_procedures(tmp_path, monkeypatch):
+def test_missing_skills_dir_yields_no_procedures(tmp_path, monkeypatch, caplog):
+    """An empty corpus must never be SILENT. `skills_dir` defaults to the
+    relative path `skills`, so a deployment whose CWD or image layout is
+    wrong lands here for every request - and the symptom a human sees is
+    `search_skills` answering "No matching skill or tool found.", which
+    reads like a ranking miss rather than a missing directory."""
     import eve.skills.registry as registry_module
 
     monkeypatch.setattr(
         registry_module, "get_settings", lambda: type("S", (), {"skills_dir": tmp_path / "nope"})()
     )
-    assert load_skills() == []
+    with caplog.at_level(logging.WARNING, logger=registry_module.__name__):
+        assert load_skills() == []
+    assert "nope" in caplog.text
+    assert "skills directory not found" in caplog.text
+
+
+def test_an_empty_skills_dir_is_also_reported(tmp_path, monkeypatch, caplog):
+    """A directory that exists but ships no SKILL.md is the same failure
+    wearing a different hat - e.g. a COPY that landed the folder without its
+    contents."""
+    import eve.skills.registry as registry_module
+
+    monkeypatch.setattr(
+        registry_module, "get_settings", lambda: type("S", (), {"skills_dir": tmp_path})()
+    )
+    with caplog.at_level(logging.WARNING, logger=registry_module.__name__):
+        assert load_skills() == []
+    assert "no */SKILL.md files" in caplog.text
 
 
 def test_registered_mcp_tools_become_skills(tmp_path, monkeypatch):

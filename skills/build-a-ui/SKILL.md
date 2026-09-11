@@ -2,8 +2,11 @@
 name: build-a-ui
 description: How to build a dynamic UI surface on screen for a member - a form, a tracker, a checklist, an input, a summary card, a comparison - and the component catalog show_surface accepts.
 ---
-Call `show_surface(components)` with a tree of typed components. Search for
-this skill and gather any data you need in the SAME round, then build.
+Call `show_surface(components)` with a tree of typed components. The legal
+types and their properties are in the tool's own schema, so you never need
+this skill to get a surface to RENDER - it is here for the judgement a
+schema cannot carry: whether a surface is the right answer at all, and what
+makes a good one. Gather any data you need in the SAME round, then build.
 
 ## When a surface is the right answer
 
@@ -71,7 +74,8 @@ A workout tracker: a card titled "Workout", a `textField` for the exercise, a
 
 ## If it comes back rejected
 
-The tool answers with a diagnostic code and the legal properties for the
-types you used. Fix the tree and call it again - you do not need to search
-for this skill a second time. `component-schema` means a property is not
-declared for that type; `component-type` means the type does not exist.
+The tool answers with what is wrong and the legal properties for the types
+you used. Fix the tree and call it again - you do not need to search for
+this skill a second time. `component-schema` means a property is not
+declared for that type; `component-type` means the type does not exist; a
+message about `id` means a component is missing its `id` or `type`.

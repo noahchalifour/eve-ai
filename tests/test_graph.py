@@ -870,22 +870,57 @@ async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(mo
         assert "All of them" not in text
 
 
+def _declaring(catalog_ids):
+    return {
+        "configurable": {
+            "assistant_ui": {
+                "protocol": "assistant-ui/1.0",
+                "catalogVersion": "1",
+                "catalogIds": catalog_ids,
+            }
+        }
+    }
+
+
+def _bound_types(config):
+    from eve.graph import _static_tools
+
+    tool = next(t for t in _static_tools(config) if t.name == "show_surface")
+    return tool.args_schema["properties"]["components"]["items"]["properties"]["type"][
+        "enum"
+    ]
+
+
 def test_show_surface_is_bound_only_for_a_declaring_client():
     from eve.graph import _static_tools
 
     names = {t.name for t in _static_tools({})}
     assert "show_surface" not in names
 
-    declared = {
-        "configurable": {
-            "assistant_ui": {
-                "protocol": "assistant-ui/1.0",
-                "catalogVersion": "1",
-                "catalogIds": ["card", "text"],
-            }
-        }
+    assert "show_surface" in {
+        t.name for t in _static_tools(_declaring(["card", "text"]))
     }
-    assert "show_surface" in {t.name for t in _static_tools(declared)}
+
+
+def test_the_bound_tool_advertises_exactly_what_the_client_declared():
+    """The client already sends its catalog. Spending it only on a post-hoc
+    refusal is what left the model guessing at component names up front."""
+    assert _bound_types(_declaring(["card", "text"])) == ["card", "text"]
+
+
+def test_an_undeclarable_type_never_reaches_the_model():
+    """Intersected with the server catalog, so a client advertising a type
+    this server cannot validate is never offered to the model."""
+    assert _bound_types(_declaring(["card", "Checkbox"])) == ["card"]
+
+
+def test_a_malformed_catalog_declaration_falls_back_to_the_full_catalog():
+    """`capabilities()` only checks that `assistant_ui` is a dict. A
+    non-list `catalogIds` must not raise and must not silently describe an
+    empty catalog - `stream.supports` still refuses the emission."""
+    from eve.ui import protocol as ui_protocol
+
+    assert set(_bound_types(_declaring("card,text"))) == set(ui_protocol.CATALOG_IDS)
 
 
 def test_a_submit_envelope_routes_through_ui_submit():

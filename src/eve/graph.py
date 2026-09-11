@@ -57,7 +57,7 @@ from eve.tools_authoring.propose import propose_tool
 from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
-from eve.ui.tools import show_surface
+from eve.ui.tools import build_show_surface
 
 _BASE_TOOLS = [
     ask_home,
@@ -107,8 +107,25 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
     # at a client that cannot render it goes into that thread's transcript
     # permanently. Bound whenever the client declares anything at all; the
     # per-type gate inside the tool is what refuses an individual tree.
-    if ui_stream.capabilities(config) is not None:
-        tools.append(show_surface)
+    declared = ui_stream.capabilities(config)
+    if declared is not None:
+        # That declaration also DESCRIBES the tool, not just gates it. The
+        # client already sends its catalog; spending it only on a post-hoc
+        # refusal left the model guessing at the component names up front -
+        # which is how `Button`/`Card`/`DateInput` got authored. Intersected
+        # server-side so a client advertising a type this server cannot
+        # validate never reaches the model.
+        ids = declared.get("catalogIds")
+        legal = (
+            ui_protocol.CATALOG_IDS & set(ids)
+            if isinstance(ids, list)
+            else ui_protocol.CATALOG_IDS
+        )
+        # An empty intersection still binds: `_static_tools`' rule is "bound
+        # whenever the client declares anything", and `stream.supports` is
+        # what refuses the emission. Unbinding here would move that decision
+        # to a second place.
+        tools.append(build_show_surface(frozenset(legal)))
     return tools
 
 

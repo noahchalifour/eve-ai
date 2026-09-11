@@ -110,6 +110,41 @@ async def test_an_invalid_tree_returns_a_diagnostic_the_model_can_act_on(written
     assert "numberField" in content
 
 
+async def test_a_component_without_an_id_is_told_it_needs_one(written):
+    """The reported bug's SECOND failure. A model that fixed its invented
+    type names still omitted `id`, and got back `The surface was rejected:
+    string` - the validator's code for a missing or non-string `id`/`type` -
+    alongside a hint that listed properties and never once said `id`. The
+    model could not converge from that, and burned the turn's tool budget
+    retrying.
+
+    `string` names a TYPE, not a field. This message names the field."""
+    missing_id = [
+        {
+            "type": "card",
+            "properties": {"title": "Workout"},
+            "children": [
+                {"type": "button", "properties": {"label": "Save", "actionId": "surface.submit"}}
+            ],
+        }
+    ]
+    result = await tools.show_surface.ainvoke(
+        {
+            "type": "tool_call",
+            "name": "show_surface",
+            "args": {"components": missing_id},
+            "id": "test-id",
+        },
+        config=CONFIG,
+    )
+    assert result.artifact is None
+    assert written == []
+    assert "`id`" in result.content
+    # The bare code alone was the unactionable form; it must not be the
+    # whole message any more.
+    assert "rejected: string" not in result.content
+
+
 async def test_an_old_client_is_refused_only_the_types_it_lacks(written):
     result = await tools.show_surface.ainvoke(
         {"type": "tool_call", "name": "show_surface", "args": {"components": TRACKER}, "id": "test-3"},
@@ -168,19 +203,45 @@ def test_the_schema_hint_covers_only_the_types_asked_for():
 
 def test_the_schema_hint_ignores_unknown_types():
     """An unknown type is already rejected as `component-type`; the hint
-    must not raise trying to describe it."""
-    assert tools.schema_hint({"nonsense"}) == ""
+    must not raise trying to describe it, and must not invent a property
+    table for it.
+
+    It still returns the STRUCTURE line. The case that reaches here is a
+    tree built entirely of invented types, where `id`/`type` is the only
+    thing left worth saying - returning "" there, as this used to, spent the
+    one message the model gets on nothing."""
+    hint = tools.schema_hint({"nonsense"})
+    assert "nonsense" not in hint
+    assert "`id`" in hint
 
 
 def test_the_docstring_carries_no_property_table():
-    """The catalog lives in `skills/build-a-ui/SKILL.md`, retrieved on
-    demand. A table here would be in context on every turn a capable client
-    is connected, whether or not a UI is wanted."""
+    """The catalog reaches the model through the ARGUMENT SCHEMA now
+    (`eve.ui.schema`), where it is machine-checkable and scoped to what the
+    client declared. Restating it in prose here would be a second copy that
+    no validator guards, and prose is the copy that drifts."""
     doc = tools.show_surface.description
     assert "stateKey" not in doc
     assert "numberField" not in doc
     # Generous, but it fails loudly if someone pastes the table back in.
     assert len(doc) < 900
+
+
+def test_the_catalog_reaches_the_model_through_the_argument_schema():
+    """The fix for the reported bug, stated as an invariant: a model that
+    reads only the tool definition - no skills search, no retry - can still
+    see every legal component type and that `id` is required."""
+    document = tools.show_surface.args_schema
+    component = document["properties"]["components"]["items"]
+    assert set(component["properties"]["type"]["enum"]) == set(protocol.CATALOG_IDS)
+    assert component["required"] == ["id", "type"]
+
+
+def test_a_client_scoped_tool_advertises_only_that_client_s_catalog():
+    tool = tools.build_show_surface({"card", "text"})
+    component = tool.args_schema["properties"]["components"]["items"]
+    assert component["properties"]["type"]["enum"] == ["card", "text"]
+    assert tool.name == "show_surface"
 
 
 async def test_an_invented_component_names_the_catalog_not_the_client(written):
@@ -209,3 +270,7 @@ async def test_an_invented_component_names_the_catalog_not_the_client(written):
     assert "Card, Checkbox" in result.content
     assert "cannot render" not in result.content
     assert "segmentedSelection" in result.content
+    # Naming only the catalog got the TYPE names fixed and then failed again
+    # on properties and the missing `id`, one round trip later. The message
+    # now carries both, so one correction is enough.
+    assert "`id`" in result.content
