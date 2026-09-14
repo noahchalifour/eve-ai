@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 def client(monkeypatch):
     from eve.widgets import app as widgets_app
 
-    # Stand in for Aegra's require_auth, which is what production uses.
+    # Stand in for Aegra's require_auth, which is what production uses. The
+    # widget routes depend on it explicitly (aegra-api 0.10.3's
+    # enable_custom_route_auth walk is a no-op), so tests must override it
+    # too, or the overridden current_member would never be reached.
+    widgets_app.app.dependency_overrides[widgets_app.require_auth] = lambda: None
     widgets_app.app.dependency_overrides[widgets_app.current_member] = (
         lambda: {"sub": "sub-noah", "permissions": ["health"]}
     )

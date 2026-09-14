@@ -1,8 +1,14 @@
 """The direct resource API: read a widget's data without a model call.
 
-Mounted into Aegra through `aegra.json`'s `http.app`, with
-`enable_custom_route_auth` so Aegra's own `require_auth` runs first and the
-client reuses exactly the origin and bearer it already holds for LangGraph.
+Mounted into Aegra through `aegra.json`'s `http.app`. The auth boundary is
+declared on the widget router itself, as `Depends(require_auth)`, rather than
+relying on Aegra's `enable_custom_route_auth` walk: in aegra-api 0.10.3 that
+walk rewrites `route.dependencies` after the routes are built, but FastAPI
+resolves dependencies from the dependant constructed at route-creation time,
+so the walk never actually guards anything. Declaring the dependency next to
+the routes it guards keeps the boundary explicit and leaves Aegra's health
+probes unauthenticated. The client reuses exactly the origin and bearer it
+already holds for LangGraph.
 
 Authentication is Aegra's. **Authorization is ours**: Aegra's `@auth.on`
 handlers scope threads and its store API, and they do not reach a custom
@@ -15,9 +21,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from aegra_api.core.auth_deps import require_auth
 
 from eve.specialists.permissions import permission_denial
 from eve.widgets import recipe as recipe_rules, resolve, store
@@ -25,6 +33,7 @@ from eve.widgets import recipe as recipe_rules, resolve, store
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="eve-provider-resources")
+router = APIRouter(dependencies=[Depends(require_auth)])
 
 PREFIX = "/provider-resources/v1"
 PROTOCOL = "provider-resource/1.0"
@@ -43,11 +52,12 @@ RANGE_ACTION_ID = "widget.setRange"
 
 
 def current_member(request: Request) -> dict:
-    """The authenticated principal, as Aegra's `require_auth` left it.
+    """The authenticated principal, as the router's `require_auth` left it.
 
-    Overridden in tests. In production `enable_custom_route_auth` has already
-    rejected an unauthenticated request before this runs; the guard here is
-    for a misconfiguration, where failing closed is the only safe answer.
+    Overridden in tests. In production the explicit `Depends(require_auth)`
+    on the router has already rejected an unauthenticated request before this
+    runs; the guard here is for a misconfiguration, where failing closed is
+    the only safe answer.
     """
     user = request.scope.get("user")
     if user is None or not getattr(user, "identity", None):
@@ -83,7 +93,7 @@ async def _load(member: dict, resource_id: str) -> dict:
     return resource
 
 
-@app.get(f"{PREFIX}/capabilities")
+@router.get(f"{PREFIX}/capabilities")
 async def capabilities(member: dict = Depends(current_member)) -> dict:
     """What this deployment supports. A client that 404s here concludes the
     provider has no widget support at all; a transport failure means
@@ -99,7 +109,7 @@ async def capabilities(member: dict = Depends(current_member)) -> dict:
     }
 
 
-@app.get(f"{PREFIX}/resources")
+@router.get(f"{PREFIX}/resources")
 async def list_resources(member: dict = Depends(current_member)) -> dict:
     resources = await store.list_for(member["sub"])
     return {"resources": [
@@ -113,7 +123,7 @@ async def list_resources(member: dict = Depends(current_member)) -> dict:
     ]}
 
 
-@app.get(f"{PREFIX}/resources/{{resource_id}}/snapshot")
+@router.get(f"{PREFIX}/resources/{{resource_id}}/snapshot")
 async def snapshot(
     resource_id: str, member: dict = Depends(current_member)
 ) -> dict:
@@ -124,7 +134,7 @@ async def snapshot(
     return await resolve.snapshot(resource, member["sub"])
 
 
-@app.post(f"{PREFIX}/resources/{{resource_id}}/actions")
+@router.post(f"{PREFIX}/resources/{{resource_id}}/actions")
 async def run_action(
     resource_id: str,
     body: ActionRequest,
@@ -154,7 +164,7 @@ async def run_action(
     return await resolve.snapshot(updated, member["sub"])
 
 
-@app.delete(f"{PREFIX}/resources/{{resource_id}}", status_code=204)
+@router.delete(f"{PREFIX}/resources/{{resource_id}}", status_code=204)
 async def delete_resource(
     resource_id: str, member: dict = Depends(current_member)
 ) -> None:
@@ -172,3 +182,6 @@ async def _flatten(request: Request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code, content={"detail": exc.detail}
     )
+
+
+app.include_router(router)
