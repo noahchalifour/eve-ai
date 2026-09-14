@@ -59,6 +59,7 @@ from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
 from eve.ui.tools import build_show_surface
+from eve.widgets.tools import save_widget
 
 _BASE_TOOLS = [
     ask_home,
@@ -73,6 +74,9 @@ _BASE_TOOLS = [
     # the system.
     record_append,
     record_query,
+    # The one authoring entry point for widgets; its own guards check kind,
+    # recipe shape, and permissions before anything is stored.
+    save_widget,
 ]
 
 
