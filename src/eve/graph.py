@@ -41,6 +41,7 @@ from eve.context import load_context
 from eve.memory import extract as memory_extract, recall as memory_recall
 from eve.memory.search import search_memory
 from eve.models import Tier, get_model
+from eve.records.tools import record_append, record_query
 from eve.settings import get_settings
 from eve.skills.authoring import write_skill
 from eve.skills.materialize import materialize
@@ -67,6 +68,11 @@ _BASE_TOOLS = [
     ask_health,
     search_skills,
     search_memory,
+    # Always available, no setting and no permission: a member recording
+    # their own data and reading it back is the least privileged thing in
+    # the system.
+    record_append,
+    record_query,
 ]
 
 
