@@ -62,6 +62,15 @@ def _clear_caches():
 SERVER_URL = "http://127.0.0.1:2026"
 
 
+@pytest.fixture
+def dev_token() -> str:
+    """A bearer token `aegra_server` accepts: one of the `EVE_DEV_TOKENS`
+    map keys the fixture installs (`{"tok-noah": "sub-noah", "tok-kid":
+    "sub-kid"}`), matching how `tests/test_integration.py` authenticates
+    with the literal `tok-noah`."""
+    return "tok-noah"
+
+
 @pytest.fixture(scope="session")
 def aegra_server():
     """Start `aegra serve` against the docker-compose Postgres and Redis.
