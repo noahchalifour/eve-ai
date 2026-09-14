@@ -11,6 +11,7 @@ takes. `data.points` is the chart's bound series.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -36,7 +37,21 @@ async def _default_read_health(member_sub: str, metric: str, days: int):
     result = await invoke(
         f"health.get_{metric}", {"member_sub": member_sub, "days": days}
     )
-    return result if isinstance(result, list) else []
+    if isinstance(result, list):
+        return result
+    if isinstance(result, str) and not result.startswith("error:"):
+        try:
+            parsed = json.loads(result)
+            if isinstance(parsed, list):
+                return parsed
+        except ValueError:
+            pass
+    # A degraded call (`error: ...`), an unparseable body, or a non-list
+    # value is a FAILED source, not "no data": raising here is what the
+    # snapshot loop's per-source guard catches and labels `unavailable`.
+    # `snapshot()` itself still never raises; the upstream message reaches
+    # only the logger, never the client.
+    raise RuntimeError(f"health.get_{metric} returned no usable list")
 
 
 async def snapshot(
