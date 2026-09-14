@@ -68,7 +68,10 @@ async def test_the_snapshot_view_is_a_valid_surface_tree(monkeypatch):
             "localState": {},
         },
     }
-    assert protocol.validate_operation(operation) is None
+    # This tree is a WIDGET snapshot, so it validates in the widget-scoped
+    # mode, which additionally allows the range control's `widget.setRange`
+    # action id - an id the chat protocol deliberately rejects.
+    assert protocol.validate_operation(operation, widget=True) is None
 
 
 async def test_an_empty_collection_says_so_rather_than_charting_nothing():

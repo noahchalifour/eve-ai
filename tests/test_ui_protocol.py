@@ -464,3 +464,56 @@ def test_an_unknown_action_id_is_rejected():
     assert protocol.validate_operation(operation) == "action-schema"
 
 
+def test_chart_is_in_the_catalog():
+    assert "chart" in protocol.CATALOG_IDS
+
+
+def test_a_chart_binds_its_points_from_data():
+    components = [{
+        "id": "c", "type": "chart", "properties": {"points": "$data.points"},
+    }]
+    assert protocol.validate_operation(_surface(components=components)) is None
+
+
+def test_a_chart_rejects_an_undeclared_property():
+    components = [{
+        "id": "c", "type": "chart",
+        "properties": {"points": "$data.points", "onTap": "evil"},
+    }]
+    assert protocol.validate_operation(
+        _surface(components=components)
+    ) == "component-schema"
+
+
+def test_a_chart_rejects_a_malformed_binding():
+    components = [{
+        "id": "c", "type": "chart", "properties": {"points": "$data"},
+    }]
+    assert protocol.validate_operation(_surface(components=components)) == "binding"
+
+
+def test_the_widget_range_action_id_is_legal_only_in_widget_mode():
+    """Widget snapshots carry the inline range control, whose `actionId` is
+    `widget.setRange`. Chat validation must reject that id - a widget filter
+    is a resource action, not a chat turn - while the widget-scoped mode
+    accepts exactly it and nothing else."""
+    components = [{
+        "id": "r", "type": "segmentedSelection",
+        "properties": {"options": ["7", "30", "90"], "selected": "30",
+                       "actionId": "widget.setRange"},
+    }]
+    assert protocol.validate_operation(_surface(components=components)) == "action-schema"
+    assert (
+        protocol.validate_operation(_surface(components=components), widget=True)
+        is None
+    )
+    evil = [{
+        "id": "r", "type": "segmentedSelection",
+        "properties": {"options": ["7"], "selected": "7", "actionId": "widget.explode"},
+    }]
+    assert (
+        protocol.validate_operation(_surface(components=evil), widget=True)
+        == "action-schema"
+    )
+
+
