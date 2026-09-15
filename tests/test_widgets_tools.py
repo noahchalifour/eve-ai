@@ -78,6 +78,27 @@ async def test_an_unknown_kind_is_refused(monkeypatch):
     assert "kind" in result.content.lower()
 
 
+async def test_an_overlong_title_is_refused(monkeypatch):
+    from eve.widgets import recipe as recipe_rules
+    from eve.widgets import tools
+
+    async def unreachable(*args, **kwargs):
+        raise AssertionError("must not store an overlong title")
+
+    monkeypatch.setattr(tools.store, "create", unreachable)
+
+    result = await _call(
+        tools.save_widget,
+        {
+            "title": "T" * (recipe_rules.MAX_NAME + 1),
+            "kind": "chart",
+            "recipe": RECIPE,
+        },
+    )
+
+    assert "title" in result.content.lower()
+
+
 async def test_a_health_recipe_requires_the_health_permission(monkeypatch):
     from eve.widgets import tools
 

@@ -55,10 +55,21 @@ async def record_append(
         result = await store.append(
             member_sub, collection, payload, occurred_at=when, key=key
         )
-        fields = await store.known_fields(member_sub, collection)
     except Exception as exc:
         logger.warning("record_append failed", exc_info=True)
         return f"error: {exc.__class__.__name__}"
+
+    try:
+        fields = await store.known_fields(member_sub, collection)
+    except Exception as exc:
+        # The field list is advisory: the entry is already stored, so a
+        # failure here must not read as a failed append, or a keyless retry
+        # would duplicate the row. Log it and continue as if unknown.
+        logger.warning(
+            "record_append stored the entry but known_fields failed",
+            exc_info=True,
+        )
+        fields = []
 
     note = "already recorded" if result["deduped"] else "recorded"
     if fields:

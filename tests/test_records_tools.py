@@ -130,6 +130,28 @@ async def test_append_degrades_to_a_string_on_failure(monkeypatch):
     assert "error" in result.content.lower()
 
 
+async def test_a_known_fields_failure_still_reports_the_append(monkeypatch):
+    """The advisory field list must never turn a stored entry into an error."""
+    from eve.records import tools
+
+    async def fake_append(member_sub, collection, payload, occurred_at=None, key=None):
+        return {"id": "r1", "deduped": False}
+
+    async def boom(member_sub, collection):
+        raise RuntimeError("advisory read failed")
+
+    monkeypatch.setattr(tools.store, "append", fake_append)
+    monkeypatch.setattr(tools.store, "known_fields", boom)
+
+    result = await _call(
+        tools.record_append,
+        {"collection": "alpha.thing", "payload": {"a": 1}},
+    )
+
+    assert "recorded" in result.content.lower()
+    assert "error" not in result.content.lower()
+
+
 async def test_query_returns_this_members_entries(monkeypatch):
     from eve.records import tools
 

@@ -16,6 +16,8 @@ Pure module: no I/O, no database, no LangGraph.
 
 from __future__ import annotations
 
+import json
+
 KINDS = frozenset({"chart"})
 
 # A source type maps to one audited reader in `eve.widgets.resolve`. Adding an
@@ -39,10 +41,21 @@ MAX_SOURCES = 4
 MAX_DAYS = 3650
 MAX_NAME = 128
 
+# The protocol's definition ceiling is 48KiB, but a widget recipe is authored
+# once and executed forever, so the total body is bounded far below that:
+# 4KiB of JSON is ample for a handful of sources and one metric. This is a
+# backstop over the per-field bounds, not the primary defense.
+MAX_RECIPE_BYTES = 4_096
+
 
 def validate(candidate: object) -> str | None:
     """`None` when `candidate` is a legal recipe, else a diagnostic code."""
     if not isinstance(candidate, dict):
+        return "recipe"
+
+    if set(candidate) - {"sources", "metric"}:
+        # Catches `exec`, `url`, `token` and every other smuggled key at the
+        # top level, the same way the source and metric interiors already do.
         return "recipe"
 
     sources = candidate.get("sources")
@@ -53,7 +66,14 @@ def validate(candidate: object) -> str | None:
         if error:
             return error
 
-    return _validate_metric(candidate.get("metric"))
+    error = _validate_metric(candidate.get("metric"))
+    if error:
+        return error
+
+    if len(json.dumps(candidate).encode()) > MAX_RECIPE_BYTES:
+        return "recipe"
+
+    return None
 
 
 def _validate_source(source: object) -> str | None:

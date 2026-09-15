@@ -56,6 +56,12 @@ async def save_widget(
         legal = ", ".join(sorted(recipe_rules.KINDS))
         return f"Unknown widget kind {kind!r}. Legal kinds: {legal}."
 
+    if len(title) > recipe_rules.MAX_NAME:
+        return (
+            f"The widget title is too long: {len(title)} characters, "
+            f"the limit is {recipe_rules.MAX_NAME}."
+        )
+
     error = recipe_rules.validate(recipe)
     if error is not None:
         return (

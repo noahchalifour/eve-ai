@@ -15,6 +15,13 @@ handlers scope threads and its store API, and they do not reach a custom
 route, so every handler below resolves the member from the authenticated
 principal and passes it into an owner-scoped query. A resource id is a
 locator and never a capability.
+
+Writes carry an `idempotencyKey`, and the field is accepted for transport
+compatibility. There is deliberately no idempotency store: a retried action
+that sends the same `expectedRevision` and key converges anyway, because a
+revision-guarded update is value-idempotent. A stale retry fails the
+revision guard and is answered with a 409 carrying the current snapshot,
+which is the client's expected conflict path.
 """
 
 from __future__ import annotations
@@ -73,6 +80,11 @@ class ActionRequest(BaseModel):
     input: dict = {}
     expectedRevision: int
     idempotencyKey: str | None = None
+    # `idempotencyKey` is accepted for transport compatibility and is
+    # currently informational only: there is no idempotency store. A retried
+    # action with the same expectedRevision + key converges because the
+    # revision guard makes the update value-idempotent; a stale retry gets a
+    # 409 carrying the current snapshot.
 
     # No `member_sub` field, deliberately: pydantic drops unknown keys, so a
     # body that carries one is ignored rather than trusted.

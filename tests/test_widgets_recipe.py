@@ -90,6 +90,39 @@ def test_a_non_dict_recipe_is_rejected():
     assert recipe.validate(None) == "recipe"
 
 
+def test_an_unknown_top_level_key_is_rejected():
+    """Only `sources` and `metric` are legal at the top level."""
+    from eve.widgets import recipe
+
+    assert recipe.validate(_recipe(exec="rm -rf")) == "recipe"
+
+
+def test_an_oversized_recipe_is_rejected(monkeypatch):
+    """The total-size cap is a backstop: the per-field bounds keep every
+    legal recipe well under `MAX_RECIPE_BYTES`, so shrink the cap to
+    exercise the branch."""
+    from eve.widgets import recipe
+
+    monkeypatch.setattr(recipe, "MAX_RECIPE_BYTES", 64)
+    assert recipe.validate(_recipe()) == "recipe"
+
+
+def test_a_maximum_legal_recipe_stays_under_the_size_cap():
+    """No recipe the other checks accept may trip the overall size cap."""
+    from eve.widgets import recipe
+
+    sources = [
+        {"type": "records", "collection": "c" * recipe.MAX_NAME}
+        for _ in range(recipe.MAX_SOURCES)
+    ]
+    assert recipe.validate(
+        _recipe(
+            sources=sources,
+            metric={"op": "sum", "field": "f" * recipe.MAX_NAME},
+        )
+    ) is None
+
+
 def test_filters_accept_a_bounded_window():
     from eve.widgets import recipe
 
