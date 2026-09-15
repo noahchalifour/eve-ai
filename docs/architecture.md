@@ -181,6 +181,15 @@ src/eve/
     store.py        # every eve_tool SQL statement; source_hash binds an approval to bytes
     registry.py     # live_tools() -> DynamicToolSpec, feeding search_skills
     cli.py          # eve-tool script: list | approve | reject | revoke (Phase 5c)
+  records/
+    store.py        # every eve_record SQL statement; one module owns the table
+    tools.py        # record_append / record_query: the only writers and readers
+  widgets/
+    recipe.py       # the closed recipe vocabulary and its validator (ADR 0019)
+    store.py        # every eve_widget_resource SQL statement
+    resolve.py      # execute a validated recipe; the snapshot route, no model call
+    tools.py        # save_widget: the one widget-authoring tool in the eve graph
+    app.py          # the mounted resource API: per-route auth via require_auth
 
 src/eve_sandbox/
   settings.py   # EVE_SANDBOX_* only -- no database URL, no model key, no third-party credential
@@ -224,6 +233,16 @@ hold no credential: there is no import path by which one could reach it even
 by accident. `tests/test_tools_integration.py::test_eve_sandbox_imports_nothing_from_eve`
 asserts this the same way `eve.eval`'s one-way dependency is asserted, by
 import graph rather than by convention.
+
+`records/` and `widgets/` are the newest leaves of the same acyclic graph:
+`records.store` and `widgets.store` depend only on `eve.memory.db`, one module
+owning each table, and `widgets.recipe` imports nothing from `eve` at all,
+which is what makes its vocabulary closed. On top of those, `widgets.resolve`
+sits on `records.store`, `widgets.recipe`, and `eve.tools_client`;
+`widgets.tools` and `widgets.app` sit on `widgets.recipe` and `widgets.store`
+and gate on `eve.specialists.permissions`. `graph` binds their tools
+(`record_append`, `record_query`, `save_widget`) alongside the specialists and
+`search_skills`.
 
 Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `ntfy`
 depends only on `eve`'s own modules (`eve.settings`) and not on `types` at
@@ -599,6 +618,70 @@ both branches currently construct the same backend and load `aegra.json`'s
 custom handler regardless of which value was set, but a future aegra-api
 version may start gating on it. Setting it correctly now costs nothing and
 avoids a latent trap.
+
+## Widget resources
+
+Reusable widgets are the newest feature this repository serves: a member
+saves a widget, and the widget later refreshes its own data with no model call
+and no graph run. The server side rests on two generic tables, installed by
+the `0009_eve_record` and `0010_eve_widget_resource` migrations, whose shape
+[ADR 0019](adr/0019-one-generic-record-store.md) records.
+
+**`eve_record` is the whole store.** One row per member-recorded entry:
+member, an opaque `collection` string, an opaque jsonb `payload`, and a real
+`occurred_at` column, indexed together with member and collection so a range
+query is an index scan rather than a scan that parses jsonb. That indexed
+column is the entire reason this is a table instead of a memory layer (ADR
+0008 precedent): memory is prose with embeddings and decay, and a numeric
+series over ninety days is aggregation, not lexical guesswork.
+`record_append` and `record_query` are the only writers and readers, and every
+query is member-scoped. What a collection MEANS lives in a skill, which is
+prose. The cost of that freedom is unconstrained names: `record_append`
+returns the collection's previously-seen field names to steer consistency, and
+the skill tells the model to query before inventing a name, but neither is
+enforcement. A divergent write is stored and visible rather than rejected,
+because member-recorded data must never be lost to a schema disagreement it
+cannot see.
+
+**`eve_widget_resource` is a recipe, not code.** One row per saved widget:
+owner, `kind` (the renderable family, never a domain), a title, the validated
+`recipe`, the persisted `filters`, and a monotonically increasing `revision`
+for optimistic concurrency. The recipe is a closed declarative vocabulary
+validated in Python (`eve.widgets.recipe`). Its sources are drawn from a
+closed set of kinds, each mapped to one audited reader in
+`eve.widgets.resolve`: the record store itself, or a credentialed reader
+reached through `eve.tools_client`, because credentials and normalisation
+cannot be authored by a model. The validator's tests assume a hostile author,
+because unlike the sandbox AST check, which ADR 0010 explicitly does NOT treat
+as load-bearing, this one IS: a recipe executes forever after with no human
+and no model in the loop. The snapshot route executes a recipe against those
+readers only; `src/eve/graph.py` is not in the request path, so a snapshot can
+never invoke a graph run. Adding a widget costs a recipe, not a migration, a
+store module, a tool, and a release.
+
+**The API is a custom FastAPI app mounted through Aegra's `http.app`**
+(`"http": {"app": "./src/eve/widgets/app.py:app"}` in `aegra.json`), serving
+capabilities, list, snapshot, action, and delete routes. Authorization is
+enforced per query, not by Aegra's route walk: in aegra-api 0.10.3,
+`enable_custom_route_auth` is a no-op (the walk rewrites
+`route.dependencies` after the routes are built, but FastAPI resolves
+dependencies from the dependant constructed at route-creation time), so
+`aegra.json` sets it to `false` and the widget router declares
+`Depends(require_auth)` on itself. That is version-sensitive: re-check on an
+aegra upgrade rather than assuming the walk starts enforcing. The `@auth.on`
+handlers in `src/eve/auth.py` scope Aegra's own threads and store API and
+never reach a custom route, so every handler below resolves the member from
+the authenticated principal and passes it into an owner-scoped query. A
+resource id is a locator and never a capability: absent and foreign ids answer
+the same way, and a body that carries a member field has it dropped rather
+than honored. Public errors are sanitized: unauthenticated is 401, a missing
+or foreign resource is a 404 that reveals nothing about whether the id
+exists, a permission gap is 403, an unknown action or malformed filter is a
+400 carrying only the schema error, and a stale action is a 409 whose body is
+the fresh snapshot so the client can render current data instead of an error.
+The action routes impose the same closed vocabulary as the recipe does,
+`filters.replace` the one legal entry, so an authored recipe cannot invent an
+action either.
 
 ## Auth and thread scoping
 
@@ -1316,3 +1399,4 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0015 — A granted identity is not authored credentialed capability](adr/0015-granted-identity-vs-authored-capability.md)
 - [ADR 0017 — The model authors surface structure; the server owns the envelope](adr/0017-model-authored-surfaces.md)
 - [ADR 0018 — Openers are a thread-free, chip-only run](adr/0018-openers-are-a-thread-free-chip-only-run.md)
+- [ADR 0019 — One generic record store, and widgets are recipes over it](adr/0019-one-generic-record-store.md)
