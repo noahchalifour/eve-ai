@@ -44,6 +44,7 @@ Every component needs a unique `id` and a `type`. Layout components take
 - `text`: text
 - `icon`: name
 - `badge`: label
+- `chart`: label, points
 - `expandable`: expanded, label
 - `textField`: label, stateKey
 - `numberField`: label, stateKey
@@ -54,6 +55,10 @@ Every component needs a unique `id` and a `type`. Layout components take
 have exactly one of `actionId` or `setState` - both is two meanings for one
 tap, neither is a control that silently ignores them. The only `actionId` is
 `surface.submit`.
+
+`chart.points` must be a `$data.` binding to a list of `{label, value}`
+objects, never a literal list: the series belongs in the surface's data, not
+in its component tree.
 
 ## A worked example
 

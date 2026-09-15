@@ -37,6 +37,12 @@ boundary, and
 [`docs/superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md`](docs/superpowers/specs/2026-08-27-eve-sandboxed-tools-design.md)
 for the Phase 5c design and definition of done.
 
+**Widgets.** Eve can save a reusable widget that refreshes its own data with
+no model call. Member-recorded data lives in one generic,
+collection-addressed store rather than a table per domain, and a new tracked
+domain costs a skill paragraph rather than a schema. See
+[ADR 0019](docs/adr/0019-one-generic-record-store.md).
+
 ### Where the program ends
 
 Four boundaries are permanent, not phases yet to come:

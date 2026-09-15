@@ -41,6 +41,7 @@ from eve.context import load_context
 from eve.memory import extract as memory_extract, recall as memory_recall
 from eve.memory.search import search_memory
 from eve.models import Tier, get_model
+from eve.records.tools import record_append, record_query
 from eve.settings import get_settings
 from eve.skills.authoring import write_skill
 from eve.skills.materialize import materialize
@@ -58,6 +59,7 @@ from eve.ui import protocol as ui_protocol, stream as ui_stream
 from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
 from eve.ui.tools import build_show_surface
+from eve.widgets.tools import save_widget
 
 _BASE_TOOLS = [
     ask_home,
@@ -67,6 +69,14 @@ _BASE_TOOLS = [
     ask_health,
     search_skills,
     search_memory,
+    # Always available, no setting and no permission: a member recording
+    # their own data and reading it back is the least privileged thing in
+    # the system.
+    record_append,
+    record_query,
+    # The one authoring entry point for widgets; its own guards check kind,
+    # recipe shape, and permissions before anything is stored.
+    save_widget,
 ]
 
 

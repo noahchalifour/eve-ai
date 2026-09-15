@@ -21,7 +21,7 @@ import re
 PROTOCOL = "assistant-ui/1.0"
 CATALOG_VERSION = "1"
 
-# The closed V1 catalog. The same fourteen ids are legal as a surface's
+# The closed V1 catalog. The same ids are legal as a surface's
 # `catalogId` AND as a component's `type` - the client checks both against one
 # set (`DynamicSurfaceProtocol._componentTypes`), so this file does too.
 CATALOG_IDS = frozenset(
@@ -35,6 +35,7 @@ CATALOG_IDS = frozenset(
         "text",
         "icon",
         "badge",
+        "chart",
         "button",
         "segmentedSelection",
         "expandable",
@@ -46,6 +47,15 @@ CATALOG_IDS = frozenset(
 # One interactive contract: a button that hands the surface's localState back
 # to Eve as a turn. A provider cannot invent an action.
 ACTION_IDS = frozenset({"surface.submit"})
+
+# The one extra action id a WIDGET snapshot may carry: the inline range
+# control's `widget.setRange` (`eve.widgets.resolve._range_control`).
+# `assistant-ui/1.0` chat surfaces never accept it - the widget host
+# intercepts it before the generic renderer and maps it onto a resource
+# action. Gated behind `validate_operation(..., widget=True)`, so
+# `ACTION_IDS` stays the chat allowlist and a chat surface cannot express a
+# widget filter.
+_WIDGET_ACTION_IDS = frozenset({"widget.setRange"})
 
 MAX_SURFACES_PER_TURN = 8
 MAX_COMPONENTS = 64
@@ -64,6 +74,11 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
     "text": frozenset({"text"}),
     "icon": frozenset({"name"}),
     "badge": frozenset({"label"}),
+    # `points` is always a `$data.` binding to a list of
+    # {label, value, source} objects; a literal series would put the whole
+    # dataset in the component tree, which the 48KiB definition ceiling and
+    # the patch path both assume it is not.
+    "chart": frozenset({"points", "label"}),
     "button": frozenset({"label", "actionId", "actionValue", "setState"}),
     "segmentedSelection": frozenset({"options", "selected", "actionId", "actionValue"}),
     "expandable": frozenset({"label", "expanded"}),
@@ -197,18 +212,25 @@ def strip_frames_from_content(content: object) -> object:
     return kept
 
 
-def validate_operation(operation: object) -> str | None:
+def validate_operation(operation: object, *, widget: bool = False) -> str | None:
     """`None` when `operation` is a legal create/patch/delete, otherwise the
-    same structural diagnostic code the client would have logged."""
+    same structural diagnostic code the client would have logged.
+
+    `widget=True` is the widget-snapshot mode: it additionally accepts the
+    inline range control's `widget.setRange` action id (see
+    `_WIDGET_ACTION_IDS`). A chat surface can never carry that id, which is
+    the point - a widget filter is a resource action, not a chat turn, and
+    the two must not share a channel.
+    """
     if not isinstance(operation, dict):
         return "malformed-frame"
     if operation.get("protocol") != PROTOCOL:
         return "protocol"
     kind = operation.get("op")
     if kind == "create":
-        return _validate_create(operation)
+        return _validate_create(operation, widget=widget)
     if kind == "patch":
-        return _validate_patch(operation)
+        return _validate_patch(operation, widget=widget)
     if kind == "delete":
         return _surface_id_error(operation.get("surfaceId"))
     return "operation"
@@ -255,7 +277,7 @@ def _surface_id_error(value: object) -> str | None:
     return "string-limit" if len(value) > MAX_STRING else None
 
 
-def _validate_create(operation: dict) -> str | None:
+def _validate_create(operation: dict, *, widget: bool = False) -> str | None:
     surface = operation.get("surface")
     if not isinstance(surface, dict):
         return "surface"
@@ -267,7 +289,7 @@ def _validate_create(operation: dict) -> str | None:
         return "catalog-version"
     if surface["catalogId"] not in CATALOG_IDS:
         return "catalog"
-    error = _validate_components(surface.get("components", []))
+    error = _validate_components(surface.get("components", []), widget=widget)
     if error:
         return error
     normalized = {
@@ -291,7 +313,7 @@ def _validate_create(operation: dict) -> str | None:
     return None
 
 
-def _validate_patch(operation: dict) -> str | None:
+def _validate_patch(operation: dict, *, widget: bool = False) -> str | None:
     error = _surface_id_error(operation.get("surfaceId"))
     if error:
         return error
@@ -300,7 +322,7 @@ def _validate_patch(operation: dict) -> str | None:
         return "patch"
     components = patch.get("components")
     if components is not None:
-        error = _validate_components(components)
+        error = _validate_components(components, widget=widget)
         if error:
             return error
     data_patch = patch.get("dataPatch", {})
@@ -314,7 +336,7 @@ def _validate_patch(operation: dict) -> str | None:
     return None
 
 
-def _validate_components(components: object) -> str | None:
+def _validate_components(components: object, *, widget: bool = False) -> str | None:
     if not isinstance(components, list):
         return "component-type"
     seen = 0
@@ -334,7 +356,9 @@ def _validate_components(components: object) -> str | None:
                 return "string"
         if component["type"] not in CATALOG_IDS:
             return "component-type"
-        error = _validate_properties(component["type"], component.get("properties", {}))
+        error = _validate_properties(
+            component["type"], component.get("properties", {}), widget=widget
+        )
         if error:
             return error
         children = component.get("children", [])
@@ -353,14 +377,16 @@ def _validate_components(components: object) -> str | None:
     return None
 
 
-def _validate_properties(component_type: str, properties: object) -> str | None:
+def _validate_properties(
+    component_type: str, properties: object, *, widget: bool = False
+) -> str | None:
     if not isinstance(properties, dict):
         return "component-schema"
     allowed = _ALLOWED_PROPERTIES.get(component_type, frozenset())
     for key, value in properties.items():
         if key not in allowed:
             return "component-schema"
-        error = _validate_property(key, value)
+        error = _validate_property(key, value, widget=widget)
         if error:
             return error
     if component_type == "button":
@@ -374,7 +400,7 @@ def _validate_properties(component_type: str, properties: object) -> str | None:
     return None
 
 
-def _validate_property(key: str, value: object) -> str | None:
+def _validate_property(key: str, value: object, *, widget: bool = False) -> str | None:
     if key in _STRING_PROPERTIES:
         return _string_or_binding(value)
     if key == "stateKey":
@@ -403,12 +429,23 @@ def _validate_property(key: str, value: object) -> str | None:
     if key == "expanded":
         return None if isinstance(value, bool) else "component-schema"
     if key == "actionId":
-        return None if value in ACTION_IDS else "action-schema"
+        if value in ACTION_IDS:
+            return None
+        # `widget.setRange` is legal only for widget snapshots; a chat
+        # surface cannot express it (see `_WIDGET_ACTION_IDS`).
+        if widget and value in _WIDGET_ACTION_IDS:
+            return None
+        return "action-schema"
     if key == "actionValue":
         if isinstance(value, str):
             return _string_or_binding(value)
         legal = value is None or isinstance(value, (bool, int, float))
         return None if legal else "action-schema"
+    if key == "points":
+        # Binding-only: see the catalog comment above.
+        if not isinstance(value, str):
+            return "component-schema"
+        return "binding" if not _BINDING.match(value) else None
     return "component-schema"
 
 

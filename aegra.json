@@ -4,5 +4,9 @@
   },
   "auth": {
     "path": "./src/eve/auth.py:auth"
+  },
+  "http": {
+    "app": "./src/eve/widgets/app.py:app",
+    "enable_custom_route_auth": false
   }
 }
