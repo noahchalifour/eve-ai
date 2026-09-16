@@ -124,3 +124,97 @@ def test_an_empty_request_is_supported_by_any_declaring_client():
 def test_an_undeclared_client_supports_nothing():
     assert stream.supports(None, {"card"}) is False
     assert stream.supports({}, set()) is False
+
+
+# --- tool_labels -------------------------------------------------------
+#
+# The client re-validates every pair and drops what fails SILENTLY, falling
+# back to the sentence-cased raw tool name. That fallback is indistinguishable
+# from not having shipped labels at all, so every rule below is checked here
+# rather than discovered by nobody in production.
+
+
+def test_emit_tool_labels_writes_under_the_tool_labels_key(monkeypatch):
+    written = []
+    monkeypatch.setattr(stream, "get_stream_writer", lambda: written.append)
+
+    assert stream.emit_tool_labels({"get_forecast": "Checking the forecast"}) is True
+    assert written == [{"tool_labels": {"get_forecast": "Checking the forecast"}}]
+
+
+def test_tool_labels_drop_non_string_pairs_one_at_a_time():
+    """Pair by pair, not all-or-nothing: one bad label must not cost the
+    others."""
+    assert stream.sanitise_tool_labels(
+        {
+            "get_forecast": "Checking the forecast",
+            "create_event": None,
+            7: "Counting",
+            "list_mail": ["Reading your mail"],
+        }
+    ) == {"get_forecast": "Checking the forecast"}
+
+
+def test_tool_labels_drop_blank_names_and_blank_labels():
+    assert stream.sanitise_tool_labels(
+        {"": "Checking the forecast", "get_forecast": "   ", "ask_mail": "\t\n"}
+    ) == {}
+
+
+def test_tool_labels_are_trimmed_on_both_sides():
+    """Both are trimmed before the blank and length checks, so a label that
+    is only too long because of padding still ships."""
+    assert stream.sanitise_tool_labels(
+        {"  get_forecast  ": "  Checking the forecast  "}
+    ) == {"get_forecast": "Checking the forecast"}
+
+
+def test_the_label_ceiling_is_sixty_characters_inclusive():
+    """The boundary from both sides. 60 is the client's hard ceiling and it
+    rejects outright rather than truncating, so an off-by-one here means the
+    label silently never appears."""
+    assert stream.MAX_TOOL_LABEL == 60
+    assert stream.sanitise_tool_labels({"t": "x" * 60}) == {"t": "x" * 60}
+    assert stream.sanitise_tool_labels({"t": "x" * 61}) == {}
+
+
+def test_emit_tool_labels_writes_nothing_when_every_pair_is_invalid(monkeypatch):
+    """An empty frame is one the client walks and discards - cost with no
+    rendering difference."""
+    written = []
+    monkeypatch.setattr(stream, "get_stream_writer", lambda: written.append)
+
+    assert stream.emit_tool_labels({}) is False
+    assert stream.emit_tool_labels({"get_forecast": "x" * 61}) is False
+    assert written == []
+
+
+def test_emit_tool_labels_tolerates_a_non_dict():
+    """Takes `object` for the same reason `eve.suggest.clean` does: a caller
+    handing this the wrong shape produces no labels, not an AttributeError
+    inside a graph node."""
+    assert stream.sanitise_tool_labels(None) == {}
+    assert stream.sanitise_tool_labels(["get_forecast"]) == {}
+    assert stream.sanitise_tool_labels("get_forecast") == {}
+
+
+def test_emit_tool_labels_returns_false_rather_than_raising_outside_a_run():
+    """`get_stream_writer()` raises outside a runnable context. A label is a
+    nicety; nothing about it may cost a member an answer."""
+    assert stream.emit_tool_labels({"get_forecast": "Checking the forecast"}) is False
+
+
+def test_emit_tool_labels_survives_a_writer_that_raises(monkeypatch, caplog):
+    """A closed Aegra queue must not fail the turn, and the diagnostic is a
+    count - never the labels, never member text."""
+
+    def _explode(_frame):
+        raise RuntimeError("queue closed")
+
+    monkeypatch.setattr(stream, "get_stream_writer", lambda: _explode)
+
+    with caplog.at_level("WARNING"):
+        assert stream.emit_tool_labels({"ask_mail": "Reading your mail"}) is False
+
+    assert "tool_labels write failed" in caplog.text
+    assert "Reading your mail" not in caplog.text

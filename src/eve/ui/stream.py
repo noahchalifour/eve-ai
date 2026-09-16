@@ -88,3 +88,77 @@ def emit(operation: dict) -> bool:
         logger.warning("assistant_ui write failed (op=%r)", operation.get("op"))
         return False
     return True
+
+
+# The client rejects a longer label outright rather than truncating it, so a
+# label over this ceiling does not appear at all. One line on a phone.
+MAX_TOOL_LABEL = 60
+
+
+def sanitise_tool_labels(labels: object) -> dict[str, str]:
+    """The client's own validation, applied before the write rather than
+    after it.
+
+    The client re-validates every pair and drops what fails SILENTLY - a
+    too-long label degrades to the sentence-cased raw tool name, which is
+    exactly what today's behaviour looks like. So a violation here would be
+    invisible in production and indistinguishable from not having shipped
+    this at all. Validating server-side turns it into a test failure instead;
+    `tests/test_graph.py` runs the whole label table through this function
+    for that reason.
+
+    Pair by pair, not all-or-nothing: one bad label must not cost every other
+    label in the map. Takes `object` rather than `dict[str, str]` for the
+    same reason `eve.suggest.clean` does - a caller handing this something
+    else should produce no labels, not an `AttributeError` in a graph node.
+    """
+    if not isinstance(labels, dict):
+        return {}
+    clean: dict[str, str] = {}
+    for name, label in labels.items():
+        if not isinstance(name, str) or not isinstance(label, str):
+            continue
+        name, label = name.strip(), label.strip()
+        if not name or not label or len(label) > MAX_TOOL_LABEL:
+            continue
+        clean[name] = label
+    return clean
+
+
+def emit_tool_labels(labels: dict[str, str]) -> bool:
+    """Write one `tool_labels` frame to the `custom` stream.
+
+    `{"tool_labels": {<raw tool name>: <activity phrase>}}` - the raw name as
+    it appears in `tool_call_chunks[].name` and `ToolMessage.name`, never the
+    per-invocation call id. The client maps name to id itself, and applies a
+    label that arrives before, during or after the call it names, so the only
+    thing timing costs is which of those three paths runs.
+
+    Coexists with `assistant_ui` and `suggestions`: the client reads one key
+    per frame and ignores the rest, so these need no coordination.
+
+    Returns False and never raises, the same posture as `emit` above. A label
+    is a nicety - without one the client sentence-cases the raw tool name and
+    the turn is unaffected - so nothing here may cost a member an answer.
+    """
+    clean = sanitise_tool_labels(labels)
+    if not clean:
+        # Nothing to say. Emitting `{}` would be a frame the client walks and
+        # discards, which is cost without a rendering difference.
+        return False
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        # No runnable context - a direct call in a test, not a bug. Same
+        # split as `eve.suggest._emit`: this one is expected and quiet, the
+        # one below means delivery itself broke.
+        logger.debug("no runnable context to emit the tool_labels frame")
+        return False
+    try:
+        writer({"tool_labels": clean})
+    except Exception:
+        # Structural diagnostics only, as in `emit`: a count, never the
+        # labels themselves and never member text.
+        logger.warning("tool_labels write failed (%d labels)", len(clean))
+        return False
+    return True

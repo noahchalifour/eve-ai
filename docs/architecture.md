@@ -70,6 +70,8 @@ Ten nodes, wired in `src/eve/graph.py`:
   tool-call grammar on the first attempt rather than through a
   `search_skills` retrieval that has to succeed first. An older client is
   described by a smaller schema instead of being refused after the fact.
+  On its first round only, `eve` also emits a `tool_labels` frame naming the
+  tools it just bound — see [Tool labels](#tool-labels) below.
 - **`persist_ui`** (`src/eve/ui/persist.py`) copies whatever surfaces the turn
   emitted into the final AI message as a portable `<assistant-ui>` frame.
   `custom` frames are streamed and never stored, and the client replays a
@@ -159,7 +161,7 @@ src/eve/
     cli.py          # eve-skill script (Phase 5a)
   ui/
     protocol.py     # the assistant-ui/1.0 contract, its validator, the portable frame
-    stream.py       # client capabilities in, custom-mode frames out
+    stream.py       # client capabilities in; assistant_ui and tool_labels frames out
     schema.py       # the catalog, projected into show_surface's argument schema
     surface.py      # assemble a model-authored component tree into a create operation
     tools.py        # show_surface: the one tool for any model-authored UI
@@ -1006,6 +1008,72 @@ the other makes every budget overrun re-fire.
 across instances; the poll loop and the webhook handler both run in one
 process. A second replica would poll and push the same signals again and
 double-count the daily cap in `eve_ambient_notice`.
+
+## Tool labels
+
+The client renders agent work as a one-line ticker above the answer, naming
+the current activity while the turn runs and then collapsing into a timed
+summary that expands into per-tool detail. That line names each tool call.
+
+**The problem.** With no server-supplied label the client sentence-cases the
+raw tool name, so `dispatch_computer_task` reads as `Dispatch computer task`.
+Accurate, mechanical, and it leaks our function naming into a member-facing
+conversation.
+
+**The frame.** `{"tool_labels": {<raw tool name>: <activity phrase>}}` on the
+`custom` channel — the third frame on the channel that already carries
+`assistant_ui` and `suggestions`, and no coordination between them: the
+client reads one key per frame and ignores the rest.
+
+The key is the **raw tool name**, as it arrives in `tool_call_chunks[].name`
+and `ToolMessage.name`, never the per-invocation call id. The client maps name
+to id itself.
+
+**Emitted once, early.** `eve` emits the whole map on its first round of a
+turn, before any tool call can start, guarded on the same
+`_tool_rounds_this_turn` counter that bounds the tool loop. The client applies
+a label that arrives before, during or *after* the call it names, so ordering
+is not load-bearing — which is exactly why the simplest option is the right
+one. Re-sending every round would be idempotent for the member and six times
+the frames for one unchanging dictionary.
+
+A turn that calls no tool still emits its labels. They describe what `eve`
+*could* call this turn, not one call; waiting for a call to exist would put
+the frame after the call on every fast tool.
+
+**Scoped to the bound tools.** `_labels_for` intersects the table with the
+tools `_static_tools` actually returned, so the five feature switches and the
+client's `assistant_ui` declaration gate each label along with its tool. A
+client is never told the name of something this deployment cannot call.
+
+**Static tools only.** A materialized `DynamicToolSpec` is named
+`{server_id}_{tool_name}` at runtime and its only prose is a model-facing
+description of arbitrary length. Mechanically shortening one would produce
+exactly the stilted copy this exists to remove, so dynamic tools fall back to
+sentence-casing — the documented client behaviour, not a failure.
+
+**Validation, server-side.** `eve.ui.stream.sanitise_tool_labels` applies the
+client's own rules before the write: `Map<String, String>`, both sides
+trimmed, blanks skipped pair by pair, and a hard ceiling of
+`MAX_TOOL_LABEL` = 60 characters. The client re-validates and drops what fails
+**silently**, degrading to the sentence-cased raw name — which is
+indistinguishable from never having shipped labels. Validating here turns a
+violation into a test failure instead of an invisible production regression;
+`test_every_tool_label_reads_like_an_activity` runs the whole table through
+the same function for that reason.
+
+**The copy is product copy**, and `docs`-worthy because it appears
+mid-conversation in the member's reading flow: present participle, sentence
+case, no terminal period, no trailing ellipsis (the client draws its own
+progress affordance), no tool jargon, under ~40 characters in practice. The
+test: each should finish the sentence "Right now it is …".
+
+**Nothing here may cost an answer.** `emit_tool_labels` returns `False` and
+never raises, the same posture as `stream.emit` and the `suggestions` frame:
+no runnable context is a quiet `debug`, a writer that raises is a `warning`
+with a count and no label text, and the turn proceeds either way. There is no
+setting — unlike `EVE_SUGGEST_ENABLED`, this reaches nothing outside the
+process, writes nothing durable, and costs no model call.
 
 ## Reply suggestions
 

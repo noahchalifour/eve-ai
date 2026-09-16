@@ -139,6 +139,63 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
     return tools
 
 
+# What the member sees on the trace line above the answer while a tool runs.
+# PRODUCT COPY, not telemetry: it appears mid-conversation, in their reading
+# flow, so it reads as an activity rather than as a function name. Without a
+# label the client sentence-cases the raw name, which is accurate but leaks
+# our naming into the chat - `Dispatch computer task`, `Ask stylist`.
+#
+# House style, pinned by `test_every_tool_label_reads_like_an_activity`:
+# present participle, sentence case, no terminal period, no trailing ellipsis
+# (the client draws its own progress affordance), and under the client's
+# 60-character ceiling. The test: each should finish the sentence "Right now
+# it is ...".
+#
+# Keyed by the RAW tool name - what the model calls and what arrives in
+# `tool_call_chunks[].name` - so a renamed tool loses its label. That is what
+# `test_every_labelled_tool_is_a_real_tool` exists to catch.
+#
+# Deliberately static-only. A materialized `DynamicToolSpec` is named
+# `{server_id}_{tool_name}` at runtime and its only prose is a model-facing
+# description of arbitrary length; mechanically shortening one would produce
+# exactly the stilted copy this table exists to remove. Those fall back to
+# sentence-casing, which is the documented client behaviour and not a bug.
+_TOOL_LABELS = {
+    "ask_home": "Checking on the house",
+    "ask_mail": "Looking through your mail",
+    "ask_finances": "Looking at the finances",
+    "ask_stylist": "Putting an outfit together",
+    "ask_health": "Checking your health data",
+    "search_memory": "Looking back through what I remember",
+    "search_skills": "Looking for the right way to do this",
+    "record_append": "Writing that down",
+    "record_query": "Looking back at what you've recorded",
+    "save_widget": "Saving that to your widgets",
+    "write_skill": "Making a note of how to do this",
+    "propose_tool": "Drafting something reusable for this",
+    "dispatch_computer_task": "Getting to work on my computer",
+    "delegate_coding_task": "Starting work on the code",
+    "check_coding_session": "Checking on that code work",
+    "send_to_coding_session": "Passing that along",
+    "show_surface": "Putting something on screen",
+}
+
+
+def _labels_for(tools: list) -> dict[str, str]:
+    """The labels for exactly the tools bound this turn.
+
+    Intersected rather than sent whole, so the switches that gate a tool gate
+    its label too: a client never learns the name of something this
+    deployment cannot call. Same reason `_live_specs` filters checkpointed
+    sandbox specs rather than trusting what is in state.
+    """
+    return {
+        tool.name: _TOOL_LABELS[tool.name]
+        for tool in tools
+        if tool.name in _TOOL_LABELS
+    }
+
+
 # The ChatGPT backend refuses system messages outright - verified live on
 # 2026-08-18, it answers `{"detail":"System messages are not allowed"}` and the
 # whole turn fails. The Responses API's replacement is the `developer` role,
@@ -270,16 +327,29 @@ def build_graph(
     title_fn=title_node,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
-        if _tool_rounds_this_turn(state["messages"]) >= (
-            get_settings().max_tool_loop_iterations
-        ):
+        rounds = _tool_rounds_this_turn(state["messages"])
+        if rounds >= get_settings().max_tool_loop_iterations:
             # A normal AIMessage carrying no tool calls, so `tools_condition`
             # routes to `extract` and the turn ends with a sentence instead
             # of an exception.
             return {"messages": [AIMessage(_LOOP_EXHAUSTED)]}
         model = model_factory(Tier.VOICE)
         dynamic = [materialize(spec) for spec in _live_specs(state)]
-        bound_model = model.bind_tools([*_static_tools(config), *dynamic])
+        static = _static_tools(config)
+        if rounds == 0:
+            # The whole map, once, before the first tool call of the turn can
+            # start - the simplest thing that works, and it depends on no
+            # call timing. The client applies a label that arrives before,
+            # during or after the call it names, so the only thing this
+            # placement buys is that the very first tool row is never briefly
+            # unlabelled.
+            #
+            # Guarded on the round rather than emitted every pass: re-sending
+            # is idempotent for the member, but the loop runs up to
+            # `max_tool_loop_iterations` times and nothing changes between
+            # passes, so the extra frames are stream noise.
+            ui_stream.emit_tool_labels(_labels_for(static))
+        bound_model = model.bind_tools([*static, *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
         # `from eve.context import load_persona` here would bind the real
