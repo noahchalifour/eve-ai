@@ -852,8 +852,15 @@ async def test_the_default_suggest_node_never_leaks_chip_tokens_onto_messages(mo
             if message.content:
                 message_texts.append(message.content)
 
-    # 1. The custom frame carries exactly the chips the fake model returned.
-    assert custom_frames == [{"suggestions": ["Just the kitchen", "All of them"]}]
+    # 1. Exactly one `suggestions` frame, carrying exactly the chips the fake
+    #    model returned. Selected by key rather than asserting the whole list
+    #    of frames: `tool_labels` shares this channel (and is pinned by its
+    #    own tests below), so a positional assertion here would break on every
+    #    future frame this graph learns to emit without saying anything about
+    #    chips. The exactness that matters to THIS test - that no chip token
+    #    reaches `messages` - is item 4, unchanged.
+    chip_frames = [f for f in custom_frames if "suggestions" in f]
+    assert chip_frames == [{"suggestions": ["Just the kitchen", "All of them"]}]
 
     # 2. The suggestion call was REFLEX-tier and non-streaming.
     assert fake_suggest_model.tags == [TAG_NOSTREAM]
@@ -1195,3 +1202,297 @@ async def test_a_non_true_flag_falls_back_to_a_normal_turn(monkeypatch):
     result = await app.ainvoke({"messages": [HumanMessage("hello")]}, config)
 
     assert result["messages"][-1].content == "Hi Noah."
+
+
+# --- tool_labels -------------------------------------------------------
+
+
+def test_every_tool_label_reads_like_an_activity():
+    """The label table is product copy on the member's reading path, and the
+    client drops a malformed one SILENTLY - falling back to the sentence-cased
+    raw name, which looks exactly like not having shipped labels at all. So
+    the house style is a test, not a comment.
+
+    Run through the real `sanitise_tool_labels` rather than a reimplementation
+    of its rules here: a table that survives this is a table the client will
+    render."""
+    from eve.graph import _TOOL_LABELS
+    from eve.ui.stream import sanitise_tool_labels
+
+    assert sanitise_tool_labels(_TOOL_LABELS) == _TOOL_LABELS, (
+        "a label failed the client's own validation"
+    )
+    for name, label in _TOOL_LABELS.items():
+        # The client draws its own progress affordance; a trailing ellipsis
+        # doubles it. A terminal period makes a one-line status read as prose.
+        assert not label.endswith(("...", "…", ".")), name
+        assert label == label.strip(), name
+        assert label[0].isupper(), f"{name}: sentence case"
+        # Sentence case, not Title Case. Only the first word is capitalised;
+        # `I` is the one exception, being a word that carries its capital
+        # everywhere. No label here contains a proper noun.
+        for word in label.split()[1:]:
+            assert word == "I" or not word[0].isupper(), (
+                f"{name}: {word!r} - sentence case, not Title Case"
+            )
+        # No jargon leaking into the chat, which is the whole point. Matched
+        # on whole words so an honest word is not rejected for containing one
+        # (`recorded` holds "record"); `_` is checked raw, since a raw tool
+        # name reaching the member is the exact failure this table prevents.
+        words = {word.strip(",'").lower() for word in label.split()}
+        for jargon in ("tool", "tools", "invoke", "invoking", "call", "calling", "api"):
+            assert jargon not in words, f"{name}: {jargon!r} is jargon"
+        assert "_" not in label, f"{name}: a raw tool name leaked into the label"
+
+
+def test_every_labelled_tool_is_a_real_tool(monkeypatch):
+    """Keyed by the RAW tool name, so a renamed or deleted tool silently loses
+    its label - and the degrade (sentence-casing) is invisible in production.
+    Every switch on, so a label for a gated tool still counts as real."""
+    from eve.graph import _TOOL_LABELS, _static_tools
+    from eve.settings import get_settings
+
+    for var in (
+        "EVE_SELF_AUTHORING_ENABLED",
+        "EVE_SANDBOX_ENABLED",
+        "EVE_COMPUTER_ENABLED",
+        "EVE_CODING_ENABLED",
+    ):
+        monkeypatch.setenv(var, "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "k" * 32)
+    get_settings.cache_clear()
+
+    bound = {tool.name for tool in _static_tools(_declaring(["text"]))}
+    assert set(_TOOL_LABELS) <= bound, (
+        f"labels for tools that do not exist: {set(_TOOL_LABELS) - bound}"
+    )
+
+
+def test_every_bound_tool_has_a_label(monkeypatch):
+    """The other direction. A missing label is a working fallback, not a bug -
+    but it is almost always an oversight when a tool is added, and this is the
+    cheapest place to notice. Loosen this deliberately if a tool should stay
+    unlabelled."""
+    from eve.graph import _TOOL_LABELS, _static_tools
+    from eve.settings import get_settings
+
+    for var in (
+        "EVE_SELF_AUTHORING_ENABLED",
+        "EVE_SANDBOX_ENABLED",
+        "EVE_COMPUTER_ENABLED",
+        "EVE_CODING_ENABLED",
+    ):
+        monkeypatch.setenv(var, "true")
+    monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
+    monkeypatch.setenv("EVE_COMPUTER_API_KEY", "k" * 32)
+    get_settings.cache_clear()
+
+    bound = {tool.name for tool in _static_tools(_declaring(["text"]))}
+    assert bound - set(_TOOL_LABELS) == set()
+
+
+def test_labels_cover_only_the_tools_bound_this_turn():
+    """Intersected rather than sent whole: a client must never be told the
+    name of something this deployment cannot call."""
+    from eve.graph import _labels_for
+
+    class _Tool:
+        def __init__(self, name):
+            self.name = name
+
+    labels = _labels_for([_Tool("ask_mail"), _Tool("sandbox_amortise")])
+
+    assert set(labels) == {"ask_mail"}
+    assert labels["ask_mail"]
+
+
+async def test_a_turn_emits_one_tool_labels_frame_before_any_tool_runs(monkeypatch):
+    """End to end through a compiled graph, on the same `custom` channel the
+    Flutter client reads. Ordering is the claim worth pinning: the handoff
+    says a label may arrive before, during or after its call, and this asserts
+    we take the simplest of the three - the whole map, once, before the first
+    tool call of the turn can start."""
+    from langchain_core.tools import tool
+
+    from eve.graph import _TOOL_LABELS
+
+    @tool
+    async def ask_mail(request: str) -> str:
+        """Ask the mail specialist."""
+        return "one unread"
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [ask_mail])
+
+    answers = iter(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "ask_mail",
+                        "args": {"request": "anything new?"},
+                        "id": "call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="One unread."),
+        ]
+    )
+
+    class Answers(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            return next(answers)
+
+    app = build_graph(
+        model_factory=lambda _t: Answers(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+
+    events = []
+    async for mode, chunk in app.astream(
+        {"messages": [HumanMessage("any mail?")]},
+        CONFIG,
+        stream_mode=["custom", "messages"],
+    ):
+        if mode == "custom" and "tool_labels" in chunk:
+            events.append(("labels", chunk["tool_labels"]))
+        elif mode == "messages":
+            message, _meta = chunk
+            if message.__class__.__name__ == "ToolMessage":
+                events.append(("tool_result", message.name))
+
+    kinds = [kind for kind, _ in events]
+    assert kinds.count("labels") == 1, f"expected exactly one frame, got {kinds}"
+    assert kinds.index("labels") < kinds.index("tool_result"), (
+        "the label arrived after the tool it names had already finished"
+    )
+    assert events[kinds.index("labels")][1] == {
+        "ask_mail": _TOOL_LABELS["ask_mail"]
+    }
+
+
+async def test_a_turn_with_no_tool_call_still_emits_its_labels(monkeypatch):
+    """Labels describe the turn's bound tools, not one call. Emitting only
+    once a call exists would put the frame after the call it names on every
+    fast tool, which is the ordering this design exists to avoid depending
+    on."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+
+    frames = [
+        chunk
+        async for mode, chunk in app.astream(
+            {"messages": [HumanMessage("hello")]}, CONFIG, stream_mode=["custom"]
+        )
+        if isinstance(chunk, dict) and "tool_labels" in chunk
+    ]
+
+    assert len(frames) == 1
+    assert frames[0]["tool_labels"]["ask_mail"]
+
+
+async def test_the_label_frame_is_sent_once_not_once_per_tool_round(monkeypatch):
+    """The loop runs up to `max_tool_loop_iterations` times and nothing about
+    the labels changes between passes. Re-sending is idempotent for the
+    member, so this is about stream noise, not correctness - but a frame per
+    round on a six-round turn is six times the traffic for one dictionary."""
+    from langchain_core.tools import tool
+
+    from eve.settings import get_settings
+
+    # Named for a tool that HAS a label: an unlabelled tool would produce no
+    # frame at all, and the test would pass for the wrong reason.
+    @tool
+    async def ask_home() -> str:
+        """Ask the home specialist."""
+        return "nothing happened"
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [ask_home])
+
+    calls = []
+
+    class NeverAnswers(FakeToolCallingModel):
+        async def ainvoke(self, input, config=None, **kwargs):
+            calls.append(1)
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "ask_home",
+                        "args": {},
+                        "id": f"call-{len(calls)}",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+
+    app = build_graph(
+        model_factory=lambda _t: NeverAnswers(messages=iter([])),
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+
+    frames = [
+        chunk
+        async for mode, chunk in app.astream(
+            {"messages": [HumanMessage("loop")]}, CONFIG, stream_mode=["custom"]
+        )
+        if isinstance(chunk, dict) and "tool_labels" in chunk
+    ]
+
+    assert len(calls) == get_settings().max_tool_loop_iterations
+    assert len(frames) == 1
+
+
+async def test_a_label_failure_never_costs_the_member_an_answer(monkeypatch):
+    """A label is a nicety. A writer that raises - a closed Aegra queue -
+    must leave the turn intact, same posture as the `suggestions` frame."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    def _explode(_frame):
+        raise RuntimeError("queue closed")
+
+    monkeypatch.setattr("eve.ui.stream.get_stream_writer", lambda: _explode)
+
+    app = build_graph(
+        model_factory=_fake_factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+
+    assert result["messages"][-1].content == "Hi Noah."
+
+
+def test_a_disabled_tool_takes_its_label_with_it(monkeypatch):
+    """The switches that gate a tool gate its label: a deployment with coding
+    off must not advertise `Starting work on the code` for something it cannot
+    call."""
+    from eve.graph import _labels_for, _static_tools
+    from eve.settings import get_settings
+
+    monkeypatch.setenv("EVE_CODING_ENABLED", "false")
+    get_settings.cache_clear()
+    assert "delegate_coding_task" not in _labels_for(_static_tools())
+
+    monkeypatch.setenv("EVE_CODING_ENABLED", "true")
+    get_settings.cache_clear()
+    assert "delegate_coding_task" in _labels_for(_static_tools())
