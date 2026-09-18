@@ -4916,13 +4916,13 @@
       "degree": 44
     },
     {
-      "id": "src_eve_tools_client_invoke",
-      "label": "invoke()",
+      "id": "tests_conftest_faketoolcallingmodel",
+      "label": "FakeToolCallingModel",
       "degree": 43
     },
     {
-      "id": "tests_conftest_faketoolcallingmodel",
-      "label": "FakeToolCallingModel",
+      "id": "src_eve_tools_client_invoke",
+      "label": "invoke()",
       "degree": 43
     },
     {
@@ -4932,39 +4932,6 @@
     }
   ],
   "surprises": [
-    {
-      "source": "test_build_turns_reads_the_golden_file()",
-      "target": "build_turns()",
-      "source_files": [
-        "tests/test_eval_datasets.py",
-        "src/eve/eval/datasets.py"
-      ],
-      "confidence": "INFERRED",
-      "relation": "calls",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_build_turns_reads_the_golden_file()` unexpectedly reaches hub `build_turns()`"
-    },
-    {
-      "source": "test_unknown_subject_raises()",
-      "target": "UnknownMemberError",
-      "source_files": [
-        "tests/test_family.py",
-        "src/eve/family.py"
-      ],
-      "confidence": "INFERRED",
-      "relation": "uses",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_unknown_subject_raises()` unexpectedly reaches hub `UnknownMemberError`"
-    },
-    {
-      "source": "test_last_exchange_returns_empty_strings_when_a_side_is_missing()",
-      "target": "last_exchange()",
-      "source_files": [
-        "tests/test_memory_extract.py",
-        "src/eve/memory/extract.py"
-      ],
-      "confidence": "INFERRED",
-      "relation": "calls",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_last_exchange_returns_empty_strings_when_a_side_is_missing()` unexpectedly reaches hub `last_exchange()`"
-    },
     {
       "source": "test_memory_carries_optional_source_thread_and_run()",
       "target": "Memory",
@@ -4977,19 +4944,85 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_memory_carries_optional_source_thread_and_run()` unexpectedly reaches hub `Memory`"
     },
     {
-      "source": "test_operation_accepts_a_rule_layer()",
-      "target": "Operation",
+      "source": "test_a_home_signal_is_household_scoped()",
+      "target": "Signal",
       "source_files": [
-        "tests/test_state.py",
-        "src/eve/memory/types.py"
+        "tests/test_ambient_app.py",
+        "src/eve_ambient/types.py"
       ],
       "confidence": "INFERRED",
       "relation": "uses",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_operation_accepts_a_rule_layer()` unexpectedly reaches hub `Operation`"
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_a_home_signal_is_household_scoped()` unexpectedly reaches hub `Signal`"
+    },
+    {
+      "source": "test_the_signals_own_cooldown_overrides_the_default()",
+      "target": "Signal",
+      "source_files": [
+        "tests/test_ambient_pipeline.py",
+        "src/eve_ambient/types.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_the_signals_own_cooldown_overrides_the_default()` unexpectedly reaches hub `Signal`"
+    },
+    {
+      "source": "test_an_unknown_agent_is_a_400_not_a_500()",
+      "target": "UnknownAgent",
+      "source_files": [
+        "tests/test_acp_app.py",
+        "src/eve_computer/acp/registry.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_an_unknown_agent_is_a_400_not_a_500()` unexpectedly reaches hub `UnknownAgent`"
+    },
+    {
+      "source": "test_malformed_json_raises_rather_than_reporting_nothing()",
+      "target": "SourceUnavailable",
+      "source_files": [
+        "tests/test_ambient_sources_mail.py",
+        "src/eve_ambient/types.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities; peripheral node `test_malformed_json_raises_rather_than_reporting_nothing()` unexpectedly reaches hub `SourceUnavailable`"
     }
   ],
-  "tokens": {
-    "input": 269225,
-    "output": 10040
-  }
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `get_settings()` connect `Memory Management` to `Model Hygiene Rules`, `LangGraph Task Dispatch`, `Coding Task Delegation`, `Graph Route Logic`, `Memory Extraction Operations`, `Calendar Signal Sources`, `Computer Settings Configuration`, `Signal Delivery Pipeline`, `Message History Content`, `Coding Session Store`, `Coding Supervisor Decisions`, `Evaluation CLI Tool`, `Family Roster Management`, `Database Migrations`, `Coding Model Dispatch`, `Relevance Filter Logic`, `Ambient Polling App`, `Tool Loop Budget`, `Langfuse Evaluation Replay`, `Tools Client Testing`, `Ntfy Notification Delivery`, `Context Loading Node`, `Database Migration CLI`, `Specialist Agent Testing`, `Notification Delivery Pipeline`, `Skills Registry Loader`, `MCP Tool Registry`, `Shared Test Fixtures`, `Home Assistant Tools`, `Resource Scoping Auth`, `PAT Management CLI`, `Suggestion Node Tests`, `Recall Token Budgets`?",
+      "why": "High betweenness centrality (0.081) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `Signal` connect `Signal Processing Fixes` to `Relevance Filter Logic`, `Ambient Notification Mocks`, `Ambient Notification Store`, `Ambient App Testing`, `Ambient Polling App`, `LangGraph Task Dispatch`, `Notification Delivery Pipeline`, `Ambient Audience Filtering`, `Calendar Signal Sources`, `Live Ambient Integration`, `Computer Signal Routing`, `Notification Quiet Hours`, `Signal Delivery Pipeline`, `Computer Task Polling`, `Langfuse Evaluation Replay`, `Notification Idempotency`, `Ambient Pipeline Logic`?",
+      "why": "High betweenness centrality (0.020) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `invoke()` connect `Home Assistant Tools` to `Memory Management`, `Model Hygiene Rules`, `Wardrobe Catalog Sync`, `LangGraph Task Dispatch`, `Coding Task Delegation`, `Health Metric Tools`, `Calendar Signal Sources`, `Tools Client Testing`, `Materialized Tool Calls`, `Gmail Search Tools`, `Household Tool Definitions`, `Coding Model Dispatch`?",
+      "why": "High betweenness centrality (0.018) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 4 inferred relationships involving `get_settings()` (e.g. with `conftest.py` and `test_the_tool_loop_is_bounded_when_the_model_never_answers()`) actually correct?",
+      "why": "`get_settings()` has 4 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 36 inferred relationships involving `Signal` (e.g. with `_handle_in_background()` and `poll_once()`) actually correct?",
+      "why": "`Signal` has 36 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 49 inferred relationships involving `Family` (e.g. with `oidc()` and `test_a_dev_token_is_still_accepted_alongside_the_pat_path()`) actually correct?",
+      "why": "`Family` has 49 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `ItemResult`, `ToolProposal`, `models` to the rest of the system?",
+      "why": "29 weakly-connected nodes found - possible documentation gaps or missing edges."
+    }
+  ]
 }
