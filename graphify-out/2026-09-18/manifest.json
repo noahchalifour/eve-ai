@@ -1,0 +1,1802 @@
+{
+  ".agents/skills/release-eve/check-sync.sh": {
+    "mtime": 1788285670.8870194,
+    "seen": 1789772503.512446,
+    "ast_hash": "7966d0ddda415f002fb9cca4ea5fbd77",
+    "semantic_hash": "7966d0ddda415f002fb9cca4ea5fbd77"
+  },
+  ".agents/skills/release-eve/images-published.sh": {
+    "mtime": 1788285670.8871324,
+    "seen": 1789772503.512449,
+    "ast_hash": "a58bf8b434a149a81a00eed40f153336",
+    "semantic_hash": "a58bf8b434a149a81a00eed40f153336"
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1788196273.2264647,
+    "seen": 1789772503.51245,
+    "ast_hash": "cb4ff3c42a9a788ef3a0699e271a9851",
+    "semantic_hash": "cb4ff3c42a9a788ef3a0699e271a9851"
+  },
+  ".claude/skills/release-eve-workspace/evals.json": {
+    "mtime": 1788285670.8788779,
+    "seen": 1789772503.51245,
+    "ast_hash": "fad2db8221a415a138da6514b45c0ae3",
+    "semantic_hash": "fad2db8221a415a138da6514b45c0ae3"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/benchmark.json": {
+    "mtime": 1788285670.879433,
+    "seen": 1789772503.5124512,
+    "ast_hash": "538011370cedfe1b4842f1bc674f4493",
+    "semantic_hash": "538011370cedfe1b4842f1bc674f4493"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-0/eval_metadata.json": {
+    "mtime": 1788285670.8798501,
+    "seen": 1789772503.5124512,
+    "ast_hash": "edaab7621bde0c16ddf7438afed667b2",
+    "semantic_hash": "edaab7621bde0c16ddf7438afed667b2"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-0/with_skill/run-1/grading.json": {
+    "mtime": 1788285670.8801994,
+    "seen": 1789772503.5124521,
+    "ast_hash": "4d7df571cc1ffeadee168f8dc94585d8",
+    "semantic_hash": "4d7df571cc1ffeadee168f8dc94585d8"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-0/with_skill/run-1/timing.json": {
+    "mtime": 1788285670.8808606,
+    "seen": 1789772503.5124521,
+    "ast_hash": "a246d99efa4deea4c54c5690bf7ea5d8",
+    "semantic_hash": "a246d99efa4deea4c54c5690bf7ea5d8"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-0/without_skill/run-1/grading.json": {
+    "mtime": 1788285670.8812783,
+    "seen": 1789772503.5124521,
+    "ast_hash": "382cacdb1cfefe6a2e6644bfa3f0bdd1",
+    "semantic_hash": "382cacdb1cfefe6a2e6644bfa3f0bdd1"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-0/without_skill/run-1/timing.json": {
+    "mtime": 1788285670.8817456,
+    "seen": 1789772503.512453,
+    "ast_hash": "ef359c147ff136f71f7e14f76e2a0b4a",
+    "semantic_hash": "ef359c147ff136f71f7e14f76e2a0b4a"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-1/eval_metadata.json": {
+    "mtime": 1788285670.8819537,
+    "seen": 1789772503.512453,
+    "ast_hash": "5a564df972b693c9e29bea8263e69fce",
+    "semantic_hash": "5a564df972b693c9e29bea8263e69fce"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-1/with_skill/run-1/grading.json": {
+    "mtime": 1788285670.8825629,
+    "seen": 1789772503.512453,
+    "ast_hash": "df45fc6d20cc629f4ee9d68790ed5095",
+    "semantic_hash": "df45fc6d20cc629f4ee9d68790ed5095"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-1/with_skill/run-1/timing.json": {
+    "mtime": 1788285670.8831904,
+    "seen": 1789772503.5124538,
+    "ast_hash": "16a72ae3a2958cd2800ae0fc1b47d48e",
+    "semantic_hash": "16a72ae3a2958cd2800ae0fc1b47d48e"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-1/without_skill/run-1/grading.json": {
+    "mtime": 1788285670.8834233,
+    "seen": 1789772503.5124538,
+    "ast_hash": "adf79d5690e92a4c602eec220db63973",
+    "semantic_hash": "adf79d5690e92a4c602eec220db63973"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-1/without_skill/run-1/timing.json": {
+    "mtime": 1788285670.8840427,
+    "seen": 1789772503.5124538,
+    "ast_hash": "1937355b6101c972e5711b9698eb69a7",
+    "semantic_hash": "1937355b6101c972e5711b9698eb69a7"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-2/eval_metadata.json": {
+    "mtime": 1788285670.8844347,
+    "seen": 1789772503.512455,
+    "ast_hash": "07a4ca6c6a1a378055df32e1349d0027",
+    "semantic_hash": "07a4ca6c6a1a378055df32e1349d0027"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-2/with_skill/run-1/grading.json": {
+    "mtime": 1788285670.8847282,
+    "seen": 1789772503.512455,
+    "ast_hash": "bf00be363df8bb1a74e7004c7f857cbc",
+    "semantic_hash": "bf00be363df8bb1a74e7004c7f857cbc"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-2/with_skill/run-1/timing.json": {
+    "mtime": 1788285670.8853958,
+    "seen": 1789772503.512455,
+    "ast_hash": "b7901cc76a62da44a34515628d05a1dc",
+    "semantic_hash": "b7901cc76a62da44a34515628d05a1dc"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-2/without_skill/run-1/grading.json": {
+    "mtime": 1788285670.8855999,
+    "seen": 1789772503.512456,
+    "ast_hash": "16b97d2d22eb7fb6eb5d5082a705322e",
+    "semantic_hash": "16b97d2d22eb7fb6eb5d5082a705322e"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/eval-2/without_skill/run-1/timing.json": {
+    "mtime": 1788285670.8860927,
+    "seen": 1789772503.512456,
+    "ast_hash": "379d63cea2d3ad7beaf3ef015c3d6df2",
+    "semantic_hash": "379d63cea2d3ad7beaf3ef015c3d6df2"
+  },
+  ".claude/skills/release-eve-workspace/iteration-1/feedback.json": {
+    "mtime": 1788285670.8862817,
+    "seen": 1789772503.512456,
+    "ast_hash": "7802fd8457e184e1a9f6291ae74bc93d",
+    "semantic_hash": "7802fd8457e184e1a9f6291ae74bc93d"
+  },
+  ".zed/tasks.json": {
+    "mtime": 1788232218.1757407,
+    "seen": 1789772503.512457,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "aegra.json": {
+    "mtime": 1787074633.2132456,
+    "seen": 1789772503.512457,
+    "ast_hash": "15e97aed2e42c28b05257a38d426b927",
+    "semantic_hash": "15e97aed2e42c28b05257a38d426b927"
+  },
+  "alembic/env.py": {
+    "mtime": 1787959326.2715197,
+    "seen": 1789772503.512457,
+    "ast_hash": "1b801a5eefe70715291e3618c4d12aff",
+    "semantic_hash": "1b801a5eefe70715291e3618c4d12aff"
+  },
+  "alembic/versions/0001_baseline.py": {
+    "mtime": 1787959326.2720544,
+    "seen": 1789772503.512458,
+    "ast_hash": "7dfec5ec336503f2ed63b9aaa64e539b",
+    "semantic_hash": "7dfec5ec336503f2ed63b9aaa64e539b"
+  },
+  "alembic/versions/0002_eve_tool.py": {
+    "mtime": 1787959326.2726686,
+    "seen": 1789772503.512458,
+    "ast_hash": "4033ba49daacb311f20fe3868f2e3050",
+    "semantic_hash": "4033ba49daacb311f20fe3868f2e3050"
+  },
+  "alembic/versions/0003_eve_tool_pending_dedup.py": {
+    "mtime": 1787959326.2729049,
+    "seen": 1789772503.512458,
+    "ast_hash": "d3d26503e6c0e1687e7f0fe96f548277",
+    "semantic_hash": "d3d26503e6c0e1687e7f0fe96f548277"
+  },
+  "alembic/versions/0004_eve_computer_task.py": {
+    "mtime": 1788231027.4964442,
+    "seen": 1789772503.512459,
+    "ast_hash": "3d438e7d1a155a3de8d9597b19861802",
+    "semantic_hash": "3d438e7d1a155a3de8d9597b19861802"
+  },
+  "alembic/versions/0005_eve_coding_session.py": {
+    "mtime": 1788464043.659134,
+    "seen": 1789772503.512459,
+    "ast_hash": "e420b6abc4004f80ba1559bdcc5544d6",
+    "semantic_hash": "e420b6abc4004f80ba1559bdcc5544d6"
+  },
+  "alembic/versions/0005_eve_oauth_token.py": {
+    "mtime": 1788304968.202141,
+    "seen": 1789772503.512459,
+    "ast_hash": "74378515e2ac090baf1d7aa47c3a353b",
+    "semantic_hash": "74378515e2ac090baf1d7aa47c3a353b"
+  },
+  "alembic/versions/0006_eve_wardrobe_item.py": {
+    "mtime": 1788464043.6594274,
+    "seen": 1789772503.51246,
+    "ast_hash": "18c03bbf077fbd6354669166f389eca4",
+    "semantic_hash": "18c03bbf077fbd6354669166f389eca4"
+  },
+  "alembic/versions/0007_eve_wardrobe_asset.py": {
+    "mtime": 1788464043.6596084,
+    "seen": 1789772503.51246,
+    "ast_hash": "5b1fb326be164f1af906aefc19f41da0",
+    "semantic_hash": "5b1fb326be164f1af906aefc19f41da0"
+  },
+  "alembic/versions/0008_merge_coding_and_wardrobe.py": {
+    "mtime": 1788467337.8141994,
+    "seen": 1789772503.51246,
+    "ast_hash": "88642e5a3f815cdbdafbb4305f47ac9c",
+    "semantic_hash": "88642e5a3f815cdbdafbb4305f47ac9c"
+  },
+  "pyproject.toml": {
+    "mtime": 1789144060.5030353,
+    "seen": 1789772503.512461,
+    "ast_hash": "442ea7774c9f2bd5edfc837cdf0973bf",
+    "semantic_hash": "442ea7774c9f2bd5edfc837cdf0973bf"
+  },
+  "scripts/chat.py": {
+    "mtime": 1788285670.8948274,
+    "seen": 1789772503.512461,
+    "ast_hash": "222a9be6b28e1616a4b8a27e9b8da92e",
+    "semantic_hash": "222a9be6b28e1616a4b8a27e9b8da92e"
+  },
+  "scripts/gmail_oauth_setup.py": {
+    "mtime": 1787670055.3503106,
+    "seen": 1789772503.512461,
+    "ast_hash": "08d3f8f00dc335368e7da76fefd30473",
+    "semantic_hash": "08d3f8f00dc335368e7da76fefd30473"
+  },
+  "scripts/health_oauth_setup.py": {
+    "mtime": 1788304968.208384,
+    "seen": 1789772503.5124621,
+    "ast_hash": "a4a648279b5d2c9c0ecfeb258471da5a",
+    "semantic_hash": "a4a648279b5d2c9c0ecfeb258471da5a"
+  },
+  "src/eve/__init__.py": {
+    "mtime": 1787074633.2163205,
+    "seen": 1789772503.5124621,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/auth.py": {
+    "mtime": 1787846786.90805,
+    "seen": 1789772503.5124621,
+    "ast_hash": "997a8aa29cb83d49ffd1dfef24bb9b82",
+    "semantic_hash": "997a8aa29cb83d49ffd1dfef24bb9b82"
+  },
+  "src/eve/coding/__init__.py": {
+    "mtime": 1788464043.6698883,
+    "seen": 1789772503.512463,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/coding/catalogue.py": {
+    "mtime": 1788464043.6703045,
+    "seen": 1789772503.512463,
+    "ast_hash": "d8e79ff3f682a2fb9c9ca336e5c6c0d2",
+    "semantic_hash": "d8e79ff3f682a2fb9c9ca336e5c6c0d2"
+  },
+  "src/eve/coding/dispatch.py": {
+    "mtime": 1788464043.6706357,
+    "seen": 1789772503.512463,
+    "ast_hash": "300f67d404a7306b21ca458db0af9733",
+    "semantic_hash": "300f67d404a7306b21ca458db0af9733"
+  },
+  "src/eve/coding/store.py": {
+    "mtime": 1788464043.6708655,
+    "seen": 1789772503.5124638,
+    "ast_hash": "bc9c90036874abbb5eb0a8d991a45ff1",
+    "semantic_hash": "bc9c90036874abbb5eb0a8d991a45ff1"
+  },
+  "src/eve/coding/supervisor.py": {
+    "mtime": 1788464043.6711018,
+    "seen": 1789772503.5124638,
+    "ast_hash": "610fb5682ee197d78b32d7a6e2135b29",
+    "semantic_hash": "610fb5682ee197d78b32d7a6e2135b29"
+  },
+  "src/eve/computer/__init__.py": {
+    "mtime": 1788231545.5145435,
+    "seen": 1789772503.512465,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/computer/dispatch.py": {
+    "mtime": 1788464043.671657,
+    "seen": 1789772503.512465,
+    "ast_hash": "6fe47494ff8148137c3d8f524251b115",
+    "semantic_hash": "6fe47494ff8148137c3d8f524251b115"
+  },
+  "src/eve/computer/poller.py": {
+    "mtime": 1788231855.531709,
+    "seen": 1789772503.512465,
+    "ast_hash": "2a516621938b45df15431fa81cd094d1",
+    "semantic_hash": "2a516621938b45df15431fa81cd094d1"
+  },
+  "src/eve/computer/store.py": {
+    "mtime": 1788275137.3282688,
+    "seen": 1789772503.512466,
+    "ast_hash": "6ca82949c6fbbbb6576f6b8da1167c91",
+    "semantic_hash": "6ca82949c6fbbbb6576f6b8da1167c91"
+  },
+  "src/eve/context.py": {
+    "mtime": 1787939453.916503,
+    "seen": 1789772503.512466,
+    "ast_hash": "fe7efb3b87f6c46db972ace9f6a53a9e",
+    "semantic_hash": "fe7efb3b87f6c46db972ace9f6a53a9e"
+  },
+  "src/eve/eval/__init__.py": {
+    "mtime": 1787939453.9167752,
+    "seen": 1789772503.512466,
+    "ast_hash": "a1bb95d9efa09bf5a74badad05f1a58a",
+    "semantic_hash": "a1bb95d9efa09bf5a74badad05f1a58a"
+  },
+  "src/eve/eval/cli.py": {
+    "mtime": 1787939453.9169948,
+    "seen": 1789772503.512466,
+    "ast_hash": "3de2ee2ae7e73808b6d6b8a89fa9b75e",
+    "semantic_hash": "3de2ee2ae7e73808b6d6b8a89fa9b75e"
+  },
+  "src/eve/eval/datasets.py": {
+    "mtime": 1787939453.9172187,
+    "seen": 1789772503.512467,
+    "ast_hash": "7b3025e5b2bbfa3d8c1425f9fe7cd7e6",
+    "semantic_hash": "7b3025e5b2bbfa3d8c1425f9fe7cd7e6"
+  },
+  "src/eve/eval/hygiene.py": {
+    "mtime": 1787939453.9174464,
+    "seen": 1789772503.512467,
+    "ast_hash": "a510a5c26ef3957aacff202725f5d31f",
+    "semantic_hash": "a510a5c26ef3957aacff202725f5d31f"
+  },
+  "src/eve/eval/publish.py": {
+    "mtime": 1787939453.9176793,
+    "seen": 1789772503.512467,
+    "ast_hash": "ea2cf8f083420704ba3261a7267e3475",
+    "semantic_hash": "ea2cf8f083420704ba3261a7267e3475"
+  },
+  "src/eve/eval/replay.py": {
+    "mtime": 1788285670.8954682,
+    "seen": 1789772503.5124679,
+    "ast_hash": "6f0c62991b657b58195843a125203eab",
+    "semantic_hash": "6f0c62991b657b58195843a125203eab"
+  },
+  "src/eve/eval/scorers.py": {
+    "mtime": 1788285670.8960202,
+    "seen": 1789772503.5124679,
+    "ast_hash": "ab75b1b481e16121e011c87c2ba65931",
+    "semantic_hash": "ab75b1b481e16121e011c87c2ba65931"
+  },
+  "src/eve/eval/store.py": {
+    "mtime": 1787939453.918258,
+    "seen": 1789772503.512469,
+    "ast_hash": "d18fe59e086cb8e52cfee1d808c1d4e2",
+    "semantic_hash": "d18fe59e086cb8e52cfee1d808c1d4e2"
+  },
+  "src/eve/eval/types.py": {
+    "mtime": 1787939453.9184353,
+    "seen": 1789772503.512469,
+    "ast_hash": "8cb491fff6302f4ad3c489fdef3ad26e",
+    "semantic_hash": "8cb491fff6302f4ad3c489fdef3ad26e"
+  },
+  "src/eve/family.py": {
+    "mtime": 1788464043.6720357,
+    "seen": 1789772503.512469,
+    "ast_hash": "2165326643958867117144e03db697cc",
+    "semantic_hash": "2165326643958867117144e03db697cc"
+  },
+  "src/eve/graph.py": {
+    "mtime": 1789144045.1740782,
+    "seen": 1789772503.51247,
+    "ast_hash": "0b31481844e15b57d8409700b4ef05f3",
+    "semantic_hash": "0b31481844e15b57d8409700b4ef05f3"
+  },
+  "src/eve/memory/__init__.py": {
+    "mtime": 1787513041.964526,
+    "seen": 1789772503.51247,
+    "ast_hash": "b9e3876ed0f11d85db3ee64595991041",
+    "semantic_hash": "b9e3876ed0f11d85db3ee64595991041"
+  },
+  "src/eve/memory/db.py": {
+    "mtime": 1787959326.2765994,
+    "seen": 1789772503.51247,
+    "ast_hash": "090d94aca57f5833685eda4a8e9dcdca",
+    "semantic_hash": "090d94aca57f5833685eda4a8e9dcdca"
+  },
+  "src/eve/memory/embed.py": {
+    "mtime": 1787939453.9197817,
+    "seen": 1789772503.51247,
+    "ast_hash": "d77a0a007bad4005394880950f1e9229",
+    "semantic_hash": "d77a0a007bad4005394880950f1e9229"
+  },
+  "src/eve/memory/extract.py": {
+    "mtime": 1788285738.0862157,
+    "seen": 1789772503.512471,
+    "ast_hash": "5f1084b71831cf561f95310eba257784",
+    "semantic_hash": "5f1084b71831cf561f95310eba257784"
+  },
+  "src/eve/memory/pending.py": {
+    "mtime": 1788285670.8974483,
+    "seen": 1789772503.512471,
+    "ast_hash": "70df8b83b13471f3696eff2baffd4e34",
+    "semantic_hash": "70df8b83b13471f3696eff2baffd4e34"
+  },
+  "src/eve/memory/ranking.py": {
+    "mtime": 1787513041.974349,
+    "seen": 1789772503.5124722,
+    "ast_hash": "baf68e5b10b18ec4732df45f9d778b86",
+    "semantic_hash": "baf68e5b10b18ec4732df45f9d778b86"
+  },
+  "src/eve/memory/recall.py": {
+    "mtime": 1788285670.897835,
+    "seen": 1789772503.512474,
+    "ast_hash": "32f1234940bf8758f72d3677133c31ac",
+    "semantic_hash": "32f1234940bf8758f72d3677133c31ac"
+  },
+  "src/eve/memory/search.py": {
+    "mtime": 1787513041.9807937,
+    "seen": 1789772503.512474,
+    "ast_hash": "b8b229bb9de2a754f673c6c1c67e4f88",
+    "semantic_hash": "b8b229bb9de2a754f673c6c1c67e4f88"
+  },
+  "src/eve/memory/store.py": {
+    "mtime": 1787939453.9208024,
+    "seen": 1789772503.512474,
+    "ast_hash": "663195162af9a8288b8ae2a0f825b952",
+    "semantic_hash": "663195162af9a8288b8ae2a0f825b952"
+  },
+  "src/eve/memory/types.py": {
+    "mtime": 1787939453.9212315,
+    "seen": 1789772503.5124748,
+    "ast_hash": "2e020c997aaf8b14ff04ea6a1afde5b5",
+    "semantic_hash": "2e020c997aaf8b14ff04ea6a1afde5b5"
+  },
+  "src/eve/models.py": {
+    "mtime": 1787959326.2775915,
+    "seen": 1789772503.5124748,
+    "ast_hash": "e69ada4d6dd8f02893f8ad18e9b60616",
+    "semantic_hash": "e69ada4d6dd8f02893f8ad18e9b60616"
+  },
+  "src/eve/pat.py": {
+    "mtime": 1787846786.9086046,
+    "seen": 1789772503.5124748,
+    "ast_hash": "7bdbb1868f524f2904dbeb9e96a14a68",
+    "semantic_hash": "7bdbb1868f524f2904dbeb9e96a14a68"
+  },
+  "src/eve/settings.py": {
+    "mtime": 1788464043.6732976,
+    "seen": 1789772503.512476,
+    "ast_hash": "4b8a38485f423033caa4dbc31bdd77c3",
+    "semantic_hash": "4b8a38485f423033caa4dbc31bdd77c3"
+  },
+  "src/eve/skills/__init__.py": {
+    "mtime": 1787513041.987327,
+    "seen": 1789772503.512476,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/skills/authoring.py": {
+    "mtime": 1787939453.9218252,
+    "seen": 1789772503.512476,
+    "ast_hash": "b53b834ae4e981da054b897ae02a4448",
+    "semantic_hash": "b53b834ae4e981da054b897ae02a4448"
+  },
+  "src/eve/skills/cli.py": {
+    "mtime": 1787939453.9220598,
+    "seen": 1789772503.512479,
+    "ast_hash": "8fea6082b34ffc004b6d89ae13e7e451",
+    "semantic_hash": "8fea6082b34ffc004b6d89ae13e7e451"
+  },
+  "src/eve/skills/materialize.py": {
+    "mtime": 1787959326.2783623,
+    "seen": 1789772503.512479,
+    "ast_hash": "f6a2daa60f44b43f0f1a033f2e28c3c3",
+    "semantic_hash": "f6a2daa60f44b43f0f1a033f2e28c3c3"
+  },
+  "src/eve/skills/mcp_registry.py": {
+    "mtime": 1787513041.9887092,
+    "seen": 1789772503.51248,
+    "ast_hash": "a0d20c71f5cb34d7cfbc34af9c906f24",
+    "semantic_hash": "a0d20c71f5cb34d7cfbc34af9c906f24"
+  },
+  "src/eve/skills/registry.py": {
+    "mtime": 1789144045.174632,
+    "seen": 1789772503.5124831,
+    "ast_hash": "f09da8d4214ce86dfb6e28800e441698",
+    "semantic_hash": "f09da8d4214ce86dfb6e28800e441698"
+  },
+  "src/eve/skills/search.py": {
+    "mtime": 1789144045.1749437,
+    "seen": 1789772503.5124831,
+    "ast_hash": "2394d7fa6f79b073e472065fbed24b0c",
+    "semantic_hash": "2394d7fa6f79b073e472065fbed24b0c"
+  },
+  "src/eve/skills/specialist_search.py": {
+    "mtime": 1788464043.67442,
+    "seen": 1789772503.5124831,
+    "ast_hash": "46be14769a8ada6f0ef8db02a7f608a8",
+    "semantic_hash": "46be14769a8ada6f0ef8db02a7f608a8"
+  },
+  "src/eve/skills/types.py": {
+    "mtime": 1787959326.2789395,
+    "seen": 1789772503.512484,
+    "ast_hash": "35126e1facef3fe121b15d8798745527",
+    "semantic_hash": "35126e1facef3fe121b15d8798745527"
+  },
+  "src/eve/specialists/__init__.py": {
+    "mtime": 1787513041.9903324,
+    "seen": 1789772503.512484,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/specialists/base.py": {
+    "mtime": 1788464043.6748343,
+    "seen": 1789772503.512484,
+    "ast_hash": "11bd91aae7e4196e9b6cadeb04f8e9a9",
+    "semantic_hash": "11bd91aae7e4196e9b6cadeb04f8e9a9"
+  },
+  "src/eve/specialists/finances.py": {
+    "mtime": 1787513041.9921699,
+    "seen": 1789772503.512485,
+    "ast_hash": "a7fa445a77a2b5d8ddbc722625edc07c",
+    "semantic_hash": "a7fa445a77a2b5d8ddbc722625edc07c"
+  },
+  "src/eve/specialists/health.py": {
+    "mtime": 1788304968.2092426,
+    "seen": 1789772503.512485,
+    "ast_hash": "19f8a053fb84e58d02f7298f62df8632",
+    "semantic_hash": "19f8a053fb84e58d02f7298f62df8632"
+  },
+  "src/eve/specialists/home.py": {
+    "mtime": 1788285670.8992648,
+    "seen": 1789772503.512486,
+    "ast_hash": "ebfa262c80afce8bb2747fd09ca89333",
+    "semantic_hash": "ebfa262c80afce8bb2747fd09ca89333"
+  },
+  "src/eve/specialists/mail.py": {
+    "mtime": 1787513041.9936175,
+    "seen": 1789772503.512486,
+    "ast_hash": "b5ce3250896c2583bda4c3323b8f6091",
+    "semantic_hash": "b5ce3250896c2583bda4c3323b8f6091"
+  },
+  "src/eve/specialists/permissions.py": {
+    "mtime": 1787513041.9946065,
+    "seen": 1789772503.512487,
+    "ast_hash": "99390d49aef87959fb90591fd0ceae1b",
+    "semantic_hash": "99390d49aef87959fb90591fd0ceae1b"
+  },
+  "src/eve/specialists/stylist.py": {
+    "mtime": 1788464043.6750789,
+    "seen": 1789772503.512487,
+    "ast_hash": "5ab8d79227723e2fd0f41a702854134d",
+    "semantic_hash": "5ab8d79227723e2fd0f41a702854134d"
+  },
+  "src/eve/state.py": {
+    "mtime": 1788285670.8996496,
+    "seen": 1789772503.512487,
+    "ast_hash": "cd82f53bd7ffe24855280c96e7efae20",
+    "semantic_hash": "cd82f53bd7ffe24855280c96e7efae20"
+  },
+  "src/eve/suggest.py": {
+    "mtime": 1788480571.5680597,
+    "seen": 1789772503.512488,
+    "ast_hash": "8aff1826e03f9a8d69e01caeabc13b82",
+    "semantic_hash": "8aff1826e03f9a8d69e01caeabc13b82"
+  },
+  "src/eve/title.py": {
+    "mtime": 1788902962.2933774,
+    "seen": 1789772503.512488,
+    "ast_hash": "1a80c56184049e98859ae0f33e7917f8",
+    "semantic_hash": "1a80c56184049e98859ae0f33e7917f8"
+  },
+  "src/eve/tools_authoring/__init__.py": {
+    "mtime": 1787959326.279395,
+    "seen": 1789772503.512488,
+    "ast_hash": "5e801214c4760c3a8ec2c594e4e78d9b",
+    "semantic_hash": "5e801214c4760c3a8ec2c594e4e78d9b"
+  },
+  "src/eve/tools_authoring/cli.py": {
+    "mtime": 1787959326.279808,
+    "seen": 1789772503.5124888,
+    "ast_hash": "0f269bda8b2e8c1dab8139995775b734",
+    "semantic_hash": "0f269bda8b2e8c1dab8139995775b734"
+  },
+  "src/eve/tools_authoring/inspect.py": {
+    "mtime": 1787959326.2800627,
+    "seen": 1789772503.5124888,
+    "ast_hash": "8a966811c850709945edd595f61869bd",
+    "semantic_hash": "8a966811c850709945edd595f61869bd"
+  },
+  "src/eve/tools_authoring/propose.py": {
+    "mtime": 1787959326.2803388,
+    "seen": 1789772503.5124888,
+    "ast_hash": "6970abba0c2cba1ffed0e4457a06dde1",
+    "semantic_hash": "6970abba0c2cba1ffed0e4457a06dde1"
+  },
+  "src/eve/tools_authoring/registry.py": {
+    "mtime": 1787959326.2805927,
+    "seen": 1789772503.51249,
+    "ast_hash": "c8d0eaab0845841675f5f8a12d51a533",
+    "semantic_hash": "c8d0eaab0845841675f5f8a12d51a533"
+  },
+  "src/eve/tools_authoring/store.py": {
+    "mtime": 1787959326.280828,
+    "seen": 1789772503.51249,
+    "ast_hash": "9bf03a1de28e849800de2a553a87d332",
+    "semantic_hash": "9bf03a1de28e849800de2a553a87d332"
+  },
+  "src/eve/tools_authoring/types.py": {
+    "mtime": 1787959326.2810209,
+    "seen": 1789772503.51249,
+    "ast_hash": "4fedf36a9ba2506f0713f0a424c67355",
+    "semantic_hash": "4fedf36a9ba2506f0713f0a424c67355"
+  },
+  "src/eve/tools_client.py": {
+    "mtime": 1788464043.6755373,
+    "seen": 1789772503.512491,
+    "ast_hash": "f471fd2e8e9a53a781a276c52b7e9c1d",
+    "semantic_hash": "f471fd2e8e9a53a781a276c52b7e9c1d"
+  },
+  "src/eve/ui/__init__.py": {
+    "mtime": 1788285670.89998,
+    "seen": 1789772503.512491,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/ui/actions.py": {
+    "mtime": 1788464043.675822,
+    "seen": 1789772503.512491,
+    "ast_hash": "8fd5a4212f56764b5a12e05f1143f46a",
+    "semantic_hash": "8fd5a4212f56764b5a12e05f1143f46a"
+  },
+  "src/eve/ui/persist.py": {
+    "mtime": 1788464043.676236,
+    "seen": 1789772503.512492,
+    "ast_hash": "96e5931a28f9f56c5fe4bcdad3147fec",
+    "semantic_hash": "96e5931a28f9f56c5fe4bcdad3147fec"
+  },
+  "src/eve/ui/protocol.py": {
+    "mtime": 1788464043.6768222,
+    "seen": 1789772503.512492,
+    "ast_hash": "21a9d8b45d7630d6aaa9fb186cacf10f",
+    "semantic_hash": "21a9d8b45d7630d6aaa9fb186cacf10f"
+  },
+  "src/eve/ui/schema.py": {
+    "mtime": 1789144045.1753387,
+    "seen": 1789772503.512492,
+    "ast_hash": "2295e216bb86fa6d33507fa71e86a97a",
+    "semantic_hash": "2295e216bb86fa6d33507fa71e86a97a"
+  },
+  "src/eve/ui/stream.py": {
+    "mtime": 1788464043.6772654,
+    "seen": 1789772503.5124931,
+    "ast_hash": "ce8809eb54577f51baf3ff959be8f72c",
+    "semantic_hash": "ce8809eb54577f51baf3ff959be8f72c"
+  },
+  "src/eve/ui/surface.py": {
+    "mtime": 1788464043.6775367,
+    "seen": 1789772503.5124931,
+    "ast_hash": "e7fa0d54e2800411b1a3f0f864c91bd2",
+    "semantic_hash": "e7fa0d54e2800411b1a3f0f864c91bd2"
+  },
+  "src/eve/ui/tools.py": {
+    "mtime": 1789144045.1758618,
+    "seen": 1789772503.5124931,
+    "ast_hash": "a4d793b09b17f465ef95c6a59c2f3f88",
+    "semantic_hash": "a4d793b09b17f465ef95c6a59c2f3f88"
+  },
+  "src/eve/wardrobe/__init__.py": {
+    "mtime": 1788464043.6781409,
+    "seen": 1789772503.512494,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve/wardrobe/catalog.py": {
+    "mtime": 1788464043.6786456,
+    "seen": 1789772503.512494,
+    "ast_hash": "e4d9e175022e334c22ca0b9910280789",
+    "semantic_hash": "e4d9e175022e334c22ca0b9910280789"
+  },
+  "src/eve/wardrobe/cli.py": {
+    "mtime": 1788464043.6789804,
+    "seen": 1789772503.512494,
+    "ast_hash": "3977e0e763d253b723b7152de282fb7f",
+    "semantic_hash": "3977e0e763d253b723b7152de282fb7f"
+  },
+  "src/eve/wardrobe/store.py": {
+    "mtime": 1788464043.6792965,
+    "seen": 1789772503.512495,
+    "ast_hash": "6f7ae2594cf9c02153a5cff2ba05bf8e",
+    "semantic_hash": "6f7ae2594cf9c02153a5cff2ba05bf8e"
+  },
+  "src/eve/wardrobe/vision.py": {
+    "mtime": 1788464043.6795495,
+    "seen": 1789772503.512495,
+    "ast_hash": "3f55114b28611d58e3173b1eaabbb625",
+    "semantic_hash": "3f55114b28611d58e3173b1eaabbb625"
+  },
+  "src/eve_ambient/__init__.py": {
+    "mtime": 1787608230.5175045,
+    "seen": 1789772503.512495,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve_ambient/app.py": {
+    "mtime": 1788464043.680482,
+    "seen": 1789772503.5124962,
+    "ast_hash": "5bf1c88aef5d751b3f98f442305c2f48",
+    "semantic_hash": "5bf1c88aef5d751b3f98f442305c2f48"
+  },
+  "src/eve_ambient/filter.py": {
+    "mtime": 1787939453.9230936,
+    "seen": 1789772503.5124962,
+    "ast_hash": "d9f85c9d3d69af94c82063544f9dda53",
+    "semantic_hash": "d9f85c9d3d69af94c82063544f9dda53"
+  },
+  "src/eve_ambient/gates.py": {
+    "mtime": 1788464043.6813922,
+    "seen": 1789772503.5124962,
+    "ast_hash": "f9ab9b2d33edf10f7867d5fd9d56a2c4",
+    "semantic_hash": "f9ab9b2d33edf10f7867d5fd9d56a2c4"
+  },
+  "src/eve_ambient/notify.py": {
+    "mtime": 1788232709.6121593,
+    "seen": 1789772503.512497,
+    "ast_hash": "3500787db35a6c6664cfa80b2e065d83",
+    "semantic_hash": "3500787db35a6c6664cfa80b2e065d83"
+  },
+  "src/eve_ambient/ntfy.py": {
+    "mtime": 1787608230.519521,
+    "seen": 1789772503.512497,
+    "ast_hash": "22e044fc98782e9ae4659d48c0505fa6",
+    "semantic_hash": "22e044fc98782e9ae4659d48c0505fa6"
+  },
+  "src/eve_ambient/pipeline.py": {
+    "mtime": 1788464043.6817877,
+    "seen": 1789772503.512497,
+    "ast_hash": "79832ae7bc07c659c76e150923df0755",
+    "semantic_hash": "79832ae7bc07c659c76e150923df0755"
+  },
+  "src/eve_ambient/sources/__init__.py": {
+    "mtime": 1788464043.6822715,
+    "seen": 1789772503.512498,
+    "ast_hash": "dd04169b97d80194f0372d1d56069f17",
+    "semantic_hash": "dd04169b97d80194f0372d1d56069f17"
+  },
+  "src/eve_ambient/sources/calendar.py": {
+    "mtime": 1787608230.52032,
+    "seen": 1789772503.512498,
+    "ast_hash": "36da494f4969d1e4924bd209280fe273",
+    "semantic_hash": "36da494f4969d1e4924bd209280fe273"
+  },
+  "src/eve_ambient/sources/coding.py": {
+    "mtime": 1788464043.6825006,
+    "seen": 1789772503.512498,
+    "ast_hash": "89a39d2eda336c83387a24f3bbdff065",
+    "semantic_hash": "89a39d2eda336c83387a24f3bbdff065"
+  },
+  "src/eve_ambient/sources/computer.py": {
+    "mtime": 1788275151.6496105,
+    "seen": 1789772503.5124989,
+    "ast_hash": "0fc0aee2751034390eb98ef7d15ad51b",
+    "semantic_hash": "0fc0aee2751034390eb98ef7d15ad51b"
+  },
+  "src/eve_ambient/sources/finances.py": {
+    "mtime": 1787608230.520591,
+    "seen": 1789772503.5124989,
+    "ast_hash": "38a2e9bac706540627523b9f0cfbd74a",
+    "semantic_hash": "38a2e9bac706540627523b9f0cfbd74a"
+  },
+  "src/eve_ambient/sources/home.py": {
+    "mtime": 1787608230.5208454,
+    "seen": 1789772503.5124989,
+    "ast_hash": "03f18d557f2ea8435dba6e1f7a5a0461",
+    "semantic_hash": "03f18d557f2ea8435dba6e1f7a5a0461"
+  },
+  "src/eve_ambient/sources/mail.py": {
+    "mtime": 1787608230.5211616,
+    "seen": 1789772503.5125,
+    "ast_hash": "463e56b26183531e7d06b51b4b0b6bfe",
+    "semantic_hash": "463e56b26183531e7d06b51b4b0b6bfe"
+  },
+  "src/eve_ambient/store.py": {
+    "mtime": 1787939453.9244564,
+    "seen": 1789772503.5125,
+    "ast_hash": "02c7ad691ec70ad5e97c4fece78bc884",
+    "semantic_hash": "02c7ad691ec70ad5e97c4fece78bc884"
+  },
+  "src/eve_ambient/types.py": {
+    "mtime": 1787608230.5218785,
+    "seen": 1789772503.5125,
+    "ast_hash": "eac17a1e36bd871c1de887ec67d41734",
+    "semantic_hash": "eac17a1e36bd871c1de887ec67d41734"
+  },
+  "src/eve_computer/__init__.py": {
+    "mtime": 1788233180.246916,
+    "seen": 1789772503.512501,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve_computer/acp/__init__.py": {
+    "mtime": 1788464043.6825857,
+    "seen": 1789772503.512501,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve_computer/acp/client.py": {
+    "mtime": 1788464043.6829302,
+    "seen": 1789772503.512501,
+    "ast_hash": "fc22e6477dbd8c56c7457b53f62e7e10",
+    "semantic_hash": "fc22e6477dbd8c56c7457b53f62e7e10"
+  },
+  "src/eve_computer/acp/registry.py": {
+    "mtime": 1788464043.6832597,
+    "seen": 1789772503.512502,
+    "ast_hash": "531b1fae4288fe03882b7634ddf7b7cf",
+    "semantic_hash": "531b1fae4288fe03882b7634ddf7b7cf"
+  },
+  "src/eve_computer/acp/repo.py": {
+    "mtime": 1788464043.6836503,
+    "seen": 1789772503.512502,
+    "ast_hash": "616f8fec689dd9136bc52aed31974434",
+    "semantic_hash": "616f8fec689dd9136bc52aed31974434"
+  },
+  "src/eve_computer/acp/session.py": {
+    "mtime": 1788464043.6839256,
+    "seen": 1789772503.512502,
+    "ast_hash": "c43f27eabc9cf280f26e5870758f9f15",
+    "semantic_hash": "c43f27eabc9cf280f26e5870758f9f15"
+  },
+  "src/eve_computer/app.py": {
+    "mtime": 1788464043.684508,
+    "seen": 1789772503.512502,
+    "ast_hash": "da08dd69819494504ae2c37b996fc64d",
+    "semantic_hash": "da08dd69819494504ae2c37b996fc64d"
+  },
+  "src/eve_computer/bootstrap.sh": {
+    "mtime": 1788464043.6849406,
+    "seen": 1789772503.5125031,
+    "ast_hash": "b5c1b5194e9547870417f7214bb61a1b",
+    "semantic_hash": "b5c1b5194e9547870417f7214bb61a1b"
+  },
+  "src/eve_computer/gui_tool.py": {
+    "mtime": 1788233625.341976,
+    "seen": 1789772503.5125031,
+    "ast_hash": "4ddd29f8b862e34a13da01e45efc76ec",
+    "semantic_hash": "4ddd29f8b862e34a13da01e45efc76ec"
+  },
+  "src/eve_computer/harness.py": {
+    "mtime": 1788233642.4608612,
+    "seen": 1789772503.5125031,
+    "ast_hash": "cb1fa700206ab9f2d03fab23252c9b16",
+    "semantic_hash": "cb1fa700206ab9f2d03fab23252c9b16"
+  },
+  "src/eve_computer/settings.py": {
+    "mtime": 1788464043.685461,
+    "seen": 1789772503.512504,
+    "ast_hash": "d625aa07f095eec5bbec13be8d52ae04",
+    "semantic_hash": "d625aa07f095eec5bbec13be8d52ae04"
+  },
+  "src/eve_computer/store.py": {
+    "mtime": 1788233187.3144243,
+    "seen": 1789772503.512504,
+    "ast_hash": "3fbcb9d19575bfaa541d7ce572005c8b",
+    "semantic_hash": "3fbcb9d19575bfaa541d7ce572005c8b"
+  },
+  "src/eve_computer/templates/opencode.json": {
+    "mtime": 1788464043.6860924,
+    "seen": 1789772503.512504,
+    "ast_hash": "a1871a9256e6dc54c41f1b6637d8ae7b",
+    "semantic_hash": "a1871a9256e6dc54c41f1b6637d8ae7b"
+  },
+  "src/eve_sandbox/__init__.py": {
+    "mtime": 1787959326.2815952,
+    "seen": 1789772503.512505,
+    "ast_hash": "27079df72dfd345d9d5f5c0a91c7fa7b",
+    "semantic_hash": "27079df72dfd345d9d5f5c0a91c7fa7b"
+  },
+  "src/eve_sandbox/app.py": {
+    "mtime": 1787959326.2819648,
+    "seen": 1789772503.512505,
+    "ast_hash": "10e30ac2089464b43796869daf8bbadd",
+    "semantic_hash": "10e30ac2089464b43796869daf8bbadd"
+  },
+  "src/eve_sandbox/execute.py": {
+    "mtime": 1787959326.2822952,
+    "seen": 1789772503.512505,
+    "ast_hash": "b93c1c6da5214c931fe09e400409d885",
+    "semantic_hash": "b93c1c6da5214c931fe09e400409d885"
+  },
+  "src/eve_sandbox/runner.py": {
+    "mtime": 1787959326.282866,
+    "seen": 1789772503.512506,
+    "ast_hash": "0f6b61dd291c0dae1da0160af8354cac",
+    "semantic_hash": "0f6b61dd291c0dae1da0160af8354cac"
+  },
+  "src/eve_sandbox/settings.py": {
+    "mtime": 1787959326.283095,
+    "seen": 1789772503.512506,
+    "ast_hash": "d8e34a5a691b585ffdaa05f2d137c328",
+    "semantic_hash": "d8e34a5a691b585ffdaa05f2d137c328"
+  },
+  "src/eve_tools/__init__.py": {
+    "mtime": 1787513041.9958136,
+    "seen": 1789772503.512506,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/eve_tools/app.py": {
+    "mtime": 1788464043.6863353,
+    "seen": 1789772503.512507,
+    "ast_hash": "1f2de550280eee19287a91aebc18cb1c",
+    "semantic_hash": "1f2de550280eee19287a91aebc18cb1c"
+  },
+  "src/eve_tools/caldav_client.py": {
+    "mtime": 1787608230.5227003,
+    "seen": 1789772503.512507,
+    "ast_hash": "5ac3eabd39bfce8fd493b238d13bb19c",
+    "semantic_hash": "5ac3eabd39bfce8fd493b238d13bb19c"
+  },
+  "src/eve_tools/db.py": {
+    "mtime": 1788304968.2100465,
+    "seen": 1789772503.512507,
+    "ast_hash": "462cf13b7f1999411f24858c10820ebe",
+    "semantic_hash": "462cf13b7f1999411f24858c10820ebe"
+  },
+  "src/eve_tools/gmail.py": {
+    "mtime": 1787608230.5230184,
+    "seen": 1789772503.512508,
+    "ast_hash": "cc14781623989282f14eeece6e31f87a",
+    "semantic_hash": "cc14781623989282f14eeece6e31f87a"
+  },
+  "src/eve_tools/health.py": {
+    "mtime": 1788304968.210379,
+    "seen": 1789772503.512508,
+    "ast_hash": "009da8ffadb6d0a71bc483ab4a0d5df0",
+    "semantic_hash": "009da8ffadb6d0a71bc483ab4a0d5df0"
+  },
+  "src/eve_tools/home_assistant.py": {
+    "mtime": 1788464043.686697,
+    "seen": 1789772503.512508,
+    "ast_hash": "3dd442b659fda40f177d1f994de04b93",
+    "semantic_hash": "3dd442b659fda40f177d1f994de04b93"
+  },
+  "src/eve_tools/immich.py": {
+    "mtime": 1788464043.6870675,
+    "seen": 1789772503.5125089,
+    "ast_hash": "9129801f0334a678b392cd6093e6dc81",
+    "semantic_hash": "9129801f0334a678b392cd6093e6dc81"
+  },
+  "src/eve_tools/mcp_dispatch.py": {
+    "mtime": 1787513041.9988718,
+    "seen": 1789772503.5125089,
+    "ast_hash": "bf298acc9d00048bd9ff84af86275788",
+    "semantic_hash": "bf298acc9d00048bd9ff84af86275788"
+  },
+  "src/eve_tools/mcp_servers.py": {
+    "mtime": 1787513041.9994233,
+    "seen": 1789772503.5125089,
+    "ast_hash": "7857bfb9c4a872e45284590ea3730da1",
+    "semantic_hash": "7857bfb9c4a872e45284590ea3730da1"
+  },
+  "src/eve_tools/monarch.py": {
+    "mtime": 1787847257.843012,
+    "seen": 1789772503.51251,
+    "ast_hash": "bb78a599d0e6534c47d765e97f540335",
+    "semantic_hash": "bb78a599d0e6534c47d765e97f540335"
+  },
+  "src/eve_tools/oauth_store.py": {
+    "mtime": 1788304968.210765,
+    "seen": 1789772503.51251,
+    "ast_hash": "38bb6857bb4ca61781be16881b964c7f",
+    "semantic_hash": "38bb6857bb4ca61781be16881b964c7f"
+  },
+  "src/eve_tools/oura.py": {
+    "mtime": 1788304968.211091,
+    "seen": 1789772503.512511,
+    "ast_hash": "3bc74cbd584e2923aaa64732ce1f78f7",
+    "semantic_hash": "3bc74cbd584e2923aaa64732ce1f78f7"
+  },
+  "src/eve_tools/settings.py": {
+    "mtime": 1788464043.687586,
+    "seen": 1789772503.512511,
+    "ast_hash": "d3399b5fe8c67eec2ebd0658eefe4909",
+    "semantic_hash": "d3399b5fe8c67eec2ebd0658eefe4909"
+  },
+  "src/eve_tools/whoop.py": {
+    "mtime": 1788304968.2120242,
+    "seen": 1789772503.512511,
+    "ast_hash": "2844c40ffad2c35c025e954e193e47a7",
+    "semantic_hash": "2844c40ffad2c35c025e954e193e47a7"
+  },
+  "tests/__init__.py": {
+    "mtime": 1787513042.0010266,
+    "seen": 1789772503.512512,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "tests/conftest.py": {
+    "mtime": 1787959326.2836595,
+    "seen": 1789772503.512512,
+    "ast_hash": "f7657419805a968b40af826343c7cd02",
+    "semantic_hash": "f7657419805a968b40af826343c7cd02"
+  },
+  "tests/fixtures/stub_home_assistant.py": {
+    "mtime": 1788464043.687864,
+    "seen": 1789772503.512512,
+    "ast_hash": "5fc1cc557209d6ebb02713a1f7e49463",
+    "semantic_hash": "5fc1cc557209d6ebb02713a1f7e49463"
+  },
+  "tests/test_acp_app.py": {
+    "mtime": 1788464043.6881778,
+    "seen": 1789772503.512513,
+    "ast_hash": "cf8bdd24057a2e302db6795853238921",
+    "semantic_hash": "cf8bdd24057a2e302db6795853238921"
+  },
+  "tests/test_acp_client.py": {
+    "mtime": 1788464043.6883934,
+    "seen": 1789772503.512513,
+    "ast_hash": "901656e3c0960d39cffd84d0b4ae9486",
+    "semantic_hash": "901656e3c0960d39cffd84d0b4ae9486"
+  },
+  "tests/test_acp_registry.py": {
+    "mtime": 1788464043.6889365,
+    "seen": 1789772503.512513,
+    "ast_hash": "07f03e091ffbd9090c38ca89bc3276b6",
+    "semantic_hash": "07f03e091ffbd9090c38ca89bc3276b6"
+  },
+  "tests/test_acp_repo.py": {
+    "mtime": 1788464043.6892042,
+    "seen": 1789772503.512514,
+    "ast_hash": "760d737862f5f479dd8e0c4cb3d427d8",
+    "semantic_hash": "760d737862f5f479dd8e0c4cb3d427d8"
+  },
+  "tests/test_acp_session.py": {
+    "mtime": 1788464043.6894164,
+    "seen": 1789772503.512514,
+    "ast_hash": "442fc20d1917a465c6f0f93e37cded20",
+    "semantic_hash": "442fc20d1917a465c6f0f93e37cded20"
+  },
+  "tests/test_alembic_graph.py": {
+    "mtime": 1788467358.2421772,
+    "seen": 1789772503.5125172,
+    "ast_hash": "5ce4b888b249b444cbed00361908d6c0",
+    "semantic_hash": "5ce4b888b249b444cbed00361908d6c0"
+  },
+  "tests/test_ambient_app.py": {
+    "mtime": 1788275267.66997,
+    "seen": 1789772503.512518,
+    "ast_hash": "86787e74cbaded32da8e45f59c3f8a66",
+    "semantic_hash": "86787e74cbaded32da8e45f59c3f8a66"
+  },
+  "tests/test_ambient_filter.py": {
+    "mtime": 1787939453.9250858,
+    "seen": 1789772503.512518,
+    "ast_hash": "bd7dce11d9b563d2e13c5158dfbdd561",
+    "semantic_hash": "bd7dce11d9b563d2e13c5158dfbdd561"
+  },
+  "tests/test_ambient_gates.py": {
+    "mtime": 1788464043.6945434,
+    "seen": 1789772503.512519,
+    "ast_hash": "66dffe8b8c1bb19c1fa5535d47165032",
+    "semantic_hash": "66dffe8b8c1bb19c1fa5535d47165032"
+  },
+  "tests/test_ambient_integration.py": {
+    "mtime": 1787608230.5259247,
+    "seen": 1789772503.512519,
+    "ast_hash": "a75674d9616e51a10a56dd0a9e3b2169",
+    "semantic_hash": "a75674d9616e51a10a56dd0a9e3b2169"
+  },
+  "tests/test_ambient_live.py": {
+    "mtime": 1787608230.526168,
+    "seen": 1789772503.512519,
+    "ast_hash": "46801a6432b1b395d8cf86b64ffad461",
+    "semantic_hash": "46801a6432b1b395d8cf86b64ffad461"
+  },
+  "tests/test_ambient_notify.py": {
+    "mtime": 1788232689.2702997,
+    "seen": 1789772503.5125198,
+    "ast_hash": "b0813ac94df9c2277dda62c0807c81c1",
+    "semantic_hash": "b0813ac94df9c2277dda62c0807c81c1"
+  },
+  "tests/test_ambient_ntfy.py": {
+    "mtime": 1787608230.5267138,
+    "seen": 1789772503.5125198,
+    "ast_hash": "7ea1ae46c4043d49a3c4c7992cec80f7",
+    "semantic_hash": "7ea1ae46c4043d49a3c4c7992cec80f7"
+  },
+  "tests/test_ambient_pipeline.py": {
+    "mtime": 1788275253.331845,
+    "seen": 1789772503.5125198,
+    "ast_hash": "559fdf357387d5d012e9645e319266bd",
+    "semantic_hash": "559fdf357387d5d012e9645e319266bd"
+  },
+  "tests/test_ambient_sources.py": {
+    "mtime": 1787608230.5275211,
+    "seen": 1789772503.512521,
+    "ast_hash": "5330cb3dae7284db34aacd6e631969c6",
+    "semantic_hash": "5330cb3dae7284db34aacd6e631969c6"
+  },
+  "tests/test_ambient_sources_calendar.py": {
+    "mtime": 1787608230.5278077,
+    "seen": 1789772503.512521,
+    "ast_hash": "e6dbee82659b137fc717aa2438c93e39",
+    "semantic_hash": "e6dbee82659b137fc717aa2438c93e39"
+  },
+  "tests/test_ambient_sources_coding.py": {
+    "mtime": 1788464043.695074,
+    "seen": 1789772503.512521,
+    "ast_hash": "2c84966ce87314bf0b34c4ff24329ccc",
+    "semantic_hash": "2c84966ce87314bf0b34c4ff24329ccc"
+  },
+  "tests/test_ambient_sources_computer.py": {
+    "mtime": 1788275236.1535845,
+    "seen": 1789772503.512522,
+    "ast_hash": "4ddfd723a02f0d30715d4c2ff5d45577",
+    "semantic_hash": "4ddfd723a02f0d30715d4c2ff5d45577"
+  },
+  "tests/test_ambient_sources_finances.py": {
+    "mtime": 1787608230.5280435,
+    "seen": 1789772503.512522,
+    "ast_hash": "542749595ba4b43b7829011082d196dd",
+    "semantic_hash": "542749595ba4b43b7829011082d196dd"
+  },
+  "tests/test_ambient_sources_mail.py": {
+    "mtime": 1787608230.5282075,
+    "seen": 1789772503.512522,
+    "ast_hash": "2ffd0fc2dfa0cf071a8712556c7c8ac0",
+    "semantic_hash": "2ffd0fc2dfa0cf071a8712556c7c8ac0"
+  },
+  "tests/test_ambient_store.py": {
+    "mtime": 1787939453.9262605,
+    "seen": 1789772503.512523,
+    "ast_hash": "57b540ecc2a3000258d4903b4d938eca",
+    "semantic_hash": "57b540ecc2a3000258d4903b4d938eca"
+  },
+  "tests/test_auth.py": {
+    "mtime": 1787846786.9091609,
+    "seen": 1789772503.512523,
+    "ast_hash": "b904b8a9753f2f6ce072a820db63aa7a",
+    "semantic_hash": "b904b8a9753f2f6ce072a820db63aa7a"
+  },
+  "tests/test_coding_catalogue.py": {
+    "mtime": 1788464043.6953244,
+    "seen": 1789772503.512523,
+    "ast_hash": "a25fa353c943499817d3b1428785e917",
+    "semantic_hash": "a25fa353c943499817d3b1428785e917"
+  },
+  "tests/test_coding_dispatch.py": {
+    "mtime": 1788464043.6956594,
+    "seen": 1789772503.5125241,
+    "ast_hash": "74bf2af8cfe808d776aa745a5a180ddb",
+    "semantic_hash": "74bf2af8cfe808d776aa745a5a180ddb"
+  },
+  "tests/test_coding_integration.py": {
+    "mtime": 1788464043.6960974,
+    "seen": 1789772503.5125241,
+    "ast_hash": "6648424eaccd7c0dcf6b5cc7ecad1827",
+    "semantic_hash": "6648424eaccd7c0dcf6b5cc7ecad1827"
+  },
+  "tests/test_coding_live.py": {
+    "mtime": 1788464043.6963675,
+    "seen": 1789772503.5125241,
+    "ast_hash": "76a0346aa618351522f4a47aef2fd072",
+    "semantic_hash": "76a0346aa618351522f4a47aef2fd072"
+  },
+  "tests/test_coding_store.py": {
+    "mtime": 1788464043.696588,
+    "seen": 1789772503.512525,
+    "ast_hash": "03acd8d1f719d5a5e1c9c8918d0e7766",
+    "semantic_hash": "03acd8d1f719d5a5e1c9c8918d0e7766"
+  },
+  "tests/test_coding_supervisor.py": {
+    "mtime": 1788464043.697031,
+    "seen": 1789772503.512525,
+    "ast_hash": "607c1b8786b5d5de079d0e90ea9949f8",
+    "semantic_hash": "607c1b8786b5d5de079d0e90ea9949f8"
+  },
+  "tests/test_computer_app.py": {
+    "mtime": 1788233207.9872458,
+    "seen": 1789772503.512525,
+    "ast_hash": "0b5bd26e6dbe2ecde2508958571f1967",
+    "semantic_hash": "0b5bd26e6dbe2ecde2508958571f1967"
+  },
+  "tests/test_computer_dispatch.py": {
+    "mtime": 1788464043.6974006,
+    "seen": 1789772503.512526,
+    "ast_hash": "b9114f21079c821d2038001c37b7a1ee",
+    "semantic_hash": "b9114f21079c821d2038001c37b7a1ee"
+  },
+  "tests/test_computer_docker_image.py": {
+    "mtime": 1788464043.6979911,
+    "seen": 1789772503.512526,
+    "ast_hash": "7f28fcf98cd350fd2ba7140818b02102",
+    "semantic_hash": "7f28fcf98cd350fd2ba7140818b02102"
+  },
+  "tests/test_computer_live.py": {
+    "mtime": 1788234408.9154127,
+    "seen": 1789772503.512526,
+    "ast_hash": "779195531b67689e2d2189ed10e44533",
+    "semantic_hash": "779195531b67689e2d2189ed10e44533"
+  },
+  "tests/test_computer_poller.py": {
+    "mtime": 1788231834.534385,
+    "seen": 1789772503.512527,
+    "ast_hash": "1e13b370d1db1beea6ee8c0962107240",
+    "semantic_hash": "1e13b370d1db1beea6ee8c0962107240"
+  },
+  "tests/test_computer_settings.py": {
+    "mtime": 1788231582.9280262,
+    "seen": 1789772503.512528,
+    "ast_hash": "6bb94e6952a96e0ad8a44ce249f44270",
+    "semantic_hash": "6bb94e6952a96e0ad8a44ce249f44270"
+  },
+  "tests/test_computer_store.py": {
+    "mtime": 1788275212.1850944,
+    "seen": 1789772503.512529,
+    "ast_hash": "9cc2312c961230faf48a6e411b4413dd",
+    "semantic_hash": "9cc2312c961230faf48a6e411b4413dd"
+  },
+  "tests/test_context.py": {
+    "mtime": 1787939453.926565,
+    "seen": 1789772503.512529,
+    "ast_hash": "685cb60e58ddee8a5abb4999b9806e38",
+    "semantic_hash": "685cb60e58ddee8a5abb4999b9806e38"
+  },
+  "tests/test_eval_datasets.py": {
+    "mtime": 1787939453.9267845,
+    "seen": 1789772503.5125299,
+    "ast_hash": "1b635b3f5d416f15a339677ee04cf76c",
+    "semantic_hash": "1b635b3f5d416f15a339677ee04cf76c"
+  },
+  "tests/test_eval_gate.py": {
+    "mtime": 1787939453.9270139,
+    "seen": 1789772503.5125299,
+    "ast_hash": "0dddbcb4c4efa80c12c3c37d033afb0f",
+    "semantic_hash": "0dddbcb4c4efa80c12c3c37d033afb0f"
+  },
+  "tests/test_eval_hygiene.py": {
+    "mtime": 1787939453.9272244,
+    "seen": 1789772503.5125299,
+    "ast_hash": "3ee3aa737251f211859a763434264e08",
+    "semantic_hash": "3ee3aa737251f211859a763434264e08"
+  },
+  "tests/test_eval_integration.py": {
+    "mtime": 1787939453.9274387,
+    "seen": 1789772503.512531,
+    "ast_hash": "6be45df2e7d5a579c8bcd1f9ba83644a",
+    "semantic_hash": "6be45df2e7d5a579c8bcd1f9ba83644a"
+  },
+  "tests/test_eval_replay.py": {
+    "mtime": 1787939453.9276235,
+    "seen": 1789772503.512531,
+    "ast_hash": "d7736be4fa536036b3dba535356a7174",
+    "semantic_hash": "d7736be4fa536036b3dba535356a7174"
+  },
+  "tests/test_eval_scorers.py": {
+    "mtime": 1788285670.9037158,
+    "seen": 1789772503.512531,
+    "ast_hash": "8bce139e99d41c10e15a78ecfaa70f7b",
+    "semantic_hash": "8bce139e99d41c10e15a78ecfaa70f7b"
+  },
+  "tests/test_eve_tools_app.py": {
+    "mtime": 1788464043.6983423,
+    "seen": 1789772503.512532,
+    "ast_hash": "676fb6e65cb933734316eff2297c9fa2",
+    "semantic_hash": "676fb6e65cb933734316eff2297c9fa2"
+  },
+  "tests/test_eve_tools_caldav.py": {
+    "mtime": 1787608230.5290442,
+    "seen": 1789772503.512532,
+    "ast_hash": "b49b88780c73581aa93728b8d274b3a8",
+    "semantic_hash": "b49b88780c73581aa93728b8d274b3a8"
+  },
+  "tests/test_eve_tools_db.py": {
+    "mtime": 1788304968.2124524,
+    "seen": 1789772503.512532,
+    "ast_hash": "79e30005790aa1ecb5ede6368bffdeb6",
+    "semantic_hash": "79e30005790aa1ecb5ede6368bffdeb6"
+  },
+  "tests/test_eve_tools_gmail.py": {
+    "mtime": 1787608230.5293355,
+    "seen": 1789772503.512533,
+    "ast_hash": "ec1577b0a7f85d4f35901278c33a6bac",
+    "semantic_hash": "ec1577b0a7f85d4f35901278c33a6bac"
+  },
+  "tests/test_eve_tools_health.py": {
+    "mtime": 1788304968.2128665,
+    "seen": 1789772503.512533,
+    "ast_hash": "71229dda7b87840d44f668f8a0620738",
+    "semantic_hash": "71229dda7b87840d44f668f8a0620738"
+  },
+  "tests/test_eve_tools_home_assistant.py": {
+    "mtime": 1788464043.698643,
+    "seen": 1789772503.512533,
+    "ast_hash": "05db1cc5d9318ccc7af0988f90bd8393",
+    "semantic_hash": "05db1cc5d9318ccc7af0988f90bd8393"
+  },
+  "tests/test_eve_tools_immich.py": {
+    "mtime": 1788464043.6989033,
+    "seen": 1789772503.512534,
+    "ast_hash": "850c881914dac7a4d08078440287b897",
+    "semantic_hash": "850c881914dac7a4d08078440287b897"
+  },
+  "tests/test_eve_tools_immich_live.py": {
+    "mtime": 1788464043.699182,
+    "seen": 1789772503.512534,
+    "ast_hash": "bc23960bc339a9ac93a32fdd46d7c8b0",
+    "semantic_hash": "bc23960bc339a9ac93a32fdd46d7c8b0"
+  },
+  "tests/test_eve_tools_mcp.py": {
+    "mtime": 1787513042.008546,
+    "seen": 1789772503.512535,
+    "ast_hash": "9378399e043a6a8a5df41fa60f2414ee",
+    "semantic_hash": "9378399e043a6a8a5df41fa60f2414ee"
+  },
+  "tests/test_eve_tools_monarch.py": {
+    "mtime": 1787847257.8433573,
+    "seen": 1789772503.512535,
+    "ast_hash": "d701a1ef9d5d9eea700e35e9cb54dbda",
+    "semantic_hash": "d701a1ef9d5d9eea700e35e9cb54dbda"
+  },
+  "tests/test_eve_tools_oauth_store.py": {
+    "mtime": 1788304968.2131197,
+    "seen": 1789772503.512535,
+    "ast_hash": "a962b062b08a42956961b86a0bc765b2",
+    "semantic_hash": "a962b062b08a42956961b86a0bc765b2"
+  },
+  "tests/test_eve_tools_oura.py": {
+    "mtime": 1788304968.2133775,
+    "seen": 1789772503.512536,
+    "ast_hash": "7f59452427883c539303c9be38a845c3",
+    "semantic_hash": "7f59452427883c539303c9be38a845c3"
+  },
+  "tests/test_eve_tools_whoop.py": {
+    "mtime": 1788304968.2137787,
+    "seen": 1789772503.512536,
+    "ast_hash": "61ebdc49af468b121cc750729e70b8ab",
+    "semantic_hash": "61ebdc49af468b121cc750729e70b8ab"
+  },
+  "tests/test_family.py": {
+    "mtime": 1788464043.6999917,
+    "seen": 1789772503.512536,
+    "ast_hash": "57ca0ac784394ec7eda41f44a1fb3814",
+    "semantic_hash": "57ca0ac784394ec7eda41f44a1fb3814"
+  },
+  "tests/test_gmail_oauth_setup.py": {
+    "mtime": 1787670055.3505125,
+    "seen": 1789772503.512537,
+    "ast_hash": "facea8fb4d835cd47b42e9dc98984ff9",
+    "semantic_hash": "facea8fb4d835cd47b42e9dc98984ff9"
+  },
+  "tests/test_graph.py": {
+    "mtime": 1789144045.1768813,
+    "seen": 1789772503.512537,
+    "ast_hash": "5a464baebb9a6c391b6f22d603ee9af4",
+    "semantic_hash": "5a464baebb9a6c391b6f22d603ee9af4"
+  },
+  "tests/test_health_oauth_setup.py": {
+    "mtime": 1788304968.214489,
+    "seen": 1789772503.512537,
+    "ast_hash": "58f030edaf410f33e72f5196efdeab51",
+    "semantic_hash": "58f030edaf410f33e72f5196efdeab51"
+  },
+  "tests/test_integration.py": {
+    "mtime": 1787959326.285144,
+    "seen": 1789772503.5125382,
+    "ast_hash": "1cfa9aa7538ad9298db18f7adb0d4fe0",
+    "semantic_hash": "1cfa9aa7538ad9298db18f7adb0d4fe0"
+  },
+  "tests/test_live_models.py": {
+    "mtime": 1788285670.9054258,
+    "seen": 1789772503.5125382,
+    "ast_hash": "729b39acccc1e5009cdb331e0b8eb296",
+    "semantic_hash": "729b39acccc1e5009cdb331e0b8eb296"
+  },
+  "tests/test_memory_embed.py": {
+    "mtime": 1787513042.0193374,
+    "seen": 1789772503.5125382,
+    "ast_hash": "400cbd95f2f6a9777cb3a7249d69bcda",
+    "semantic_hash": "400cbd95f2f6a9777cb3a7249d69bcda"
+  },
+  "tests/test_memory_extract.py": {
+    "mtime": 1788285670.9058697,
+    "seen": 1789772503.512539,
+    "ast_hash": "f66f0b5ef3502c9dcf30b120f1f7b5d3",
+    "semantic_hash": "f66f0b5ef3502c9dcf30b120f1f7b5d3"
+  },
+  "tests/test_memory_integration.py": {
+    "mtime": 1787939453.9290433,
+    "seen": 1789772503.512539,
+    "ast_hash": "4b79644c212723155ed9e4958b36a44d",
+    "semantic_hash": "4b79644c212723155ed9e4958b36a44d"
+  },
+  "tests/test_memory_pending.py": {
+    "mtime": 1788285670.9062185,
+    "seen": 1789772503.512539,
+    "ast_hash": "23ded16bd85663f2c2260a64812eb08e",
+    "semantic_hash": "23ded16bd85663f2c2260a64812eb08e"
+  },
+  "tests/test_memory_ranking.py": {
+    "mtime": 1787513042.0213842,
+    "seen": 1789772503.5125399,
+    "ast_hash": "3b60de11b1615c34d4d96fd269f95155",
+    "semantic_hash": "3b60de11b1615c34d4d96fd269f95155"
+  },
+  "tests/test_memory_recall.py": {
+    "mtime": 1788285670.906561,
+    "seen": 1789772503.5125399,
+    "ast_hash": "8d72621bac8d537e03cde0a4a5a9b8f1",
+    "semantic_hash": "8d72621bac8d537e03cde0a4a5a9b8f1"
+  },
+  "tests/test_memory_search.py": {
+    "mtime": 1788285670.9069736,
+    "seen": 1789772503.5125399,
+    "ast_hash": "937177f15e2467e89e63d9bd666834dd",
+    "semantic_hash": "937177f15e2467e89e63d9bd666834dd"
+  },
+  "tests/test_memory_store.py": {
+    "mtime": 1787959326.2867115,
+    "seen": 1789772503.5125408,
+    "ast_hash": "76a6cac7121f91d449397a1270775c63",
+    "semantic_hash": "76a6cac7121f91d449397a1270775c63"
+  },
+  "tests/test_models.py": {
+    "mtime": 1787513042.0246165,
+    "seen": 1789772503.5125408,
+    "ast_hash": "0f13f3fc78a4ac70d413a87ad5097510",
+    "semantic_hash": "0f13f3fc78a4ac70d413a87ad5097510"
+  },
+  "tests/test_pat.py": {
+    "mtime": 1787846786.9099555,
+    "seen": 1789772503.5125408,
+    "ast_hash": "02574c0180008e8476efc0e6478493cf",
+    "semantic_hash": "02574c0180008e8476efc0e6478493cf"
+  },
+  "tests/test_sandbox_app.py": {
+    "mtime": 1787959326.286993,
+    "seen": 1789772503.512542,
+    "ast_hash": "368d641951e356a9447c3134a28ec342",
+    "semantic_hash": "368d641951e356a9447c3134a28ec342"
+  },
+  "tests/test_sandbox_docker_image.py": {
+    "mtime": 1787959326.2872713,
+    "seen": 1789772503.512542,
+    "ast_hash": "d7c550d270dcff4abe4d6781240cf327",
+    "semantic_hash": "d7c550d270dcff4abe4d6781240cf327"
+  },
+  "tests/test_sandbox_execute.py": {
+    "mtime": 1787959326.2875307,
+    "seen": 1789772503.512542,
+    "ast_hash": "1ae502ee007ee24a6b243b7264e8de44",
+    "semantic_hash": "1ae502ee007ee24a6b243b7264e8de44"
+  },
+  "tests/test_sandbox_http_dispatch.py": {
+    "mtime": 1787959326.2877245,
+    "seen": 1789772503.512543,
+    "ast_hash": "f327b8a78587a31e0fae32ec675c3212",
+    "semantic_hash": "f327b8a78587a31e0fae32ec675c3212"
+  },
+  "tests/test_sandbox_live.py": {
+    "mtime": 1787959326.287978,
+    "seen": 1789772503.512543,
+    "ast_hash": "70370bff3e290ed53f4ad6c8f0902e95",
+    "semantic_hash": "70370bff3e290ed53f4ad6c8f0902e95"
+  },
+  "tests/test_settings.py": {
+    "mtime": 1788902962.2938142,
+    "seen": 1789772503.512543,
+    "ast_hash": "2bda9480191da2a577c13991ae946037",
+    "semantic_hash": "2bda9480191da2a577c13991ae946037"
+  },
+  "tests/test_skills_authoring.py": {
+    "mtime": 1788464043.700825,
+    "seen": 1789772503.512544,
+    "ast_hash": "c6ad999c2b6ec6b4255102f385500609",
+    "semantic_hash": "c6ad999c2b6ec6b4255102f385500609"
+  },
+  "tests/test_skills_build_a_ui.py": {
+    "mtime": 1788464043.7014256,
+    "seen": 1789772503.512544,
+    "ast_hash": "30fd1d8e9afb081c8d9cb7d29c7f755a",
+    "semantic_hash": "30fd1d8e9afb081c8d9cb7d29c7f755a"
+  },
+  "tests/test_skills_cli.py": {
+    "mtime": 1787939453.930689,
+    "seen": 1789772503.512544,
+    "ast_hash": "bcbcabb06891faa58eb11ff0e0053437",
+    "semantic_hash": "bcbcabb06891faa58eb11ff0e0053437"
+  },
+  "tests/test_skills_in_image.py": {
+    "mtime": 1789144045.1771224,
+    "seen": 1789772503.512545,
+    "ast_hash": "4dd25bfa45f471c5f9bf4f3e6a58a368",
+    "semantic_hash": "4dd25bfa45f471c5f9bf4f3e6a58a368"
+  },
+  "tests/test_skills_integration.py": {
+    "mtime": 1788285670.9075503,
+    "seen": 1789772503.512545,
+    "ast_hash": "7f253ac1146eea5cc38990bb7ad45c6f",
+    "semantic_hash": "7f253ac1146eea5cc38990bb7ad45c6f"
+  },
+  "tests/test_skills_materialize.py": {
+    "mtime": 1787959326.2886512,
+    "seen": 1789772503.512545,
+    "ast_hash": "08954cd0026a59013c69b4c51b201419",
+    "semantic_hash": "08954cd0026a59013c69b4c51b201419"
+  },
+  "tests/test_skills_registry.py": {
+    "mtime": 1789144045.1776073,
+    "seen": 1789772503.512546,
+    "ast_hash": "2d31688ff300fceb2ce1a92a02f6159e",
+    "semantic_hash": "2d31688ff300fceb2ce1a92a02f6159e"
+  },
+  "tests/test_skills_search.py": {
+    "mtime": 1788464043.7021353,
+    "seen": 1789772503.512546,
+    "ast_hash": "9a24ea602bf0be1162c5e4e2d2534192",
+    "semantic_hash": "9a24ea602bf0be1162c5e4e2d2534192"
+  },
+  "tests/test_skills_specialist_search.py": {
+    "mtime": 1788464043.702398,
+    "seen": 1789772503.512546,
+    "ast_hash": "5625a406ce30421186b5602f8d33d74f",
+    "semantic_hash": "5625a406ce30421186b5602f8d33d74f"
+  },
+  "tests/test_specialists_base.py": {
+    "mtime": 1788464043.7027333,
+    "seen": 1789772503.512547,
+    "ast_hash": "9c19d41c61589130897da3a6621cc67b",
+    "semantic_hash": "9c19d41c61589130897da3a6621cc67b"
+  },
+  "tests/test_specialists_finances.py": {
+    "mtime": 1787513042.0296843,
+    "seen": 1789772503.512547,
+    "ast_hash": "c5a637350d03ddfff184eca7ae95654d",
+    "semantic_hash": "c5a637350d03ddfff184eca7ae95654d"
+  },
+  "tests/test_specialists_health.py": {
+    "mtime": 1788304968.2147653,
+    "seen": 1789772503.512547,
+    "ast_hash": "e2705cf06bb3ed57670d831ee73fa205",
+    "semantic_hash": "e2705cf06bb3ed57670d831ee73fa205"
+  },
+  "tests/test_specialists_home.py": {
+    "mtime": 1787513042.03098,
+    "seen": 1789772503.5125482,
+    "ast_hash": "f23a969b3085044809e2ba998b8dfe33",
+    "semantic_hash": "f23a969b3085044809e2ba998b8dfe33"
+  },
+  "tests/test_specialists_integration.py": {
+    "mtime": 1788285670.9082994,
+    "seen": 1789772503.5125482,
+    "ast_hash": "fe66bd3ac486246581e33285d33d0fd6",
+    "semantic_hash": "fe66bd3ac486246581e33285d33d0fd6"
+  },
+  "tests/test_specialists_mail.py": {
+    "mtime": 1787513042.03258,
+    "seen": 1789772503.5125482,
+    "ast_hash": "62144e5edb8ba195964e401615240b9b",
+    "semantic_hash": "62144e5edb8ba195964e401615240b9b"
+  },
+  "tests/test_specialists_permissions.py": {
+    "mtime": 1787939453.9321573,
+    "seen": 1789772503.5125492,
+    "ast_hash": "97ef5d0c1673bd39e53375cc2e817064",
+    "semantic_hash": "97ef5d0c1673bd39e53375cc2e817064"
+  },
+  "tests/test_specialists_stylist.py": {
+    "mtime": 1788464043.70303,
+    "seen": 1789772503.5125492,
+    "ast_hash": "d42f14e199c50db9eb223d3d015f0bdd",
+    "semantic_hash": "d42f14e199c50db9eb223d3d015f0bdd"
+  },
+  "tests/test_state.py": {
+    "mtime": 1788285670.908626,
+    "seen": 1789772503.5125492,
+    "ast_hash": "96b2e7dc5f1b35c90429a6bb63f7a52a",
+    "semantic_hash": "96b2e7dc5f1b35c90429a6bb63f7a52a"
+  },
+  "tests/test_suggest.py": {
+    "mtime": 1788480571.5709584,
+    "seen": 1789772503.5125499,
+    "ast_hash": "1387f1cbb3f652338fc005fd439a4dcb",
+    "semantic_hash": "1387f1cbb3f652338fc005fd439a4dcb"
+  },
+  "tests/test_title.py": {
+    "mtime": 1788902962.2943006,
+    "seen": 1789772503.5125499,
+    "ast_hash": "ac226fe709cdcb85b47b50f62440e445",
+    "semantic_hash": "ac226fe709cdcb85b47b50f62440e445"
+  },
+  "tests/test_tools_client.py": {
+    "mtime": 1788464043.7034893,
+    "seen": 1789772503.5125499,
+    "ast_hash": "e3d4a200d29f9415b79790b2b0ee6a0b",
+    "semantic_hash": "e3d4a200d29f9415b79790b2b0ee6a0b"
+  },
+  "tests/test_tools_inspect.py": {
+    "mtime": 1787959326.2901542,
+    "seen": 1789772503.5125508,
+    "ast_hash": "0d5a685a3213b1593728da571f416a59",
+    "semantic_hash": "0d5a685a3213b1593728da571f416a59"
+  },
+  "tests/test_tools_integration.py": {
+    "mtime": 1787959326.290461,
+    "seen": 1789772503.5125508,
+    "ast_hash": "195f05b50a1adfc8fb20bf69b5af7f3f",
+    "semantic_hash": "195f05b50a1adfc8fb20bf69b5af7f3f"
+  },
+  "tests/test_tools_propose.py": {
+    "mtime": 1788285670.9096787,
+    "seen": 1789772503.512552,
+    "ast_hash": "2ee1ef3121cdfb8ec3defe3946e55926",
+    "semantic_hash": "2ee1ef3121cdfb8ec3defe3946e55926"
+  },
+  "tests/test_tools_store.py": {
+    "mtime": 1787959326.2910278,
+    "seen": 1789772503.512552,
+    "ast_hash": "ea753d688b5f4b3674d094c8809b29c4",
+    "semantic_hash": "ea753d688b5f4b3674d094c8809b29c4"
+  },
+  "tests/test_ui_actions.py": {
+    "mtime": 1788464043.7037926,
+    "seen": 1789772503.512552,
+    "ast_hash": "6e53c9a4c9f992bce47914e369d4a694",
+    "semantic_hash": "6e53c9a4c9f992bce47914e369d4a694"
+  },
+  "tests/test_ui_integration.py": {
+    "mtime": 1788464043.704067,
+    "seen": 1789772503.512553,
+    "ast_hash": "f366ccdf4c3221bd1ed003ead561a2ad",
+    "semantic_hash": "f366ccdf4c3221bd1ed003ead561a2ad"
+  },
+  "tests/test_ui_persist.py": {
+    "mtime": 1788464043.704539,
+    "seen": 1789772503.512553,
+    "ast_hash": "a58d693c1d9dc4ba2e5b1717346885ce",
+    "semantic_hash": "a58d693c1d9dc4ba2e5b1717346885ce"
+  },
+  "tests/test_ui_protocol.py": {
+    "mtime": 1788464043.7050412,
+    "seen": 1789772503.512553,
+    "ast_hash": "38d07017d6bfea6ae0f9bd40ffd5bfa9",
+    "semantic_hash": "38d07017d6bfea6ae0f9bd40ffd5bfa9"
+  },
+  "tests/test_ui_schema.py": {
+    "mtime": 1789144045.1778598,
+    "seen": 1789772503.512554,
+    "ast_hash": "c2901bba5ce6c6d76552b4296c567a2e",
+    "semantic_hash": "c2901bba5ce6c6d76552b4296c567a2e"
+  },
+  "tests/test_ui_stream.py": {
+    "mtime": 1788464043.7054667,
+    "seen": 1789772503.512554,
+    "ast_hash": "96e5ca35c6d901284a407f55895a437c",
+    "semantic_hash": "96e5ca35c6d901284a407f55895a437c"
+  },
+  "tests/test_ui_surface.py": {
+    "mtime": 1788464043.7057483,
+    "seen": 1789772503.512554,
+    "ast_hash": "6f8b8fc51731778527d18641592fc85b",
+    "semantic_hash": "6f8b8fc51731778527d18641592fc85b"
+  },
+  "tests/test_ui_tools.py": {
+    "mtime": 1789144045.178096,
+    "seen": 1789772503.5125551,
+    "ast_hash": "39e1e7fdccf7e402a0a8d62a98bfa9ad",
+    "semantic_hash": "39e1e7fdccf7e402a0a8d62a98bfa9ad"
+  },
+  "tests/test_wardrobe_catalog.py": {
+    "mtime": 1788464043.7063758,
+    "seen": 1789772503.5125551,
+    "ast_hash": "3fde9f5417f5aebfbd36624c86ea94e4",
+    "semantic_hash": "3fde9f5417f5aebfbd36624c86ea94e4"
+  },
+  "tests/test_wardrobe_cli.py": {
+    "mtime": 1788464043.7066338,
+    "seen": 1789772503.5125551,
+    "ast_hash": "82d96275d793ba05c771450dc033e1fa",
+    "semantic_hash": "82d96275d793ba05c771450dc033e1fa"
+  },
+  "tests/test_wardrobe_migration.py": {
+    "mtime": 1788464043.7069151,
+    "seen": 1789772503.512556,
+    "ast_hash": "ff88581836cf4ff0c64089d88373f7fb",
+    "semantic_hash": "ff88581836cf4ff0c64089d88373f7fb"
+  },
+  "tests/test_wardrobe_store.py": {
+    "mtime": 1788464043.7072713,
+    "seen": 1789772503.512556,
+    "ast_hash": "94ef11c8cb3744aa5eecb06704744578",
+    "semantic_hash": "94ef11c8cb3744aa5eecb06704744578"
+  },
+  "tests/test_wardrobe_vision.py": {
+    "mtime": 1788464043.707638,
+    "seen": 1789772503.512556,
+    "ast_hash": "86bf1b1addf238a1695d3d1a4efe851e",
+    "semantic_hash": "86bf1b1addf238a1695d3d1a4efe851e"
+  },
+  ".agents/skills/release-eve/SKILL.md": {
+    "mtime": 1788285670.8868659,
+    "seen": 1789772503.512557,
+    "ast_hash": "f46fd85651f52fc807b161c1dd08b19c",
+    "semantic_hash": "f46fd85651f52fc807b161c1dd08b19c"
+  },
+  ".github/workflows/build.yml": {
+    "mtime": 1788464043.6470573,
+    "seen": 1789772503.512557,
+    "ast_hash": "4e69b390872e65f1d83c8b42735e0fc4",
+    "semantic_hash": "4e69b390872e65f1d83c8b42735e0fc4"
+  },
+  "README.md": {
+    "mtime": 1788464043.6588247,
+    "seen": 1789772503.512558,
+    "ast_hash": "8fb885fc10e6162126c4fc7452846a07",
+    "semantic_hash": "8fb885fc10e6162126c4fc7452846a07"
+  },
+  "docker-compose.test.yml": {
+    "mtime": 1788234360.8025084,
+    "seen": 1789772503.512558,
+    "ast_hash": "10504a253b12f1ada690927a7dc29a38",
+    "semantic_hash": "10504a253b12f1ada690927a7dc29a38"
+  },
+  "docs/adr/0006-eve-tools-isolation.md": {
+    "mtime": 1787513041.9467738,
+    "seen": 1789772503.512558,
+    "ast_hash": "940affd8859eda8d2b401886517c928d",
+    "semantic_hash": "940affd8859eda8d2b401886517c928d"
+  },
+  "docs/adr/0007-ambient-impersonation.md": {
+    "mtime": 1787608230.5126514,
+    "seen": 1789772503.5125592,
+    "ast_hash": "4134b30dbe40901a0cd02e6f6493661e",
+    "semantic_hash": "4134b30dbe40901a0cd02e6f6493661e"
+  },
+  "docs/adr/0009-eval-inputs-from-postgres.md": {
+    "mtime": 1787939453.9124522,
+    "seen": 1789772503.5125592,
+    "ast_hash": "d602efefe18e8c9eb483b152c016b55c",
+    "semantic_hash": "d602efefe18e8c9eb483b152c016b55c"
+  },
+  "docs/adr/0010-sandboxed-tools-are-pure-functions.md": {
+    "mtime": 1787959326.2741184,
+    "seen": 1789772503.5125592,
+    "ast_hash": "223d29a9480383a6550e580eecd9196e",
+    "semantic_hash": "223d29a9480383a6550e580eecd9196e"
+  },
+  "docs/adr/0011-alembic-with-a-private-version-table.md": {
+    "mtime": 1787959326.2743387,
+    "seen": 1789772503.5125601,
+    "ast_hash": "cc49f2c549737a54901444a3c51db952",
+    "semantic_hash": "cc49f2c549737a54901444a3c51db952"
+  },
+  "docs/adr/0017-model-authored-surfaces.md": {
+    "mtime": 1789144045.1714036,
+    "seen": 1789772503.5125601,
+    "ast_hash": "8d2107b89acddc84410c26fb08934175",
+    "semantic_hash": "8d2107b89acddc84410c26fb08934175"
+  },
+  "docs/adr/0018-openers-are-a-thread-free-chip-only-run.md": {
+    "mtime": 1788480571.5570385,
+    "seen": 1789772503.5125601,
+    "ast_hash": "9cdcc4a3e1332e36731d4f8d70d0647f",
+    "semantic_hash": "9cdcc4a3e1332e36731d4f8d70d0647f"
+  },
+  "docs/architecture.md": {
+    "mtime": 1789144045.1724985,
+    "seen": 1789772503.5125608,
+    "ast_hash": "b50e989299e27874bea6cfe240d5d168",
+    "semantic_hash": "b50e989299e27874bea6cfe240d5d168"
+  },
+  "docs/superpowers/plans/2026-08-17-eve-core.md": {
+    "mtime": 1787513041.948764,
+    "seen": 1789772503.5125608,
+    "ast_hash": "81c49325d2ab1b506d4879b4d64ebfbe",
+    "semantic_hash": "81c49325d2ab1b506d4879b4d64ebfbe"
+  },
+  "docs/superpowers/plans/2026-08-18-eve-memory.md": {
+    "mtime": 1787513041.9501026,
+    "seen": 1789772503.5125608,
+    "ast_hash": "41f0dee5d19541d96074a6ec35b286e2",
+    "semantic_hash": "41f0dee5d19541d96074a6ec35b286e2"
+  },
+  "docs/superpowers/plans/2026-08-21-eve-specialists.md": {
+    "mtime": 1787513041.9528558,
+    "seen": 1789772503.512562,
+    "ast_hash": "05bf67e21f30e80fc281ebac177ae99d",
+    "semantic_hash": "05bf67e21f30e80fc281ebac177ae99d"
+  },
+  "docs/superpowers/plans/2026-08-23-eve-ambient.md": {
+    "mtime": 1787516773.539441,
+    "seen": 1789772503.512562,
+    "ast_hash": "a431e5bfcf26c99f7afd5b04d743ebf7",
+    "semantic_hash": "a431e5bfcf26c99f7afd5b04d743ebf7"
+  },
+  "docs/superpowers/plans/2026-08-27-eve-eval-harness.md": {
+    "mtime": 1787939453.9134285,
+    "seen": 1789772503.512562,
+    "ast_hash": "fa1cc1bb9a53c17af2ed0e1d19adc72b",
+    "semantic_hash": "fa1cc1bb9a53c17af2ed0e1d19adc72b"
+  },
+  "docs/superpowers/plans/2026-08-27-eve-sandboxed-tools.md": {
+    "mtime": 1787939453.9142816,
+    "seen": 1789772503.512563,
+    "ast_hash": "b447638b34058188cb3fcf734275c1b5",
+    "semantic_hash": "b447638b34058188cb3fcf734275c1b5"
+  },
+  "family.yaml": {
+    "mtime": 1788464043.667551,
+    "seen": 1789772503.512563,
+    "ast_hash": "67af26770049583526f2b3fc0655bf3b",
+    "semantic_hash": "67af26770049583526f2b3fc0655bf3b"
+  }
+}

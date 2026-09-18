@@ -28,3 +28,8 @@ htmlcov/
 
 # Git worktrees
 .worktrees/
+
+# Graphify
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
