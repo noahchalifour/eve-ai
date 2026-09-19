@@ -114,3 +114,15 @@ Only `ocp/*` is denied (`eve/coding/catalogue.py`), because it fails
 SILENTLY - the proxy strips tool definitions, and a coding agent that cannot
 call tools answers fluently and changes nothing. Loud failures need no
 registry; silent ones do.
+
+## Amendment (2026-09-18, EVE-24)
+
+**The tiebreak agent is now `dsh`, not Codex.** The reasoning above is
+unchanged and is why the swap is cheap: the DeepSeek harness reaches models
+through this same LiteLLM proxy, so a `chatgpt/*` model on it rides the
+subscription exactly as `codex-acp` does, and the zero-metered-spend
+property that made Codex the tiebreak survives the change. What `dsh` adds
+is the profile pulled from git - the untargeted case now runs the
+configuration Noah actually works in. Claude Code remains the one agent with
+real metered spend. See ADR 0020 for why that profile cannot reach the
+routing this ADR governs.

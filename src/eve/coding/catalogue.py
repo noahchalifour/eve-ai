@@ -33,6 +33,11 @@ DENIED_PREFIXES: tuple[str, ...] = ("ocp/",)
 # The fallback when Eve names nothing usable. Not a catalogue - one name per
 # agent, which is what "the agent's own sensible default" costs.
 _AGENT_FALLBACK: dict[str, str] = {
+    # `dsh` has no default of its own to fall back to: unlike the other
+    # three it takes no model flag and ships no opinion about which model a
+    # coding session should use, so the entry is this repository's choice
+    # rather than the harness's.
+    "dsh": "chatgpt/gpt-5.6-sol",
     "codex": "chatgpt/gpt-5.6-sol",
     "opencode": "chatgpt/gpt-5.6-sol",
     "claude": "anthropic/claude-sonnet-5",

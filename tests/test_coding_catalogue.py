@@ -120,3 +120,13 @@ async def test_validate_still_answers_when_the_catalogue_is_empty():
     respx.get("https://litellm.example/v1/models").mock(return_value=Response(503))
 
     assert await catalogue.validate("chatgpt/gpt-5.6-sol", "codex") == "chatgpt/gpt-5.6-sol"
+
+
+def test_every_dispatchable_agent_has_a_fallback_model():
+    """`_AGENT_FALLBACK.get(agent, ...)` silently substitutes Codex's model
+    for any agent missing from the table, so a new harness would answer with
+    the wrong default and nothing would say so."""
+    from eve.coding.dispatch import AGENTS
+
+    for agent in AGENTS:
+        assert agent in catalogue._AGENT_FALLBACK

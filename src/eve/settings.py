@@ -188,9 +188,13 @@ class Settings(BaseSettings):
     # computer_base_url and computer_api_key already point at the right box.
     coding_enabled: bool = False
     # The tiebreak when neither the task nor the member's preferences point
-    # anywhere. Codex rides the ChatGPT subscription, so the default case
-    # costs nothing metered (spec: "Codex breaks ties").
-    coding_default_agent: str = "codex"
+    # anywhere (EVE-24: "It should be the default ACP"). The DeepSeek harness
+    # boots Noah's own profile, pulled from git, so the untargeted case is the
+    # one configured the way he already works - and it reaches LiteLLM like
+    # every other agent, so the tiebreak costs no more than the one it
+    # replaced. Still a setting: a deployment without a profile repository
+    # can name `codex` and lose nothing but the preferences.
+    coding_default_agent: str = "dsh"
     # Deliberately not ambient_poll_interval_seconds. The supervisor is a
     # control loop with an agent waiting on the other end, not a notification
     # pipeline; 300s of latency per conversational turn would make Eve a

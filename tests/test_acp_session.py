@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from acp.exceptions import RequestError
 
 from eve_computer.acp import session as session_mod
 from eve_computer.acp.session import close, create, get, kill, send, snapshot
@@ -235,3 +236,35 @@ async def test_the_branch_name_is_shared_across_every_repo(fake_spawn):
     session = get("s1")
     assert session.branch.startswith("eve/cross-repo-change-")
     assert session.repos == ["acme/one", "acme/two"]
+
+
+async def test_a_session_retries_without_additional_directories(fake_spawn):
+    """The DeepSeek harness (EVE-24) answers `session/new` with
+    `additionalDirectories is not supported` - it is an optional field of
+    ACP v1 and a compliant agent may refuse it. Refusing it must cost the
+    agent its extra roots, not the whole session: every worktree lives
+    UNDER the session directory that is already the cwd, so the second
+    attempt reaches the same files by a shorter path.
+    """
+
+    class Picky(FakeConn):
+        def __init__(self):
+            super().__init__()
+            self.new_session_calls: list[dict] = []
+
+        async def new_session(self, **kwargs):
+            self.new_session_calls.append(kwargs)
+            if kwargs.get("additional_directories"):
+                raise RequestError.invalid_params(
+                    "additionalDirectories is not supported"
+                )
+            return type("R", (), {"session_id": "acp-1"})()
+
+    conn = fake_spawn(Picky())
+    await create("s1", "dsh", "m", ["acme/repo"], "fix it")
+    await _settle()
+
+    assert len(conn.new_session_calls) == 2
+    assert conn.new_session_calls[1].get("additional_directories") in (None, [])
+    assert get("s1").status != "failed"
+    assert conn.prompts == ["fix it"]
