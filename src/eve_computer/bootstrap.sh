@@ -7,7 +7,7 @@ set -eu
 
 PACKAGES_FILE="/home/eve/.eve/packages.txt"
 mkdir -p /home/eve/.eve /home/eve/tasks /home/eve/sessions /home/eve/code \
-         /home/eve/.codex /home/eve/.config/opencode
+         /home/eve/.codex /home/eve/.config/opencode /home/eve/.dsh
 
 # The package replay is best-effort, not a precondition for the desktop
 # starting: a typo'd package name in packages.txt or a transient apt mirror
@@ -51,6 +51,16 @@ done
 # The agents read the key by name (`env_key` / `{env:...}`), so it is
 # exported here and never written into a config file on the PVC.
 export LITELLM_API_KEY="${EVE_COMPUTER_LITELLM_API_KEY:-}"
+
+# The fourth agent's equivalent (EVE-24). Python rather than another `sed`
+# template: this one clones a git repository, reads a snapshot format, and
+# has to write its routing AFTER that clone so a pulled profile cannot
+# outrank it - which is a program, not a substitution. Best-effort for the
+# same reason the package replay above is: a profile repository that is
+# unreachable must cost Eve her preferences, not her desktop.
+if ! python -c "from eve_computer.acp import harness; harness.prepare()"; then
+    echo "bootstrap.sh: preparing the dsh harness home failed; sessions on that agent will not start" >&2
+fi
 
 # 1024x768, not 1920x1080: Anthropic's vision API downscales any screenshot
 # whose long edge exceeds ~1568px before the model reasons over it, so a

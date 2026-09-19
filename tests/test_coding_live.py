@@ -44,6 +44,7 @@ def box():
 @pytest.mark.parametrize(
     ("agent", "model"),
     [
+        ("dsh", "chatgpt/gpt-5.6-sol"),
         ("codex", "chatgpt/gpt-5.6-sol"),
         ("codex", "chatgpt/gpt-5.6-luna"),
         ("claude", "anthropic/claude-sonnet-5"),

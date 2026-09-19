@@ -82,7 +82,7 @@ async def test_the_model_is_validated_before_dispatch():
         {"repos": ["acme/repo"], "goal": "fix it", "model": "gpt-9-ultra"}, config=_config()
     )
 
-    dispatch.catalogue.validate.assert_awaited_once_with("gpt-9-ultra", "codex")
+    dispatch.catalogue.validate.assert_awaited_once_with("gpt-9-ultra", "dsh")
     assert dispatch.store.create_session.await_args.kwargs["model"] == "chatgpt/gpt-5.6-sol"
 
 
@@ -148,3 +148,39 @@ async def test_a_member_cannot_interject_into_another_members_session():
 
     assert "don't have a session" in result.lower() or "not yours" in result.lower()
     dispatch.prompt_coding_session.assert_not_awaited()
+
+
+async def test_dsh_is_offered_as_an_agent_eve_can_name():
+    """EVE-24. The tool docstring is the only place Eve learns which
+    harnesses exist, so a harness missing from AGENTS is a harness she can
+    never choose no matter what the member asks for."""
+    await dispatch.delegate_coding_task.ainvoke(
+        {"repos": ["acme/repo"], "goal": "fix it", "agent": "dsh"}, config=_config()
+    )
+
+    assert dispatch.store.create_session.await_args.kwargs["agent"] == "dsh"
+
+
+def test_the_docstring_names_every_agent_it_accepts():
+    """The validation list and the prose Eve reads are two statements of the
+    same fact, and only one of them is enforced by a test elsewhere."""
+    docstring = dispatch.delegate_coding_task.description
+
+    for agent in dispatch.AGENTS:
+        assert f'"{agent}"' in docstring
+
+
+async def test_dsh_is_the_default_when_nothing_points_anywhere():
+    """EVE-24: "It should be the default ACP". The tiebreak is a setting, so
+    a deployment can still name another; what this pins is what an untouched
+    deployment does."""
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    await dispatch.delegate_coding_task.ainvoke(
+        {"repos": ["acme/repo"], "goal": "fix it"}, config=_config()
+    )
+
+    assert dispatch.store.create_session.await_args.kwargs["agent"] == "dsh"
+    get_settings.cache_clear()
