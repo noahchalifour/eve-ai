@@ -150,10 +150,15 @@ Verification is local computation: an HMAC over bytes already in hand and a
 comparison of two integers. Nothing in the 5 second path touches the database,
 a model, or the network.
 
-**The background task** emits the `thought` acknowledgement as its very first
-act, before the family lookup, before recall, before dispatch. Every refusal
-path (unmapped user, missing permission, unresolvable repos) replaces that
-thought with an `error` or `elicitation`, and each is a single GraphQL call.
+**The background task** emits its first activity before recall and before
+dispatch, which are the only two slow things it does. The three gate checks
+run ahead of that emission because all three are pure local computation (a
+dict lookup, a frozenset membership test, a list intersection) with no IO at
+all, and their result is what decides which activity to emit: a `thought` when
+the work is accepted, an `error` or `elicitation` when it is refused. So the
+acknowledgement is always exactly one GraphQL call, and nothing that can block
+on a network or a database runs before it.
+
 The ordering is not an optimization; it is the contract, and section "Testing"
 makes it a test rather than a comment.
 
@@ -401,7 +406,8 @@ later requires rotation, the store is the right home and the move is local to
 **The canary.** Assert that the acknowledgement is emitted *before* the recall
 call, not merely that both eventually happen. That ordering is the entire ten
 second contract, it is invisible in the code once written, and it is exactly
-what a well-meaning refactor that hoists the family lookup will silently break.
+what a well-meaning refactor that hoists a database read above the emission
+will silently break.
 
 Live tests against a real Linear workspace are out of scope for CI, consistent
 with how every other third-party client in this repository is tested.
