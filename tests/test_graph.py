@@ -1257,6 +1257,7 @@ def test_every_labelled_tool_is_a_real_tool(monkeypatch):
         "EVE_SANDBOX_ENABLED",
         "EVE_COMPUTER_ENABLED",
         "EVE_CODING_ENABLED",
+        "EVE_ROUTINES_ENABLED",
     ):
         monkeypatch.setenv(var, "true")
     monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
@@ -1282,6 +1283,7 @@ def test_every_bound_tool_has_a_label(monkeypatch):
         "EVE_SANDBOX_ENABLED",
         "EVE_COMPUTER_ENABLED",
         "EVE_CODING_ENABLED",
+        "EVE_ROUTINES_ENABLED",
     ):
         monkeypatch.setenv(var, "true")
     monkeypatch.setenv("EVE_SANDBOX_API_KEY", "k" * 32)
