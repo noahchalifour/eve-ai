@@ -18,6 +18,7 @@ from eve_ambient import gates, store
 from eve_ambient.filter import FilterError, judge
 from eve_ambient.notify import DeliveryError, deliver
 from eve_ambient.ntfy import Notifier, NtfyNotifier
+from eve_ambient.sources import routines as routines_source
 from eve_ambient.types import FilterVerdict, Signal
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # might want to know. The relevance filter is bypassed for these: an LLM
 # deciding the answer to a direct request is "not relevant" and swallowing
 # it is the worst failure mode available.
-_REQUESTED_SOURCES = ("computer", "coding")
+_REQUESTED_SOURCES = ("computer", "coding", "routines")
 
 
 async def handle_signal(
@@ -42,7 +43,7 @@ async def handle_signal(
         else settings.ambient_cooldown_hours
     )
     if not await store.is_fresh(signal.source, signal.key, cooldown):
-        return _resolved(signal, None, [], "stale")
+        return await _resolved(signal, None, [], "stale")
 
     if signal.source in _REQUESTED_SOURCES:
         # Explicitly requested, not merely noticed: an LLM deciding a direct
@@ -67,7 +68,7 @@ async def handle_signal(
             logger.warning(
                 "deferring %s: the filter could not judge it", signal.key, exc_info=True
             )
-            return _resolved(signal, None, [], "deferred")
+            return await _resolved(signal, None, [], "deferred")
 
         # Before the gate chain, deliberately: the dataset's label is the
         # filter's verdict, not the outcome (eval design 4.2). Best-effort -
@@ -84,12 +85,12 @@ async def handle_signal(
     # and a non-event should never pay for it, cached or not.
     if not verdict.notify or not verdict.audience:
         await store.mark_seen(signal.source, signal.key)
-        return _resolved(signal, verdict, [], "filtered")
+        return await _resolved(signal, verdict, [], "filtered")
 
     audience = gates.permitted(signal, gates.scoped_audience(signal, verdict.audience))
     if not audience:
         await store.mark_seen(signal.source, signal.key)
-        return _resolved(signal, verdict, [], "unpermitted")
+        return await _resolved(signal, verdict, [], "unpermitted")
 
     family = get_family()
     outcomes: list[str] = []
@@ -176,23 +177,23 @@ async def handle_signal(
         # store.already_notified above is what makes that retry idempotent
         # per member rather than a duplicate notification to whoever already
         # got it on this pass.
-        return _resolved(signal, verdict, audience, "deferred")
+        return await _resolved(signal, verdict, audience, "deferred")
 
     await store.mark_seen(signal.source, signal.key)
     for candidate in ("sent", "vetoed", "capped", "quiet"):
         if candidate in outcomes:
-            return _resolved(signal, verdict, audience, candidate)
+            return await _resolved(signal, verdict, audience, candidate)
     if already_known:
         # Every member in the audience already had a notice for this signal
         # within its cooldown window (fix round 2, item 3): distinct from
         # "filtered", which means the filter itself said no. Collapsing the
         # two would make the one designed trace line ambiguous between "the
         # filter said no" and "everyone already knew."
-        return _resolved(signal, verdict, audience, "known")
-    return _resolved(signal, verdict, audience, "filtered")
+        return await _resolved(signal, verdict, audience, "known")
+    return await _resolved(signal, verdict, audience, "filtered")
 
 
-def _resolved(
+async def _resolved(
     signal: Signal, verdict: FilterVerdict | None, audience: list[str], outcome: str
 ) -> str:
     """One line per signal, whatever happened to it (design section 9). The
@@ -201,6 +202,10 @@ def _resolved(
     gate stopped it — exists here or nowhere. It is the difference between
     "Eve is too noisy" being diagnosable and being an argument.
 
+    Also where a routine firing's own bookkeeping happens: every return path
+    in `handle_signal` passes through here, so hanging it off this function
+    is what makes it impossible for a new early return to forget it.
+
     `verdict` is `None` for the two paths that resolve before a verdict
     exists at all — `stale` (the filter never ran) and `deferred` by a
     `FilterError` (the filter ran but could not answer) — so this still
@@ -208,6 +213,7 @@ def _resolved(
     taken one and, without this, the one that left no trace (fix round 1,
     item 4).
     """
+    await routines_source.record_outcome(signal, outcome)
     notify = verdict.notify if verdict is not None else False
     urgent = verdict.urgent if verdict is not None else False
     why = verdict.why if verdict is not None else "n/a"

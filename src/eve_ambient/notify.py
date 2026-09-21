@@ -13,6 +13,7 @@ import logging
 from langgraph_sdk import get_client
 
 from eve.family import Member
+from eve.routines import cadence as cadence_rules
 from eve.settings import get_settings
 from eve.state import ambient_marker
 from eve_ambient.ntfy import Notifier
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 VETO = "NOTHING"
 _PAYLOAD_CHARS = 800
 _ASSISTANT = "eve"
+_ROUTINE_SOURCE = "routines"
 
 
 class DeliveryError(Exception):
@@ -48,6 +50,8 @@ def compose_prompt(signal: Signal, member: Member, verdict: FilterVerdict) -> st
     The marker also tells Eve she was not spoken to, and leaves the thread
     showing what prompted her.
     """
+    if signal.source == _ROUTINE_SOURCE:
+        return _routine_prompt(signal, member)
     return (
         f"{ambient_marker(member.name)}\n"
         f"{signal.summary}\n"
@@ -59,6 +63,38 @@ def compose_prompt(signal: Signal, member: Member, verdict: FilterVerdict) -> st
         f"sentences in your own voice, and act only if acting is plainly what "
         f"they would want. If it is not worth saying, reply with exactly "
         f"{VETO} and nothing else."
+    )
+
+
+def _routine_prompt(signal: Signal, member: Member) -> str:
+    """A routine is not something Eve noticed; it is a standing request the
+    member wrote. "You noticed this; nobody asked you" is exactly wrong here
+    and would push her toward the veto on work she was explicitly asked to
+    do.
+
+    Still ambient-marked. The instruction is member-written, but it is
+    replayed unattended and indefinitely, which is the property the marker
+    exists to contain: `may_author` and `turn_is_ambient` both key off it.
+    """
+    payload = signal.payload
+    instruction = str(payload.get("instruction") or "").strip()
+    cadence = payload.get("cadence") or {}
+    last_run = payload.get("last_run_at")
+    since = (
+        f"You last ran it on {last_run}."
+        if last_run
+        else "This is its first run."
+    )
+    return (
+        f"{ambient_marker(member.name)}\n"
+        f"{instruction}\n\n"
+        f"This is a standing request {member.name} set up on "
+        f"{payload.get('created_at')}, to run {cadence_rules.describe(cadence)}. "
+        f"{since}\n"
+        f"Carry it out now, then decide whether there is anything worth "
+        f"telling {member.name}. If there is, say it in one or two sentences "
+        f"in your own voice. If there is nothing worth saying, reply with "
+        f"exactly {VETO} and nothing else."
     )
 
 
