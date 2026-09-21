@@ -210,7 +210,7 @@ src/eve_ambient/
   store.py      # every eve_ambient_seen and eve_ambient_notice SQL statement
   gates.py      # pure functions: scoped_audience, permitted, quiet hours, daily-cap window
   ntfy.py       # the Notifier protocol and its one ntfy implementation
-  sources/      # calendar.py, mail.py, finances.py, routines.py (polled); home.py (pushed via webhook)
+  sources/      # calendar.py, mail.py, finances.py, computer.py, coding.py, routines.py (polled); home.py (pushed via webhook)
   filter.py     # the REFLEX relevance gate; raises FilterError on infrastructure failure
   notify.py     # the compose turn: creates a thread, runs eve, pushes or discards it
   pipeline.py   # handle_signal: the one place signal-to-resolution order is decided
