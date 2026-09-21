@@ -2,6 +2,7 @@
 right parameters, and a real Postgres for that belongs in the integration
 tier (tests/test_memory_integration.py's shape), not here."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -93,3 +94,136 @@ async def test_recently_resolved_covers_every_terminal_status(conn):
     sql = conn.cursor_obj.execute.await_args.args[0]
     for status in ("finished", "failed", "stale", "blocked"):
         assert status in sql
+
+
+# Integration tier: the six tests below exercise a real unique constraint and
+# a real row round-trip, which a mocked connection cannot observe honestly.
+# See tests/test_computer_store.py for the same real-DB pattern.
+
+
+@pytest.fixture
+async def db(monkeypatch):
+    monkeypatch.setenv(
+        "EVE_DATABASE_URL", "postgresql://eve:eve@127.0.0.1:25432/eve"
+    )
+    from eve.memory import db as memory_db
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    await memory_db.close_pool()
+    await memory_db.migrate()
+    pool = await memory_db.get_pool()
+    async with pool.connection() as conn:
+        await conn.execute("TRUNCATE eve_coding_session")
+    yield
+    await memory_db.close_pool()
+
+
+@pytest.mark.integration
+async def test_a_linear_session_id_is_stored_and_looked_up(db):
+    session_id = str(uuid.uuid4())
+    await store.create_session(
+        session_id=session_id,
+        member_sub="noah-sub",
+        thread_id="thread-1",
+        goal="fix the thing",
+        agent="dsh",
+        model="claude-sonnet-5",
+        repos=["owner/repo"],
+        context="",
+        linear_session_id="lin_sess_1",
+        linear_issue_id="lin_issue_1",
+    )
+    row = await store.get_by_linear_session("lin_sess_1")
+    assert row["id"] == session_id
+    assert row["linear_issue_id"] == "lin_issue_1"
+
+
+@pytest.mark.integration
+async def test_a_chat_dispatched_session_has_no_linear_columns(db):
+    session_id = str(uuid.uuid4())
+    await store.create_session(
+        session_id=session_id,
+        member_sub="noah-sub",
+        thread_id="thread-1",
+        goal="fix the thing",
+        agent="dsh",
+        model="claude-sonnet-5",
+        repos=["owner/repo"],
+        context="",
+    )
+    row = await store.get(session_id)
+    assert row["linear_session_id"] is None
+    assert row["linear_issue_id"] is None
+
+
+@pytest.mark.integration
+async def test_two_sessions_cannot_share_one_linear_session_id(db):
+    # This constraint IS the retry idempotency key. Linear retries on 5xx and
+    # on timeout, and a retry that dispatches twice spends real money and
+    # opens two pull requests for one request.
+    await store.create_session(
+        session_id=str(uuid.uuid4()),
+        member_sub="noah-sub",
+        thread_id="t",
+        goal="g",
+        agent="dsh",
+        model="m",
+        repos=["owner/repo"],
+        context="",
+        linear_session_id="lin_dupe",
+    )
+    with pytest.raises(Exception):
+        await store.create_session(
+            session_id=str(uuid.uuid4()),
+            member_sub="noah-sub",
+            thread_id="t",
+            goal="g",
+            agent="dsh",
+            model="m",
+            repos=["owner/repo"],
+            context="",
+            linear_session_id="lin_dupe",
+        )
+
+
+@pytest.mark.integration
+async def test_many_sessions_may_have_no_linear_session_id(db):
+    # A unique constraint over NULLs must not make chat dispatch single-use.
+    for _ in range(3):
+        await store.create_session(
+            session_id=str(uuid.uuid4()),
+            member_sub="noah-sub",
+            thread_id="t",
+            goal="g",
+            agent="dsh",
+            model="m",
+            repos=["owner/repo"],
+            context="",
+        )
+
+
+@pytest.mark.integration
+async def test_get_by_linear_session_returns_none_when_unknown(db):
+    assert await store.get_by_linear_session("lin_never") is None
+
+
+@pytest.mark.integration
+async def test_touch_linear_emitted_advances_the_heartbeat_clock(db):
+    session_id = str(uuid.uuid4())
+    await store.create_session(
+        session_id=session_id,
+        member_sub="noah-sub",
+        thread_id="t",
+        goal="g",
+        agent="dsh",
+        model="m",
+        repos=["owner/repo"],
+        context="",
+        linear_session_id="lin_touch",
+    )
+    before = (await store.get(session_id))["linear_emitted_at"]
+    await store.touch_linear_emitted(session_id)
+    after = (await store.get(session_id))["linear_emitted_at"]
+    assert before is None
+    assert after is not None
