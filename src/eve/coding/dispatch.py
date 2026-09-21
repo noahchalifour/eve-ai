@@ -35,7 +35,7 @@ from eve.tools_client import (
 logger = logging.getLogger(__name__)
 
 PERMISSION = "code.delegate"
-AGENTS = ("codex", "claude", "opencode")
+AGENTS = ("dsh", "codex", "claude", "opencode")
 
 
 async def _recall_context(goal: str, member_sub: str) -> str:
@@ -85,11 +85,12 @@ async def delegate_coding_task(
     pass several for a change that spans repositories, and they will share a
     branch name and produce one pull request each.
 
-    `agent` chooses the harness: "codex" (rides the ChatGPT subscription,
-    the default when nothing points elsewhere), "claude" (the strongest
-    coder, metered spend), or "opencode". `model` is any model the LiteLLM
-    proxy serves - pick a small fast one for a small change and a strong one
-    for a hard change, and honour whatever the member has said they prefer.
+    `agent` chooses the harness: "dsh" (the DeepSeek harness, carrying
+    Noah's own profile and the default when nothing points elsewhere),
+    "codex" (rides the ChatGPT subscription), "claude" (the strongest coder,
+    metered spend), or "opencode". `model` is any model the LiteLLM proxy
+    serves - pick a small fast one for a small change and a strong one for a
+    hard change, and honour whatever the member has said they prefer.
 
     Returns immediately; the result is reported later, in a separate message.
     """

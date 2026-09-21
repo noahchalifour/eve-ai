@@ -561,13 +561,27 @@ lane: ACP coding sessions (`POST /sessions`, `GET /sessions/{id}`,
 `DELETE /sessions/{id}`), served by `src/eve_computer/acp/` -
 `client.py` (the protocol's client half: auto-approves permission requests,
 serves `fs/*` confined to the session root), `registry.py` (agent + model →
-argv and environment, three entries), `repo.py` (clone, worktree add/remove,
-push, `gh pr create`; no ACP types), and `session.py` (the state machine,
-the only file importing both client and repo). The GUI queue stays
+argv and environment, four entries), `harness.py` (the DeepSeek harness's
+home: the profile it boots, the LiteLLM route it serves, and the git pull
+that fills in the rest), `repo.py` (clone, worktree add/remove, push,
+`gh pr create`; no ACP types), and `session.py` (the state machine, the only
+file importing both client and repo). The GUI queue stays
 serialised because one machine has one mouse; a coding session needs no
 display, so its only bound is `max_concurrent_sessions` - a half-hour
 conversation must not block a screenshot. The box records and never
 classifies: a finished turn is `idle`, full stop (ADR 0016).
+
+**The fourth agent (EVE-24).** `dsh` is the tiebreak agent, and the only one
+with no model flag: it boots a *profile*, and the model is one row of that
+composition. `harness.py` therefore writes `$DSH_HOME/eve-route.patch.yml` -
+a LiteLLM route plus the ACP row's provider and model, the model as a
+`!!js process.env.EVE_ACP_MODEL` expression the launcher evaluates at
+startup - and `registry.py` passes it as `dsh --patch <file>`, which is the
+LAST layer the launcher applies. That placement is the whole design: the
+harness home also holds Noah's profile, pulled from the repository
+`dsh harness-sync push` writes, and that profile carries routing of its own.
+`--patch` outranks every layer a pull can reach, so his preferences survive
+and this box stays pointed at its own proxy (ADR 0020).
 
 On Eve's side, `src/eve/coding/` mirrors it: `store.py` (every
 `eve_coding_session` statement - `alembic/versions/0005_eve_coding_session.py`,
@@ -1468,3 +1482,4 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0017 — The model authors surface structure; the server owns the envelope](adr/0017-model-authored-surfaces.md)
 - [ADR 0018 — Openers are a thread-free, chip-only run](adr/0018-openers-are-a-thread-free-chip-only-run.md)
 - [ADR 0019 — One generic record store, and widgets are recipes over it](adr/0019-one-generic-record-store.md)
+- [ADR 0020 — The harness route is a layer the pulled profile cannot reach](adr/0020-the-harness-route-is-a-layer-the-profile-cannot-reach.md)

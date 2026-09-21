@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 # Enough for "what is it doing right now", not a second transcript.
 _ACTIVITY_MAX = 20
 
+# JSON-RPC's own code. An agent that refuses an optional field answers with
+# this, and the distinction from a transport failure is what makes retrying
+# safe rather than a blind second attempt at anything that went wrong.
+_INVALID_PARAMS = -32602
+
 _SYSTEM_HINT = (
     "You are working in a git worktree on behalf of an assistant named Eve, "
     "who is relaying a request from a family member. Commit your work on the "
@@ -123,6 +128,35 @@ async def _spawn(client: SessionClient, argv: list[str], env: dict[str, str], cw
     return conn, manager
 
 
+async def _new_session(conn, session: Session):
+    """`session/new`, with the extra roots as a preference rather than a
+    requirement.
+
+    `additionalDirectories` is optional in ACP v1 and the DeepSeek harness
+    (EVE-24) refuses it outright. Declining it costs the agent nothing that
+    matters here: every worktree is created UNDER the session directory
+    that is already the cwd, so the second attempt reaches the same files
+    by a shorter path. Failing the session over a field the protocol calls
+    optional would be this box deciding which compliant agents it will
+    talk to.
+    """
+    extra = [
+        str(repo.worktree_path(session.directory, name)) for name in session.repos
+    ]
+    try:
+        return await conn.new_session(
+            cwd=str(session.directory), additional_directories=extra
+        )
+    except acp.RequestError as exc:
+        if exc.code != _INVALID_PARAMS:
+            raise
+        logger.info(
+            "%s refused additional directories; retrying with the session root alone",
+            session.agent,
+        )
+        return await conn.new_session(cwd=str(session.directory))
+
+
 async def create(
     session_id: str, agent: str, model: str, repos: list[str], prompt: str
 ) -> Session:
@@ -170,14 +204,7 @@ async def _drive(session: Session, argv: list[str], env: dict[str, str]) -> None
                 ),
                 client_info=Implementation(name="eve-computer", version="1"),
             )
-            created = await conn.new_session(
-                cwd=str(session.directory),
-                additional_directories=[
-                    str(repo.worktree_path(session.directory, name))
-                    for name in session.repos
-                ],
-            )
-            acp_session_id = created.session_id
+            acp_session_id = (await _new_session(conn, session)).session_id
             await conn.prompt(
                 session_id=acp_session_id, prompt=[text_block(_SYSTEM_HINT)]
             )

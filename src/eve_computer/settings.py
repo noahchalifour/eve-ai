@@ -30,6 +30,18 @@ class ComputerSettings(BaseSettings):
     session_timeout_seconds: int = 14400
     github_owner: str = ""
 
+    # EVE-24 (the DeepSeek harness as an ACP agent). `dsh` keeps profiles,
+    # sessions and credentials under one home; this one is on the PVC so a
+    # pod reschedule does not lose the profile or replay the git pull.
+    dsh_home: str = "/home/eve/.dsh"
+    # The configuration repository `dsh harness-sync` pushes from Noah's
+    # laptop, cloned into `dsh_home` on every start (EVE-24: "It should pull
+    # my profile from git"). Empty disables the pull, which is the default:
+    # a deployment that has not been given a repository must not guess one,
+    # and the stock profile boots fine without it.
+    dsh_profile_repo: str = ""
+    dsh_profile_branch: str = "main"
+
 
 @lru_cache(maxsize=1)
 def get_computer_settings() -> ComputerSettings:
