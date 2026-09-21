@@ -99,3 +99,18 @@ def test_a_substring_of_an_allowed_repo_does_not_match():
     repos, refusal = resolve_repos("Use owner/rep.", ["owner/repo"])
     assert repos == []
     assert refusal.kind == "no_repo"
+
+
+def test_an_allowed_repo_as_a_substring_of_a_longer_token_does_not_match():
+    # The dangerous direction: "owner/repo" must not match inside
+    # "owner/repo-evil" or "owner/repository" or "notowner/repo" - an
+    # allowed repo name appearing as a substring of a DIFFERENT token must
+    # never resolve, or the injection boundary is defeated by construction.
+    for guidance in (
+        "Use owner/repo-evil for this.",
+        "See owner/repository docs.",
+        "use notowner/repo now",
+    ):
+        repos, refusal = resolve_repos(guidance, ["owner/repo"])
+        assert repos == []
+        assert refusal.kind == "no_repo"
