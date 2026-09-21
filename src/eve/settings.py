@@ -212,6 +212,23 @@ class Settings(BaseSettings):
     # answer, holding a subprocess, a worktree, and a concurrency slot.
     coding_session_timeout_seconds: int = 28800
 
+    # EVE-25 (Scheduled routines). See docs/superpowers/specs/
+    # 2026-09-21-eve-routines-design.md.
+    #
+    # Off by default for the same reason ambient_enabled and coding_enabled
+    # are: a routine is a recurring paid VOICE-tier turn that nobody is
+    # watching, so a deployment that has not deliberately accepted standing
+    # spend must run none.
+    routines_enabled: bool = False
+    # Consecutive INFRASTRUCTURE failures before a routine pauses itself and
+    # says so once. A NOTHING veto is not a failure: silence is the routine
+    # working. Five is roughly a day of hourly retries.
+    routine_failure_limit: int = 5
+    routine_max_title_chars: int = 80
+    # The instruction is replayed into a VOICE turn on every firing, so its
+    # length is a standing cost rather than a one-off one.
+    routine_max_instruction_chars: int = 2000
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
