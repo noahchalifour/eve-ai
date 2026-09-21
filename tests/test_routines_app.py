@@ -237,13 +237,17 @@ def test_resuming_a_paused_routine_clears_its_failures(client, monkeypatch):
     from eve.routines import app as routines_app
 
     seen = {}
+    clear_failures_calls = []
 
     async def fake_update(member_sub, routine_id, expected_revision, **fields):
         seen.update(fields)
         return {**ROW, "revision": 2}
 
+    async def fake_clear_failures(member_sub, routine_id):
+        clear_failures_calls.append((member_sub, routine_id))
+
     monkeypatch.setattr(routines_app.store, "update", fake_update)
-    monkeypatch.setattr(routines_app.store, "clear_failures", _async_noop())
+    monkeypatch.setattr(routines_app.store, "clear_failures", fake_clear_failures)
 
     response = client.patch(
         "/provider-resources/v1/routines/r-1",
@@ -251,6 +255,7 @@ def test_resuming_a_paused_routine_clears_its_failures(client, monkeypatch):
     )
 
     assert response.status_code == 200
+    assert clear_failures_calls == [("sub-noah", "r-1")]
 
 
 def test_deleting_a_missing_routine_is_404(client, monkeypatch):
@@ -269,12 +274,5 @@ def test_deleting_a_missing_routine_is_404(client, monkeypatch):
 def _async_return(value):
     async def _fn(*args, **kwargs):
         return value
-
-    return _fn
-
-
-def _async_noop():
-    async def _fn(*args, **kwargs):
-        return None
 
     return _fn
