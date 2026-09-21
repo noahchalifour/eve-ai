@@ -62,7 +62,14 @@ async def _create_thread() -> str | None:
     """A Linear session gets an Aegra thread too, so the family still gets
     the push notification and a thread to talk in when it resolves. Isolated
     into its own function so the handler's tests can replace it without an
-    Aegra client."""
+    Aegra client.
+
+    Degrades to None on failure rather than raising: `handle_created` already
+    treats a None thread_id as a failure to emit as an `error` activity, and
+    letting an Aegra outage raise here instead would produce exactly the
+    silence-after-acknowledgement the spec's failure modes section calls the
+    worst outcome.
+    """
     from langgraph_sdk import get_client
 
     settings = get_settings()
@@ -70,8 +77,12 @@ async def _create_thread() -> str | None:
         url=settings.ambient_aegra_base_url,
         headers={"Authorization": f"Bearer {settings.ambient_token}"},
     )
-    thread = await client.threads.create(metadata={"linear": True})
-    return thread["thread_id"]
+    try:
+        thread = await client.threads.create(metadata={"linear": True})
+        return thread["thread_id"]
+    except Exception:
+        logger.warning("could not create an aegra thread for a linear session", exc_info=True)
+        return None
 
 
 async def _move_issue_to_started(issue_id: str, team_id: str) -> dict:

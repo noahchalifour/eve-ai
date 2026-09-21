@@ -231,3 +231,22 @@ async def test_a_prompted_event_for_an_unknown_session_is_reported(monkeypatch):
 
     result = await handler.handle_prompted(_event(action="prompted", prompt_body="hi"))
     assert result == "unknown-session"
+
+
+async def test_a_thread_creation_failure_degrades_to_none_rather_than_raising(
+    monkeypatch,
+):
+    # `_create_thread` imports `get_client` locally (inside its own function
+    # body), so there is no module-level `handler.get_client` to patch -
+    # patching `langgraph_sdk.get_client` is what the local import actually
+    # resolves at call time.
+    class _RaisingClient:
+        class threads:
+            @staticmethod
+            async def create(metadata):
+                raise RuntimeError("aegra unreachable")
+
+    monkeypatch.setattr("langgraph_sdk.get_client", lambda **kwargs: _RaisingClient())
+
+    result = await handler._create_thread()
+    assert result is None
