@@ -121,3 +121,50 @@ def test_the_loop_exhausted_sentence_has_one_owner():
     from eve.state import LOOP_EXHAUSTED
 
     assert _LOOP_EXHAUSTED is LOOP_EXHAUSTED
+
+
+def test_turn_is_ambient_reads_the_last_human_message():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.state import ambient_marker, turn_is_ambient
+
+    messages = [
+        HumanMessage(content="What's the weather?"),
+        AIMessage(content="Clear and cold."),
+        HumanMessage(content=ambient_marker("Noah") + "\nA package arrived."),
+    ]
+
+    assert turn_is_ambient(messages) is True
+
+
+def test_turn_is_ambient_is_false_for_a_member_turn():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.state import ambient_marker, turn_is_ambient
+
+    messages = [
+        HumanMessage(content=ambient_marker("Noah") + "\nA package arrived."),
+        AIMessage(content="Your package is here."),
+        HumanMessage(content="Thanks, remind me every morning."),
+    ]
+
+    assert turn_is_ambient(messages) is False
+
+
+def test_turn_is_ambient_fails_closed_on_an_empty_history():
+    """No human message means nothing attributable to a member. A tool that
+    creates a durable resource must refuse, not proceed."""
+    from eve.state import turn_is_ambient
+
+    assert turn_is_ambient([]) is True
+
+
+def test_turn_is_ambient_handles_list_content():
+    """The Responses API path delivers content as a list of blocks."""
+    from langchain_core.messages import HumanMessage
+
+    from eve.state import ambient_marker, turn_is_ambient
+
+    marked = [{"type": "text", "text": ambient_marker("Noah") + "\nA thing."}]
+
+    assert turn_is_ambient([HumanMessage(content=marked)]) is True
