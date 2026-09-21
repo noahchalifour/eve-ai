@@ -117,7 +117,18 @@ async def poll_once(now: datetime | None = None) -> dict[str, int]:
             # `has_any` and the priming `mark_seen` live inside this same
             # try/except: a transient database error here must not escape
             # `poll_once` and skip every source after this one for the tick.
-            if source.name != "computer" and not await store.has_any(source.name):
+            # `computer` and `routines` are both exempt from priming: each
+            # one's signal is always a direct response to something a member
+            # explicitly asked for (they dispatched the task, or they
+            # created the routine), so silently priming it away the first
+            # time would drop something they're waiting on. `routines` is
+            # additionally never a backlog-flood risk in the first place -
+            # a member has at most a handful of standing routines, each on
+            # an hours-to-weekly cadence - so exempting it costs nothing,
+            # unlike a chatty per-member source with years of history.
+            if source.name not in ("computer", "routines") and not await store.has_any(
+                source.name
+            ):
                 if member_failed:
                     # Priming only happens once every member has actually
                     # been polled successfully. `signals` here can't be

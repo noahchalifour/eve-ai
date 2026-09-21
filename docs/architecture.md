@@ -1103,6 +1103,15 @@ unread, nothing over budget) would otherwise leave no row behind at all, so
 the next tick — the first one to actually find something — would still read
 as unprimed and get silently primed away instead of notified.
 
+`computer` and `routines` are both exempt from priming entirely (`app.py`'s
+`poll_once` checks `source.name not in ("computer", "routines")` before
+even looking at `has_any`): each one's signal is always a direct response
+to something a member explicitly asked for — a dispatched computer task or
+a routine they created — so silently priming it away on its very first
+occurrence would drop something they're waiting on rather than a stale
+backlog. Any future `per_member=False` source should check against this
+same rationale before joining `SOURCES`.
+
 **Pruning.** `_poll_forever` calls `store.prune_seen()` after every tick,
 which deletes `eve_ambient_seen` rows older than its 30-day default horizon
 so the table does not grow forever. The `__primed__` sentinel is explicitly
