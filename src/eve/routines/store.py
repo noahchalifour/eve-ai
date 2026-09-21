@@ -279,3 +279,16 @@ async def expire(routine_id: str) -> None:
             " WHERE id = %s",
             (routine_id,),
         )
+
+
+async def clear_failures(member_sub: str, routine_id: str) -> None:
+    """Resuming a paused routine is the member acknowledging the failures the
+    counter was holding, so it starts clean rather than pausing again on the
+    next single error."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_routine SET consecutive_failures = 0, updated_at = now()"
+            " WHERE id = %s AND member_sub = %s",
+            (routine_id, member_sub),
+        )
