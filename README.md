@@ -75,6 +75,20 @@ Four boundaries are permanent, not phases yet to come:
   a human. The reflection loop this program deferred early on is deferred
   permanently, not pending.
 
+### Reviewing pull requests
+
+Label a pull request `eve-review` (or assign Eve) and she reviews it: a
+coding agent in a detached checkout of the PR head, applying the rubric in
+`prompts/code-review/`, with findings posted back as a single `COMMENT`
+review.
+
+The reviewer is deliberately not the model that wrote the code. For a pull
+request Eve opened, the pair is read off the session row that opened it and
+avoided; for a human's, `EVE_REVIEW_DEFAULT_AGENT` is used.
+
+Reviews never approve and never request changes. They comment. See
+`docs/superpowers/specs/2026-09-22-auto-review-prs-design.md`.
+
 ## Quick start
 
 ```bash
