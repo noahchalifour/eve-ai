@@ -11,7 +11,7 @@ members:
     name: "Noah"
     role: adult
     timezone: "America/Vancouver"
-    permissions: [mail.read, finances, home.control, calendar.read, computer.use]
+    permissions: [mail.read, finances, home.control, calendar.read, computer.use, routines]
   - sub: "sub-kid"
     name: "Kid"
     role: child
@@ -150,3 +150,16 @@ def test_coding_is_mapped_to_its_permission():
     from eve_ambient.gates import SOURCE_PERMISSION
 
     assert SOURCE_PERMISSION["coding"] == "code.delegate"
+
+
+def test_a_member_holding_routines_is_kept_for_a_routines_signal():
+    """Plan-defect regression: `SOURCE_PERMISSION` was missing a `"routines"`
+    entry, so `permitted` treated every routine signal as unmapped and
+    dropped the whole audience regardless of who actually held the grant."""
+    assert gates.permitted(_signal("routines"), ["sub-noah"]) == ["sub-noah"]
+
+
+def test_a_member_lacking_routines_is_dropped_for_a_routines_signal():
+    """Distinct from the unmapped-source bug: this is the correct denial path
+    once a mapping exists, for a member who genuinely lacks the grant."""
+    assert gates.permitted(_signal("routines"), ["sub-kid"]) == []

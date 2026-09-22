@@ -35,13 +35,24 @@ def _clear_background_tasks():
     # in the set when a later test's `lifespan` shutdown - or a direct
     # `asyncio.wait(_background, ...)` call - tries to await it on a
     # different event loop entirely.
+    #
+    # `_linear_semaphore` is reset too, because it is now built lazily from
+    # `linear_max_live_sessions` (fix round 5, item 1): different tests set
+    # that setting to different values, and a stale semaphore object built
+    # for a previous test's bound must not leak into the next one.
     app_module._background.clear()
     app_module._in_flight.clear()
+    app_module._linear_in_flight.clear()
+    app_module._linear_semaphore = None
+    app_module._linear_semaphore_bound = None
     app_module._last_tick["at"] = None
     app_module._last_tick["counts"] = {}
     yield
     app_module._background.clear()
     app_module._in_flight.clear()
+    app_module._linear_in_flight.clear()
+    app_module._linear_semaphore = None
+    app_module._linear_semaphore_bound = None
     app_module._last_tick["at"] = None
     app_module._last_tick["counts"] = {}
 
@@ -457,6 +468,59 @@ async def test_the_computer_source_is_never_primed_even_on_the_first_tick(monkey
 
     counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
     assert [s.key for s in handled] == ["t1"]
+    assert counts.get("sent") == 1
+    assert "primed" not in counts
+
+
+async def test_the_routines_source_is_never_primed_even_on_the_first_tick(monkeypatch):
+    """(final-review finding, EVE-25) `routines` was never added to the
+    `computer` exemption above, so a fresh deployment's very first due
+    routine - correctly claimed by `store.claim_due`, its `next_run_at`
+    genuinely advanced - was routed into the priming branch anyway because
+    `has_any("routines")` reads False before any routine has ever fired.
+    That silently and permanently swallows the routine's first occurrence:
+    no notification, and `record_run`/`record_outcome` never called, so the
+    Routines screen shows "not run yet" forever for a routine that actually
+    ran. A routine's firing is just as much a direct response to something
+    the member explicitly asked for (they created the routine) as a
+    computer task is, so it must go through the normal signal-handling path
+    on every tick, including the very first, regardless of what
+    `store.has_any` reports for it."""
+    handled = []
+
+    async def _has_any(source):
+        # Even an explicit "never primed" report for `routines` must not
+        # route it into the priming branch.
+        return False
+
+    async def _mark_seen(source, key):
+        pytest.fail(f"unexpected mark_seen({source!r}, {key!r}) - routines must not prime")
+
+    async def _handle(signal, **kwargs):
+        handled.append(signal)
+        return "sent"
+
+    async def _poll(member_sub):
+        return [
+            Signal(
+                source="routines", key="r1",
+                occurred_at=datetime(2026, 8, 23, tzinfo=UTC),
+                member_sub="sub-noah", summary="Checked flight prices",
+                payload={},
+            )
+        ]
+
+    from eve_ambient.sources import Source
+
+    monkeypatch.setattr(app_module.store, "has_any", _has_any)
+    monkeypatch.setattr(app_module.store, "mark_seen", _mark_seen)
+    monkeypatch.setattr(app_module, "handle_signal", _handle)
+    monkeypatch.setattr(
+        app_module, "SOURCES", (Source("routines", False, "routines", _poll),)
+    )
+
+    counts = await app_module.poll_once(now=datetime(2026, 8, 23, tzinfo=UTC))
+    assert [s.key for s in handled] == ["r1"]
     assert counts.get("sent") == 1
     assert "primed" not in counts
 
@@ -976,3 +1040,255 @@ def _fake_source():
         ]
 
     return Source("fake", False, "finances", _poll)
+
+
+import hashlib
+import hmac
+import json
+import time
+
+LINEAR_SECRET = "L" * 32
+
+
+@pytest.fixture
+def linear_settings(monkeypatch):
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "true")
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", LINEAR_SECRET)
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", '["owner/repo"]')
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _linear_post(client, payload, secret=LINEAR_SECRET):
+    body = json.dumps(payload).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/signals/linear",
+        content=body,
+        headers={"linear-signature": signature, "content-type": "application/json"},
+    )
+
+
+def _created_payload(**overrides):
+    payload = {
+        "action": "created",
+        "webhookTimestamp": int(time.time() * 1000),
+        "agentSession": {
+            "id": "lin_sess_1",
+            "issue": {"id": "lin_issue_1", "team": {"id": "lin_team_1"}},
+            "creator": {"id": "lin_noah"},
+            "guidance": "Work in owner/repo.",
+            "promptContext": "Fix the bug.",
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_linear_webhook_accepts_a_correctly_signed_created(
+    client, linear_settings, monkeypatch
+):
+    handled = []
+
+    async def _fake_created(event):
+        handled.append(event.session_id)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _fake_created)
+
+    response = _linear_post(client, _created_payload())
+    assert response.status_code == 202
+    assert response.json() == {"accepted": "lin_sess_1"}
+
+
+def test_linear_webhook_refuses_a_bad_signature(client, linear_settings):
+    response = _linear_post(client, _created_payload(), secret="wrong" * 8)
+    assert response.status_code == 401
+
+
+def test_linear_webhook_refuses_a_stale_timestamp(client, linear_settings):
+    stale = _created_payload(webhookTimestamp=int(time.time() * 1000) - 120_000)
+    response = _linear_post(client, stale)
+    assert response.status_code == 401
+
+
+def test_linear_webhook_answers_503_when_disabled(client, monkeypatch):
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "false")
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", LINEAR_SECRET)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    response = _linear_post(client, _created_payload())
+    # The endpoint exists; the subsystem behind it is switched off.
+    assert response.status_code == 503
+
+
+def test_linear_webhook_dedups_a_concurrent_duplicate(
+    client, linear_settings, monkeypatch
+):
+    calls = []
+
+    async def _slow_created(event):
+        calls.append(event.session_id)
+        await asyncio.sleep(0.05)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _slow_created)
+
+    first = _linear_post(client, _created_payload())
+    assert first.status_code == 202
+    second = _linear_post(client, _created_payload())
+    assert second.status_code == 202
+
+    for _ in range(400):
+        if calls and not app_module._linear_in_flight:
+            break
+        time.sleep(0.005)
+
+    # The unique index is the durable guard; this one just avoids the wasted
+    # round trip while the first is still in flight.
+    assert len(calls) == 1
+
+
+def test_linear_webhook_refuses_an_unusable_payload(client, linear_settings):
+    response = _linear_post(client, {"webhookTimestamp": int(time.time() * 1000)})
+    assert response.status_code == 422
+
+
+def test_linear_webhook_refuses_genuinely_malformed_json(client, linear_settings):
+    body = b"{not valid json at all"
+    signature = hmac.new(LINEAR_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    response = client.post(
+        "/signals/linear",
+        content=body,
+        headers={"linear-signature": signature, "content-type": "application/json"},
+    )
+    assert response.status_code == 422
+
+
+def test_linear_webhook_ignores_an_action_it_does_not_handle(
+    client, linear_settings, monkeypatch
+):
+    called = []
+
+    async def _fake_created(event):
+        called.append(event.session_id)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _fake_created)
+
+    response = _linear_post(client, _created_payload(action="somethingElse"))
+    assert response.status_code == 202
+    assert called == []
+
+
+def _linear_event(**overrides):
+    from eve_linear.types import LinearEvent
+
+    base = {
+        "action": "created",
+        "session_id": "lin_sess_1",
+        "issue_id": "lin_issue_1",
+        "team_id": "lin_team_1",
+        "actor_id": "lin_noah",
+        "guidance": "Work in owner/repo.",
+        "prompt_body": "",
+        "prompt_context": "Fix the bug.",
+    }
+    base.update(overrides)
+    return LinearEvent(**base)
+
+
+async def test_linear_max_live_sessions_genuinely_bounds_concurrency(monkeypatch):
+    """(fix round 5, item 1) `EVE_LINEAR_MAX_LIVE_SESSIONS` used to be
+    ignored entirely - `_linear_semaphore` was a hardcoded `Semaphore(3)` -
+    so a deployment that lowered the setting saw no change in behaviour.
+    Mirrors `test_the_background_handler_is_bounded_by_a_semaphore` above,
+    but drives the bound through the setting rather than by monkeypatching
+    the semaphore object directly, to prove the wiring itself works."""
+    monkeypatch.setenv("EVE_LINEAR_MAX_LIVE_SESSIONS", "1")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    concurrent = {"now": 0, "max": 0}
+
+    async def _slow_created(event):
+        concurrent["now"] += 1
+        concurrent["max"] = max(concurrent["max"], concurrent["now"])
+        await asyncio.sleep(0.02)
+        concurrent["now"] -= 1
+        return "dispatched"
+
+    async def _fake_emit(linear_session_id, content, session_id=None):
+        return True
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _slow_created)
+    monkeypatch.setattr(app_module.activities, "emit", _fake_emit)
+
+    events = [_linear_event(session_id=f"lin_sess_{i}") for i in range(2)]
+    await asyncio.gather(*(app_module._handle_linear_in_background(e) for e in events))
+
+    assert concurrent["max"] == 1
+    get_settings.cache_clear()
+
+
+async def test_a_request_that_waits_for_a_slot_gets_a_queued_thought(monkeypatch):
+    """(fix round 5, item 1) Over the cap, the design spec says Eve "emits a
+    thought saying she is queued rather than failing". The thought must be
+    emitted for the session that actually has to wait, and only for that
+    one - not for the session that gets a slot immediately."""
+    monkeypatch.setenv("EVE_LINEAR_MAX_LIVE_SESSIONS", "1")
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    release_first = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def _slow_created(event):
+        if event.session_id == "lin_sess_first":
+            entered.set()
+            await release_first.wait()
+        return "dispatched"
+
+    emitted = []
+
+    async def _fake_emit(linear_session_id, content, session_id=None):
+        emitted.append((linear_session_id, content))
+        return True
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _slow_created)
+    monkeypatch.setattr(app_module.activities, "emit", _fake_emit)
+
+    first = _linear_event(session_id="lin_sess_first")
+    second = _linear_event(session_id="lin_sess_second")
+
+    first_task = asyncio.create_task(app_module._handle_linear_in_background(first))
+    await entered.wait()  # the first request now holds the only slot
+
+    second_task = asyncio.create_task(app_module._handle_linear_in_background(second))
+    # Give the second task's coroutine a turn to run past its `locked()`
+    # check and its queued-thought emission before releasing the first.
+    await asyncio.sleep(0.01)
+
+    release_first.set()
+    await asyncio.gather(first_task, second_task)
+
+    emitted_for = {}
+    for linear_session_id, content in emitted:
+        emitted_for.setdefault(linear_session_id, []).append(content)
+
+    # The first request got a slot immediately: no queued-thought.
+    assert emitted_for.get("lin_sess_first", []) == []
+    # The second request had to wait: exactly one queued-thought, before it
+    # was ever handed to `handle_created`.
+    second_bodies = [c["body"] for c in emitted_for.get("lin_sess_second", [])]
+    assert len(second_bodies) == 1
+    assert "ahead of this one" in second_bodies[0]
+
+    get_settings.cache_clear()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Annotated, TypedDict
 
+from langchain_core.messages import HumanMessage
 from langgraph.graph.message import add_messages
 
 from eve.memory.types import MemoryBundle
@@ -47,6 +48,47 @@ def may_author(human: str) -> bool:
     setting (design doc section 6.2).
     """
     return get_settings().self_authoring_enabled and not is_ambient_text(human)
+
+
+def turn_is_ambient(messages: list) -> bool:
+    """True when this turn was composed by the ambient pipeline rather than
+    typed by a family member.
+
+    The same question `may_author` asks, answered from the message list
+    instead of a pre-extracted string, because a tool holds
+    `Annotated[EveState, InjectedState]` and not the human text. One
+    predicate, so a third copy cannot drift from the other two - the reason
+    `may_author`'s own docstring gives for existing.
+
+    Do NOT reimplement this as a check on `config.configurable["is_ambient"]`.
+    Nothing in `src/` sets that key: `eve_ambient.notify.deliver` calls
+    `runs.wait(thread_id, "eve", input={...})` with no `config` at all, so
+    such a guard is inert in production and passes its tests only because
+    they build the config by hand (EVE-30).
+
+    Fails CLOSED: a history with no HumanMessage at all is treated as
+    ambient, because a turn with nothing attributable to a member is not one
+    that may create a durable resource in their account.
+    """
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            return is_ambient_text(_text_of(message.content))
+    return True
+
+
+def _text_of(content) -> str:
+    """Content is a string on the Chat Completions path and a list of blocks
+    on the Responses path - the same split `eve_ambient.notify._text_of`
+    handles for AI messages."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
 
 
 def _last_write_wins(_old: list, new: list) -> list:

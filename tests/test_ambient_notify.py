@@ -419,3 +419,66 @@ def test_compose_prompt_uses_the_shared_marker():
     prompt = notify.compose_prompt(signal, member, FilterVerdict(notify=True, why="w"))
 
     assert is_ambient_text(prompt)
+
+
+def test_a_routine_prompt_carries_the_members_own_instruction():
+    from datetime import UTC, datetime
+
+    from eve.family import Member
+    from eve_ambient.notify import compose_prompt
+    from eve_ambient.types import FilterVerdict, Signal
+
+    signal = Signal(
+        source="routines",
+        key="r-1:2026-01-11T16:00:00+00:00",
+        occurred_at=datetime(2026, 1, 11, 16, 0, tzinfo=UTC),
+        member_sub="sub-noah",
+        summary="Routine due: Flights.",
+        payload={
+            "routine_id": "r-1",
+            "title": "Flights",
+            "instruction": "Check Aeroplan fares YVR to SJD in February.",
+            "cadence": {"daily_at": "08:00"},
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "last_run_at": None,
+        },
+    )
+    member = Member(
+        sub="sub-noah", name="Noah", role="adult",
+        timezone="America/Vancouver", permissions=["routines"],
+    )
+    verdict = FilterVerdict(notify=True, audience=["sub-noah"], urgent=False, why="asked")
+
+    prompt = compose_prompt(signal, member, verdict)
+
+    assert "Check Aeroplan fares YVR to SJD in February." in prompt
+    assert "NOTHING" in prompt
+    # The member DID ask for this, so the ambient wording must not appear.
+    assert "nobody asked you" not in prompt
+
+
+def test_a_routine_prompt_is_still_ambient_marked():
+    """The marker is what keeps may_author and turn_is_ambient closed against
+    text replayed unattended and indefinitely. Dropping it to make routines
+    feel more "real" would reopen both."""
+    from datetime import UTC, datetime
+
+    from eve.family import Member
+    from eve.state import is_ambient_text
+    from eve_ambient.notify import compose_prompt
+    from eve_ambient.types import FilterVerdict, Signal
+
+    signal = Signal(
+        source="routines", key="r-1:x", occurred_at=datetime.now(UTC),
+        member_sub="sub-noah", summary="Routine due.",
+        payload={"routine_id": "r-1", "title": "T", "instruction": "Do it.",
+                 "cadence": {"daily_at": "08:00"},
+                 "created_at": "2026-01-01T00:00:00+00:00", "last_run_at": None},
+    )
+    member = Member(
+        sub="sub-noah", name="Noah", role="adult",
+        timezone="America/Vancouver", permissions=["routines"],
+    )
+    verdict = FilterVerdict(notify=True, audience=["sub-noah"], urgent=False, why="asked")
+
+    assert is_ambient_text(compose_prompt(signal, member, verdict))

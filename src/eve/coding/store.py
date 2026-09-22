@@ -31,22 +31,40 @@ async def create_session(
     kind: str = "code",
     pr_number: int | None = None,
     head_sha: str | None = None,
+    linear_session_id: str | None = None,
+    linear_issue_id: str | None = None,
 ) -> None:
     """`thread_id` is `None` only for a `kind="review"` session: a review
     triggered by a GitHub webhook has no member-owned conversation thread to
     attach to, since nobody was chatting when GitHub fired the hook. A
     `kind="code"` session still requires a thread, enforced in the database
-    by the `eve_coding_session_review_or_threaded` check constraint."""
+    by the `eve_coding_session_review_or_threaded` check constraint.
+
+    The two Linear columns are None for a chat-dispatched session, which
+    is every session that existed before EVE-26. The unique index on
+    `linear_session_id` is what makes a retried Linear webhook insert fail
+    rather than dispatch a second agent."""
     pool = await get_pool()
     async with pool.connection() as conn:
         await conn.execute(
             "INSERT INTO eve_coding_session"
             " (id, member_sub, thread_id, goal, agent, model, repos, context,"
-            "  status, kind, pr_number, head_sha)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s, %s)",
+            "  status, kind, pr_number, head_sha, linear_session_id, linear_issue_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s, %s, %s, %s)",
             (
-                session_id, member_sub, thread_id, goal, agent, model,
-                Jsonb(repos), context, kind, pr_number, head_sha,
+                session_id,
+                member_sub,
+                thread_id,
+                goal,
+                agent,
+                model,
+                Jsonb(repos),
+                context,
+                kind,
+                pr_number,
+                head_sha,
+                linear_session_id,
+                linear_issue_id,
             ),
         )
 
@@ -194,3 +212,27 @@ async def implementer_of(repo: str, head_sha: str) -> tuple[str, str] | None:
             )
             row = await cur.fetchone()
             return (row["agent"], row["model"]) if row else None
+
+
+async def get_by_linear_session(linear_session_id: str) -> dict | None:
+    """How a `prompted` webhook finds the session it is answering."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM eve_coding_session WHERE linear_session_id = %s",
+                (linear_session_id,),
+            )
+            return await cur.fetchone()
+
+
+async def touch_linear_emitted(session_id: str) -> None:
+    """Stamped after every successful emission. The heartbeat reads it to
+    decide whether Linear has heard from us recently enough, so it must not
+    be stamped for an emission that failed."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_coding_session SET linear_emitted_at = now() WHERE id = %s",
+            (session_id,),
+        )

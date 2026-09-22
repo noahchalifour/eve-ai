@@ -7,7 +7,7 @@ are identical for both, and a parallel table would duplicate all of it to
 express one enum.
 
 A review triggered by a GitHub webhook has no member-owned conversation
-thread to attach to - nobody was chatting when GitHub fired the hook - so
+thread to attach to (nobody was chatting when GitHub fired the hook), so
 `thread_id` becomes nullable, guarded by a check constraint: every `code`
 session still needs a thread, only `review` sessions may go without one.
 """
@@ -15,8 +15,8 @@ session still needs a thread, only `review` sessions may go without one.
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0011_eve_coding_session_review"
-down_revision = "0010_eve_widget_resource"
+revision = "0013_eve_coding_session_review"
+down_revision = "0012_merge_routines_and_linear"
 branch_labels = None
 depends_on = None
 
@@ -50,6 +50,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint("eve_coding_session_review_or_threaded", "eve_coding_session", type_="check")
+    # Review rows cannot survive the downgrade: `kind` is dropped below, and a
+    # threadless row would block restoring NOT NULL.
+    op.execute("DELETE FROM eve_coding_session WHERE thread_id IS NULL")
     op.alter_column("eve_coding_session", "thread_id", nullable=False)
     op.drop_index("eve_coding_session_review_commit", table_name="eve_coding_session")
     op.drop_column("eve_coding_session", "head_sha")

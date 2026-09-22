@@ -165,3 +165,47 @@ def test_eval_turns_file_is_overridable(monkeypatch):
 
     monkeypatch.setenv("EVE_EVAL_TURNS_FILE", "/data/turns.yaml")
     assert Settings().eval_turns_file == "/data/turns.yaml"
+
+
+def test_linear_enabled_requires_its_secret_token_and_allowlist(monkeypatch):
+    from eve.settings import Settings
+
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "true")
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", "s" * 32)
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", '["owner/repo"]')
+    # No allowlist is the injection boundary missing entirely.
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", "[]")
+    with pytest.raises(ValueError, match="EVE_LINEAR_REPO_ALLOWLIST"):
+        Settings()
+
+
+def test_linear_enabled_requires_a_webhook_secret(monkeypatch):
+    from eve.settings import Settings
+
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "true")
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", '["owner/repo"]')
+    monkeypatch.delenv("EVE_LINEAR_WEBHOOK_SECRET", raising=False)
+    with pytest.raises(ValueError, match="EVE_LINEAR_WEBHOOK_SECRET"):
+        Settings()
+
+
+def test_linear_webhook_secret_must_not_be_guessable(monkeypatch):
+    from eve.settings import Settings
+
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "true")
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", '["owner/repo"]')
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", "short")
+    with pytest.raises(ValueError, match="at least 32"):
+        Settings()
+
+
+def test_linear_is_off_by_default(monkeypatch):
+    from eve.settings import Settings
+
+    for name in (
+        "EVE_LINEAR_ENABLED",
+        "EVE_LINEAR_WEBHOOK_SECRET",
+        "EVE_LINEAR_REPO_ALLOWLIST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert Settings().linear_enabled is False

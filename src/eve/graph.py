@@ -42,6 +42,7 @@ from eve.memory import extract as memory_extract, recall as memory_recall
 from eve.memory.search import search_memory
 from eve.models import Tier, get_model
 from eve.records.tools import record_append, record_query
+from eve.routines.tools import cancel_routine, list_routines, schedule_routine
 from eve.settings import get_settings
 from eve.skills.authoring import write_skill
 from eve.skills.materialize import materialize
@@ -111,6 +112,10 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(delegate_coding_task)
         tools.append(check_coding_session)
         tools.append(send_to_coding_session)
+    if settings.routines_enabled:
+        tools.append(schedule_routine)
+        tools.append(list_routines)
+        tools.append(cancel_routine)
     # Not a setting but the connected client's own capability declaration
     # (`config.configurable.assistant_ui`). A second setting for the same
     # question would be a second thing to keep in step, and a surface emitted
@@ -178,6 +183,9 @@ _TOOL_LABELS = {
     "check_coding_session": "Checking on that code work",
     "send_to_coding_session": "Passing that along",
     "show_surface": "Putting something on screen",
+    "schedule_routine": "Setting that up to run on a schedule",
+    "list_routines": "Checking what I am watching for you",
+    "cancel_routine": "Stopping that routine",
 }
 
 

@@ -17,6 +17,7 @@ from eve_tools import (
     health,
     home_assistant,
     immich,
+    linear_client,
     mcp_dispatch,
     monarch,
 )
@@ -59,6 +60,15 @@ _HANDLERS = {
     ),
     "mcp.invoke": lambda a: mcp_dispatch.invoke(
         a["server_id"], a["tool_name"], a["arguments"]
+    ),
+    "linear.create_activity": lambda a: linear_client.create_activity(
+        a["session_id"], a["content"]
+    ),
+    "linear.move_issue_to_started": lambda a: linear_client.move_issue_to_started(
+        a["issue_id"], a["team_id"]
+    ),
+    "linear.set_delegate": lambda a: linear_client.set_delegate(
+        a["issue_id"], a["actor_id"]
     ),
 }
 

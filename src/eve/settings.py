@@ -233,6 +233,46 @@ class Settings(BaseSettings):
     review_default_agent: str = "claude"
     review_default_model: str = "anthropic/claude-sonnet-5"
 
+    # EVE-25 (Scheduled routines). See docs/superpowers/specs/
+    # 2026-09-21-eve-routines-design.md.
+    #
+    # Off by default for the same reason ambient_enabled and coding_enabled
+    # are: a routine is a recurring paid VOICE-tier turn that nobody is
+    # watching, so a deployment that has not deliberately accepted standing
+    # spend must run none.
+    routines_enabled: bool = False
+    # Consecutive INFRASTRUCTURE failures before a routine pauses itself and
+    # says so once. A NOTHING veto is not a failure: silence is the routine
+    # working. Five is roughly a day of hourly retries.
+    routine_failure_limit: int = 5
+    routine_max_title_chars: int = 80
+    # The instruction is replayed into a VOICE turn on every firing, so its
+    # length is a standing cost rather than a one-off one.
+    routine_max_instruction_chars: int = 2000
+
+    # EVE-26 (Linear). See docs/superpowers/specs/
+    # 2026-09-21-eve-linear-agent-design.md.
+    #
+    # Off by default, like ambient_enabled and coding_enabled: this subsystem
+    # acts on input from outside the household, so a deployment that has not
+    # deliberately enabled it must refuse every webhook.
+    linear_enabled: bool = False
+    # Held by eve-ambient, which verifies with it. NOT a credential for
+    # reaching Linear - that token lives only in eve-tools (ADR 0006).
+    linear_webhook_secret: str = ""
+    # The containment boundary for prompt injection. Issue text reaches an
+    # agent that writes code and opens pull requests; the one thing that text
+    # can never widen is which repos are reachable, because this is read from
+    # settings rather than from anything Linear sent.
+    linear_repo_allowlist: list[str] = []
+    # Against Linear's 30-minute stale threshold. A coding agent can work
+    # longer than that without producing a supervisor decision, and a
+    # stale-looking session invites a human to intervene in work going fine.
+    linear_heartbeat_minutes: int = 10
+    # Concurrent Linear-originated coding sessions. Five people delegating at
+    # once should queue, not fan out to five agents on one box.
+    linear_max_live_sessions: int = 3
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
@@ -290,6 +330,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "EVE_COMPUTER_API_KEY is required when EVE_COMPUTER_ENABLED=true"
             )
+        if self.linear_webhook_secret and len(self.linear_webhook_secret) < 32:
+            raise ValueError(
+                "EVE_LINEAR_WEBHOOK_SECRET must be at least 32 characters: it "
+                "is the only thing distinguishing Linear from anyone who "
+                "knows the URL, so a guessable value fails open"
+            )
+        if self.linear_enabled:
+            # Enabled-but-unconfigured accepts webhooks, spends a dispatch,
+            # then fails every emission on a 401 while Linear retries - the
+            # least diagnosable failure this subsystem can have.
+            if not self.linear_webhook_secret:
+                raise ValueError(
+                    "EVE_LINEAR_WEBHOOK_SECRET is required when "
+                    "EVE_LINEAR_ENABLED=true"
+                )
+            if not self.linear_repo_allowlist:
+                raise ValueError(
+                    "EVE_LINEAR_REPO_ALLOWLIST is required when "
+                    "EVE_LINEAR_ENABLED=true: it is the only boundary between "
+                    "an issue anyone can file and a repo Eve can write to"
+                )
 
 
 @lru_cache(maxsize=1)

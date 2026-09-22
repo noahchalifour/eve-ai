@@ -47,9 +47,18 @@ members:
       # EVE-27: commissioning a review by labelling a pull request. Distinct
       # from code.delegate: delegating writes code, this only comments on it.
       - code.review
+      # EVE-25: creating and cancelling standing requests Eve runs on a
+      # schedule. A bare noun like `finances`, because the tools are the
+      # only write surface and there is no read-only half to distinguish.
+      - routines
     # Phase 6: the Immich album holding his clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""
+    # EVE-26: the Linear user id this member delegates from. Find it with
+    # `linear api '{ viewer { id } }'` while signed in as them. A Linear
+    # user with no mapping here is refused, so adding a teammate is a pull
+    # request against this file, same as every other grant.
+    linear_id: ""
 
   - sub: "b96297cfe2cd39700a9d394e99cb98cb4c84167caccae5c6ab596a17a799495c"
     name: "Kendra"
@@ -70,6 +79,10 @@ members:
       # Read-only; a bare noun like `finances` because there is no write
       # surface to distinguish it from.
       - health
+      # EVE-25: creating and cancelling standing requests Eve runs on a
+      # schedule. A bare noun like `finances`, because the tools are the
+      # only write surface and there is no read-only half to distinguish.
+      - routines
     # Phase 6: the Immich album holding her clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""

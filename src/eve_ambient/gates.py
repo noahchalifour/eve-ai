@@ -30,6 +30,7 @@ SOURCE_PERMISSION: dict[str, str] = {
     "computer": "computer.use",
     "coding": "code.delegate",
     "review": "code.review",
+    "routines": "routines",
 }
 
 # Sources whose content belongs to one member and may not be redistributed,

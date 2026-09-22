@@ -40,6 +40,7 @@ from eve.tools_client import (
     kill_coding_session,
     prompt_coding_session,
 )
+from eve_linear import activities
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,37 @@ def _resolved(row: dict, status: str, result: dict, now: datetime) -> dict:
     return {**row, "status": status, "result": result, "finished_at": now}
 
 
+async def _emit_for(row: dict, content: dict) -> None:
+    """A no-op for the common case: a chat-dispatched session has no Linear
+    side and must not cost a call. Never raises - losing the narration is
+    survivable, failing a running coding session is not."""
+    linear_session_id = row.get("linear_session_id")
+    if not linear_session_id:
+        return
+    try:
+        await activities.emit(linear_session_id, content, session_id=row["id"])
+    except Exception:
+        logger.warning(
+            "emitting to linear for session %s raised", row["id"], exc_info=True
+        )
+
+
+async def _heartbeat(row: dict, box: dict, now, settings) -> None:
+    """Linear marks a session stale after 30 minutes of silence, and a coding
+    agent can work far longer than that without producing a decision. The
+    state is recoverable (a later activity un-stales it), so this is about
+    not inviting a human to intervene in work that is going fine."""
+    if not row.get("linear_session_id"):
+        return
+    last = row.get("linear_emitted_at") or row.get("created_at")
+    if last is None:
+        return
+    if (now - last) < timedelta(minutes=settings.linear_heartbeat_minutes):
+        return
+    latest = "; ".join((box.get("activity") or [])[-1:]) or "still working"
+    await _emit_for(row, activities.thought(f"Still on it: {latest}"))
+
+
 async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     # The outermost bound, checked before anything else so an expired
     # session cannot spend one more model call on its way out. A session
@@ -142,6 +174,7 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
         await kill_coding_session(row["id"])
         result = {"error": f"the session ran too long ({int(age)}s) and was stopped"}
         await store.mark_resolved(row["id"], "failed", result)
+        await _emit_for(row, activities.error(result["error"]))
         return _resolved(row, "failed", result, now)
 
     box = await get_coding_session(row["id"], since=row["cursor"])
@@ -149,6 +182,9 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     if box is None:
         if now - row["updated_at"] > stale_after:
             await store.mark_resolved(row["id"], "stale", {})
+            await _emit_for(
+                row, activities.error("the session went quiet and never reported back")
+            )
             return _resolved(row, "stale", {}, now)
         return None
 
@@ -156,11 +192,16 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     if status == "failed":
         result = {"error": box.get("error") or "the session failed"}
         await store.mark_resolved(row["id"], "failed", result)
+        await _emit_for(row, activities.error(result["error"]))
         return _resolved(row, "failed", result, now)
     if status == "killed":
         await store.mark_resolved(row["id"], "failed", {"error": "the session was killed"})
+        await _emit_for(row, activities.error("the session was killed"))
         return _resolved(row, "failed", {"error": "the session was killed"}, now)
     if status != "idle":
+        # The only place a session is doing work with no decision to make,
+        # which is exactly where a long Linear silence would strand it.
+        await _heartbeat(row, box, now, settings)
         return None
 
     pending = box.get("pending") or []
@@ -194,10 +235,14 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
             logger.warning("could not deliver a reply to session %s", row["id"])
             return None
         await store.set_status(row["id"], "running")
+        await _emit_for(
+            row, activities.action("Working", row["goal"], decision.text)
+        )
         return None
 
     if decision.action == "escalate":
         await store.set_status(row["id"], "blocked")
+        await _emit_for(row, activities.elicitation(decision.text))
         return _resolved(row, "blocked", {"question": decision.text}, now)
 
     if row.get("kind") == "review":
@@ -213,4 +258,13 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     closed = await close_coding_session(row["id"]) or {"prs": []}
     result = {"summary": decision.text, **closed}
     await store.mark_resolved(row["id"], "finished", result)
+    prs = [pr for pr in result.get("prs", []) if pr.get("pr_url")]
+    links = "; ".join(f"{pr['repo']}: {pr['pr_url']}" for pr in prs)
+    await _emit_for(
+        row,
+        activities.response(
+            f"{decision.text} Pull requests: {links}" if links else
+            f"{decision.text} No changes, so there's no pull request."
+        ),
+    )
     return _resolved(row, "finished", result, now)

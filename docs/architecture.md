@@ -192,6 +192,12 @@ src/eve/
     resolve.py      # execute a validated recipe; the snapshot route, no model call
     tools.py        # save_widget: the one widget-authoring tool in the eve graph
     app.py          # the mounted resource API: per-route auth via require_auth
+  routines/
+    cadence.py      # the closed cadence vocabulary and its validator; imports nothing from eve
+    store.py        # every eve_routine SQL statement; claim_due is the one household-wide query
+    tools.py        # schedule_routine, list_routines, cancel_routine -- refuse on an ambient turn
+    app.py          # the mounted resource API: list, patch, delete; no create route
+  http_app.py       # the one app aegra.json's http.app mounts; includes the widget and routine routers
 
 src/eve_sandbox/
   settings.py   # EVE_SANDBOX_* only -- no database URL, no model key, no third-party credential
@@ -204,7 +210,7 @@ src/eve_ambient/
   store.py      # every eve_ambient_seen and eve_ambient_notice SQL statement
   gates.py      # pure functions: scoped_audience, permitted, quiet hours, daily-cap window
   ntfy.py       # the Notifier protocol and its one ntfy implementation
-  sources/      # calendar.py, mail.py, finances.py (polled); home.py (pushed via webhook)
+  sources/      # calendar.py, mail.py, finances.py, computer.py, coding.py, routines.py (polled); home.py (pushed via webhook)
   filter.py     # the REFLEX relevance gate; raises FilterError on infrastructure failure
   notify.py     # the compose turn: creates a thread, runs eve, pushes or discards it
   pipeline.py   # handle_signal: the one place signal-to-resolution order is decided
@@ -676,8 +682,10 @@ never invoke a graph run. Adding a widget costs a recipe, not a migration, a
 store module, a tool, and a release.
 
 **The API is a custom FastAPI app mounted through Aegra's `http.app`**
-(`"http": {"app": "./src/eve/widgets/app.py:app"}` in `aegra.json`), serving
-capabilities, list, snapshot, action, and delete routes. Authorization is
+(`"http": {"app": "./src/eve/http_app.py:app"}` in `aegra.json`, which
+includes this widget router alongside the routine router described under
+"Routines" below), serving capabilities, list, snapshot, action, and delete
+routes. Authorization is
 enforced per query, not by Aegra's route walk: in aegra-api 0.10.3,
 `enable_custom_route_auth` is a no-op (the walk rewrites
 `route.dependencies` after the routes are built, but FastAPI resolves
@@ -698,6 +706,87 @@ the fresh snapshot so the client can render current data instead of an error.
 The action routes impose the same closed vocabulary as the recipe does,
 `filters.replace` the one legal entry, so an authored recipe cannot invent an
 action either.
+
+## Routines
+
+A routine is a stored prompt plus a cadence: a member asks Eve to check or do
+something repeatedly, and each firing is an ordinary headless turn — the same
+`eve` graph a member's own message runs, with no special-cased node for
+"this one is scheduled." Silence is a successful outcome, not a missing one:
+a routine that finds nothing worth saying said so, and that is the routine
+working, not failing.
+
+**The firing path** is `eve_ambient.sources.routines`
+(`src/eve_ambient/sources/routines.py`), a `per_member=False` polled source
+registered in `sources/__init__.py`'s `SOURCES` tuple next to `computer`,
+`coding`, and `finances`: the query is household-wide by construction, and
+every claimed row already carries its own member, so polling once per member
+would just cost one query per member to answer the same question. Because it
+rides the existing ambient tick, every mechanism the tick already has is
+reused rather than duplicated: the gate chain, the thread creation and
+delivery in `notify.deliver`, the veto (Eve replying `NOTHING`), and the push
+through `ntfy`.
+
+**`routines` joins `computer` and `coding` in `_REQUESTED_SOURCES`**
+(`src/eve_ambient/pipeline.py`), the set of sources the relevance filter,
+quiet hours, and the daily cap never touch. A member who set up a routine
+asked for it directly — an LLM deciding the answer to a direct request is
+"not relevant" and swallowing it is the worst failure mode available, and a
+shared daily counter would let a chatty calendar starve a routine the member
+deliberately created. The per-routine schedule, authored in the member's own
+timezone, is what stands in for quiet hours here: a member who does not want
+a 3am notification schedules the routine for 8am instead.
+
+**`claim_due`** (`src/eve/routines/store.py`) is the one query in the module
+without a `member_sub` filter, and the one place a double fire is made
+unreachable: it advances `next_run_at` in the same statement that selects the
+due rows, pushing it to a bounded lease rather than to `now()` — `now()` is
+the transaction timestamp, so a naive `next_run_at = now()` would still read
+as due the instant the statement commits and the very next tick would
+re-claim the same row. A routine whose `next_run_at` is far in the past (the
+service was down overnight) fires once and schedules forward from the current
+time, never delivering a backlog of missed occurrences.
+
+**The cadence vocabulary is closed**, validated in `eve.routines.cadence`,
+which imports nothing from `eve` and is exercised by the tools, the store,
+and the ambient source alike without a cycle. Exactly one of `every_hours`
+(1-168), `daily_at` (a 24-hour time), or `weekly_at` (a day and a time) may
+be present, with a one-hour floor: nothing may run more often than hourly. A
+cron expression would be strictly worse here — a model-authored `* * * * *`
+is a paid VOICE-tier turn every minute, and neither a mobile editor nor a
+plain-English rendering can be built over an open grammar.
+
+**The three tools** — `schedule_routine`, `list_routines`, and
+`cancel_routine` (`src/eve/routines/tools.py`) — each refuse outright on an
+ambient turn, checked via `eve.state.turn_is_ambient` before the permission
+check or any storage access: a routine's own firing cannot author, pause, or
+cancel a routine. **`configurable["is_ambient"]` is NOT the mechanism**, and
+deliberately so: nothing in `src/` ever sets that key, because
+`eve_ambient.notify.deliver` calls `runs.wait(thread_id, "eve", input={...})`
+with no `config` at all, so a guard reading it would be inert in production
+and would pass its own tests only because they build the config by hand
+(EVE-30). `turn_is_ambient` instead inspects the last `HumanMessage` in state
+for the same ambient marker `eve.state.may_author` already checks for
+authored rules and procedures, so a third copy of that check cannot drift
+from the other two.
+
+**`EVE_ROUTINES_ENABLED` is off by default**, the same posture
+`ambient_enabled` and `coding_enabled` take: a routine is a recurring paid
+VOICE-tier turn nobody is watching, so a deployment that has not deliberately
+accepted that standing spend must run none.
+
+**`aegra.json`'s `http.app` now points at `src/eve/http_app.py`**
+(`"http": {"app": "./src/eve/http_app.py:app"}`), which owns no routes of its
+own and holds both the widget router and the routine router
+(`src/eve/routines/app.py`), plus the one app-level exception handler that
+flattens a 409's structured detail. The routines router follows
+`eve.widgets.app`'s exact shape — `Depends(require_auth)` declared on the
+router itself rather than relying on Aegra's `enable_custom_route_auth` walk
+— and deliberately exposes no create route: authoring a routine belongs in
+conversation, where Eve can ask what a vague instruction means before it is
+committed to a table that will run unattended. The mounted surface only
+lists, patches (title, cadence, status, expiry, each under optimistic
+concurrency), and deletes what already exists.
 
 ## Auth and thread scoping
 
@@ -868,7 +957,7 @@ migrations, which run separately at startup against the default
 is kept as an empty list rather than deleted, so an old assertion pinning its
 old shape fails loudly instead of silently importing nothing.
 
-Five revisions exist in `alembic/versions/`, not the two originally planned:
+Six revisions exist in `alembic/versions/`, not the two originally planned:
 
 - **`0001_baseline`** reproduces the five hand-rolled entries idempotently —
   every statement is `IF NOT EXISTS` — so it is a no-op against an
@@ -894,6 +983,12 @@ Five revisions exist in `alembic/versions/`, not the two originally planned:
   OAuth credentials, the one table `eve-tools`' own restricted role may
   touch (see "Specialists and skills" and
   [ADR 0016](adr/0016-eve-tools-owns-a-credential-table.md)).
+- **`0011_eve_routine`** creates the `eve_routine` table (see "Routines"
+  above): `cadence` is jsonb, validated in Python rather than by columns, the
+  same choice `0010_eve_widget_resource` made for the widget recipe; an index
+  on `(status, next_run_at)` is the ambient tick's one query for "every
+  active routine that is due," and an index on `(member_sub, created_at)`
+  serves the owner-facing list.
 
 ## Ambient
 
@@ -909,10 +1004,12 @@ impersonation token (below), the Home Assistant webhook secret, and the ntfy
 push token — it also holds `EVE_TOOLS_API_KEY` (to call `eve-tools`) and the
 database URL (for the two tables below), neither of which is third-party.
 
-**Sources.** Four exist, registered in `sources/__init__.py`'s `SOURCES`
-tuple: `calendar` and `mail` are polled once per family member holding the
-source's permission; `finances` is polled once for the household. `home` is
-deliberately absent from that tuple — it is pushed, not polled: Home
+**Sources.** Registered in `sources/__init__.py`'s `SOURCES` tuple: `calendar`
+and `mail` are polled once per family member holding the source's permission;
+`finances`, `computer`, `coding`, and `routines` are each polled once for the
+household (`per_member=False`), since each already carries its own member on
+every row or signal it produces. `home` is deliberately absent from that
+tuple — it is pushed, not polled: Home
 Assistant's own automations decide what is worth Eve's attention and POST it
 to `/signals/home-assistant`, authenticated by a shared secret compared with
 `compare_digest` (`app.py`). The webhook contract (needed by whoever authors
@@ -1006,6 +1103,15 @@ unread, nothing over budget) would otherwise leave no row behind at all, so
 the next tick — the first one to actually find something — would still read
 as unprimed and get silently primed away instead of notified.
 
+`computer` and `routines` are both exempt from priming entirely (`app.py`'s
+`poll_once` checks `source.name not in ("computer", "routines")` before
+even looking at `has_any`): each one's signal is always a direct response
+to something a member explicitly asked for — a dispatched computer task or
+a routine they created — so silently priming it away on its very first
+occurrence would drop something they're waiting on rather than a stale
+backlog. Any future `per_member=False` source should check against this
+same rationale before joining `SOURCES`.
+
 **Pruning.** `_poll_forever` calls `store.prune_seen()` after every tick,
 which deletes `eve_ambient_seen` rows older than its 30-day default horizon
 so the table does not grow forever. The `__primed__` sentinel is explicitly
@@ -1022,6 +1128,98 @@ the other makes every budget overrun re-fire.
 across instances; the poll loop and the webhook handler both run in one
 process. A second replica would poll and push the same signals again and
 double-count the daily cap in `eve_ambient_notice`.
+
+`/signals/linear`, described in full below, shares this webhook posture
+(verify, acknowledge fast, do the real work in a background task) but
+deliberately bypasses the gate chain above: quiet hours and the daily cap
+exist to protect the family from unrequested interruptions, and would
+misfire on work a family member explicitly asked for by delegating an issue.
+
+## Linear
+
+Phase 6 (EVE-26) makes Eve a Linear agent: a family member assigns her an
+issue and she works it as a coding session, narrating progress back into
+Linear's own activity feed rather than a chat thread. The design and the
+implementation plan are in
+[`docs/superpowers/specs/2026-09-21-eve-linear-agent-design.md`](superpowers/specs/2026-09-21-eve-linear-agent-design.md)
+and
+[`docs/superpowers/plans/2026-09-21-eve-linear-agent.md`](superpowers/plans/2026-09-21-eve-linear-agent.md).
+
+**The endpoint and its verification.** `POST /signals/linear`
+(`src/eve_ambient/app.py`) lives beside `/signals/home-assistant` in
+`eve-ambient` and follows the same shape: read the raw body before parsing
+it, because a signature covers the exact bytes Linear sent and re-serialized
+JSON would not match; verify an HMAC-SHA256 signature in the
+`linear-signature` header against `EVE_LINEAR_WEBHOOK_SECRET` with
+`hmac.compare_digest`; check `webhookTimestamp` is fresh, rejecting a stale
+or missing one as a replay rather than a malformed payload. Only `created`
+(a fresh delegation) and `prompted` (a reply, or an answer to an
+elicitation) are handled; every other action Linear can send is
+acknowledged and dropped so Linear does not retry an event this feature will
+never process. An in-flight set keyed by the Linear session id collapses a
+concurrent duplicate delivery before it ever reaches the handler. Linear
+expects a response within 5 seconds and a first activity within 10 of
+`created`, so the handler (`src/eve_linear/handler.py`) is deliberately
+ordered: the three gate checks (identity, permission, the repo allowlist)
+run first because they are pure local computation, and only after the
+acknowledgement activity is emitted does anything that can block on a
+network or the database run: memory recall, the Aegra thread, the call to
+eve-computer.
+
+**The credential split.** The webhook signing secret and the OAuth token
+that actually reaches Linear's API are deliberately not the same
+credential, in the same place, for the same reason as every other
+third-party integration (ADR 0006): verification and action are separable.
+The signing secret proves a request came from Linear and grants no
+authority over the workspace, so it lives in `eve-ambient`
+(`EVE_LINEAR_WEBHOOK_SECRET`) beside the Home Assistant webhook secret. The
+OAuth token can create activities, move issues, and act as Eve in Linear, so
+it lives in `eve-tools` behind the `linear.*` handlers
+(`src/eve_tools/linear_client.py`), exactly like every other credential
+that speaks to the outside world. See the ADR 0006 amendment below for the
+fuller argument. Setting Eve as delegate (the other half of Linear's
+best practice on accepting a delegation, alongside the issue-status move
+`handler.py` already performs) is not yet wired: `linear_client.set_delegate`
+and the `linear.set_delegate` tool exist, but nothing calls them yet; a
+follow-up needs Eve's own Linear actor id and a query for whether the issue
+already has a delegate, neither of which this design specifies.
+
+**Decision to activity mapping.** Every decision Eve or the supervisor makes
+about a Linear-originated session becomes a Linear activity
+(`src/eve_linear/activities.py`), one of five server-validated shapes:
+`thought` (the ten-second acknowledgement, and the heartbeat), `elicitation`
+(an answerable refusal, or the supervisor's `escalate` decision: a question
+only the family member can resolve), `error` (an unanswerable refusal, a
+dispatch failure, a killed or timed-out session), `action` (the supervisor's
+`reply` decision, narrating what it told the coding agent), and `response`
+(the supervisor's `done` decision, with pull request links when there are
+any). `activities.emit` never raises: losing the narration is recoverable,
+but failing a running coding session over a GraphQL hiccup is not. It also
+stamps the heartbeat clock in `eve_coding_session.linear_emitted_at`, and
+only on a successful emission, so a failed one cannot make the heartbeat
+believe Linear has heard from Eve when it has not.
+
+**The allowlist as the injection boundary.** Issue text and guidance reach
+an agent that writes code and opens pull requests, so the one thing that
+text can never widen is which repositories are reachable.
+`EVE_LINEAR_REPO_ALLOWLIST` is read from settings, never from anything
+Linear sent, and `resolve_repos` (`src/eve_linear/identity.py`) only ever
+narrows a request down to the allowlist's intersection: an issue asking to
+work in a repo outside it gets a refusal, not a wider grant. This is the
+same posture as `eve-computer`'s `NetworkPolicy` and the family roster's
+permission checks: the boundary is enforced by something the untrusted input
+cannot touch.
+
+**The heartbeat.** Linear marks an agent session stale after 30 minutes of
+silence, and a coding agent can legitimately work far longer than that
+without producing a supervisor decision. `supervisor._heartbeat` checks, on
+every tick of a live session that has a `linear_session_id`, whether
+`EVE_LINEAR_HEARTBEAT_MINUTES` (default 10) has elapsed since the last
+emission or the session's creation, and if so emits a `thought` naming the
+coding agent's most recent activity. This is purely cosmetic against
+Linear's own staleness clock, since the underlying state is fully
+recoverable and a later activity un-stales it, so the heartbeat exists to avoid
+inviting a human to intervene in work that is, in fact, still going fine.
 
 ## Tool labels
 

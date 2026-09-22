@@ -35,6 +35,11 @@ class Member:
     # review as this member. Optional, and a member without one can never be
     # resolved from a webhook, which is the safe direction.
     github_login: str | None = None
+    # The Linear user id this member signs in as, when the workspace is
+    # installed (EVE-26). Optional: a member without one cannot delegate
+    # from Linear, which is a refusal rather than an error. Non-secret and
+    # per-member, so it belongs in the roster rather than in settings.
+    linear_id: str | None = None
 
     def can(self, permission: str) -> bool:
         return permission in self.permissions
@@ -43,6 +48,9 @@ class Member:
 class Family:
     def __init__(self, members: list[Member]) -> None:
         self._by_sub = {m.sub: m for m in members}
+        # Only members who actually have one. A `None` key would make an
+        # absent id collide with an unmapped lookup.
+        self._by_linear_id = {m.linear_id: m for m in members if m.linear_id}
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Family":
@@ -57,6 +65,7 @@ class Family:
                     permissions=frozenset(entry.get("permissions", [])),
                     wardrobe_album=entry.get("wardrobe_album") or None,
                     github_login=entry.get("github_login") or None,
+                    linear_id=entry.get("linear_id") or None,
                 )
                 for entry in raw.get("members", [])
             ]
@@ -86,6 +95,14 @@ class Family:
             if member.github_login == login:
                 return member
         raise UnknownMemberError(f"no family member with GitHub login {login!r}")
+
+    def by_linear_id(self, linear_id: str) -> Member | None:
+        """`None` rather than raising: an unmapped Linear user is a refusal
+        Eve explains in the session, not an exception. An empty id can never
+        match, because `_by_linear_id` holds no falsy keys."""
+        if not linear_id:
+            return None
+        return self._by_linear_id.get(linear_id)
 
 
 @lru_cache(maxsize=1)
