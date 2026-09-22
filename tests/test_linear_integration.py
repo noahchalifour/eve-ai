@@ -88,7 +88,7 @@ async def world(tmp_path, monkeypatch):
     async with pool.connection() as conn:
         await conn.execute("TRUNCATE eve_coding_session")
 
-    state = {"activities": [], "dispatches": [], "order": []}
+    state = {"activities": [], "dispatches": [], "order": [], "killed": []}
 
     async def _fake_invoke(tool, arguments, **kwargs):
         if tool == "linear.create_activity":
@@ -111,12 +111,17 @@ async def world(tmp_path, monkeypatch):
     async def _fake_validate(model, agent):
         return "claude-sonnet-5"
 
+    async def _fake_kill(session_id):
+        state["killed"].append(session_id)
+        return "ok"
+
     monkeypatch.setattr(activities, "invoke", _fake_invoke)
     monkeypatch.setattr(handler, "invoke", _fake_invoke)
     monkeypatch.setattr(handler, "create_coding_session", _fake_create)
     monkeypatch.setattr(handler, "_recall_context", _fake_recall)
     monkeypatch.setattr(handler, "_create_thread", _fake_thread)
     monkeypatch.setattr(handler.catalogue, "validate", _fake_validate)
+    monkeypatch.setattr(handler, "kill_coding_session", _fake_kill)
 
     yield state
 
@@ -164,6 +169,19 @@ async def test_a_retried_created_dispatches_exactly_once(client, world):
     brief's own inline comment states: the unique index means the retry
     never produces a second *supervised* session, i.e. a second row in
     `eve_coding_session`.
+
+    The row-count assertion alone is NOT load-bearing for Task 10's actual
+    fix: the pre-existing unique index (Task 4, covered by
+    `tests/test_coding_store.py::test_two_sessions_cannot_share_one_linear_session_id`)
+    guarantees it on its own, even with Task 10's try/except and
+    `kill_coding_session` call entirely reverted (the raw `UniqueViolation`
+    would just propagate to `_handle_linear_in_background`'s outer
+    `except Exception` in `eve_ambient/app.py` and get swallowed there,
+    leaving the row count at 1 regardless). What this test additionally
+    asserts now, the `kill_coding_session` call, is what actually exercises
+    Task 10's new behaviour: catching that error gracefully and killing the
+    orphaned box session it left running rather than leaving it to burn
+    tokens unsupervised.
     """
     from eve.coding import store
     from eve.memory import db as memory_db
@@ -182,3 +200,9 @@ async def test_a_retried_created_dispatches_exactly_once(client, world):
             ("lin_sess_1",),
         )
         assert (await result.fetchone())[0] == 1
+
+    # Load-bearing for Task 10 specifically: the retry's orphaned box
+    # session (created before the duplicate row write failed) must be
+    # killed, not left running unsupervised.
+    assert len(world["killed"]) == 1
+    assert world["killed"]
