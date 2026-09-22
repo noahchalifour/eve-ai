@@ -26,7 +26,12 @@ import uuid
 from eve.coding import catalogue, store
 from eve.coding.dispatch import _recall_context
 from eve.settings import get_settings
-from eve.tools_client import create_coding_session, invoke, prompt_coding_session
+from eve.tools_client import (
+    create_coding_session,
+    invoke,
+    kill_coding_session,
+    prompt_coding_session,
+)
 from eve_linear import activities
 from eve_linear.identity import resolve_member, resolve_repos
 from eve_linear.types import LinearEvent
@@ -142,18 +147,30 @@ async def handle_created(event: LinearEvent) -> str:
         )
         return "failed"
 
-    await store.create_session(
-        session_id=session_id,
-        member_sub=member.sub,
-        thread_id=thread_id,
-        goal=goal,
-        agent=agent,
-        model=model,
-        repos=repos,
-        context=context,
-        linear_session_id=event.session_id,
-        linear_issue_id=event.issue_id,
-    )
+    try:
+        await store.create_session(
+            session_id=session_id,
+            member_sub=member.sub,
+            thread_id=thread_id,
+            goal=goal,
+            agent=agent,
+            model=model,
+            repos=repos,
+            context=context,
+            linear_session_id=event.session_id,
+            linear_issue_id=event.issue_id,
+        )
+    except Exception:
+        # Almost certainly the unique index on linear_session_id: Linear
+        # retried, and another attempt already owns this agent session. The
+        # box is now running a session with no row, so stop it rather than
+        # leaving an orphan burning tokens.
+        logger.info(
+            "linear session %s already has a coding session; not duplicating",
+            event.session_id,
+        )
+        await kill_coding_session(session_id)
+        return "duplicate"
 
     if event.issue_id and event.team_id:
         # Best-effort, and deliberately after the row exists: the work is

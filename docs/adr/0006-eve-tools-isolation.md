@@ -41,3 +41,12 @@ in-process; a leaf tool call's HTTP hop to `eve-tools` lands after the
 first streamed token and inside the same Langfuse trace either way, so
 neither of ADR 0001's original objections applies to it. "One deploy"
 becomes two: `eve-ai` and `eve-tools`, both built from this repository.
+
+**Amendment (EVE-26, 2026-09-21): inbound-initiated third parties.** Linear
+is the first third party that initiates contact with Eve rather than being
+polled, which raises the question of whether its webhook receiver must live
+in `eve-tools`. It does not, and the rule is unchanged: verification and
+action are separable. The webhook signing secret proves Linear reached us and
+grants no authority over the workspace, so it lives in `eve-ambient` beside
+the Home Assistant secret. The OAuth token reaches Linear, so it lives here,
+behind the `linear.*` handlers, exactly like every other credential.
