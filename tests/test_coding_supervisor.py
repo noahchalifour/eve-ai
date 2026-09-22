@@ -11,9 +11,17 @@ import pytest
 
 from eve.coding import supervisor
 from eve.coding.supervisor import Decision
+from eve.settings import get_settings
 
 
-def _row(session_id="s1", status="running", cursor=0, updated_at=None):
+def _row(
+    session_id="s1",
+    status="running",
+    cursor=0,
+    updated_at=None,
+    linear_session_id=None,
+    linear_emitted_at=None,
+):
     return {
         "id": session_id, "member_sub": "sub-noah", "thread_id": "t1",
         "goal": "fix the CalDAV client", "agent": "codex", "model": "m",
@@ -21,6 +29,8 @@ def _row(session_id="s1", status="running", cursor=0, updated_at=None):
         "status": status, "cursor": cursor, "supervisor_turns": 0,
         "updated_at": updated_at or datetime.now(UTC),
         "created_at": datetime.now(UTC),
+        "linear_session_id": linear_session_id,
+        "linear_emitted_at": linear_emitted_at,
     }
 
 
@@ -53,6 +63,28 @@ def _box(status="idle", turns=None, pending=None, cursor=2):
         "activity": [],
         "error": "",
     }
+
+
+def _now():
+    return datetime.now(UTC)
+
+
+def _stale_after():
+    return timedelta(minutes=get_settings().coding_session_stale_minutes)
+
+
+def _patch_box(monkeypatch, box):
+    monkeypatch.setattr(supervisor, "get_coding_session", AsyncMock(return_value=box))
+
+
+def _patch_decision(monkeypatch, action, text):
+    monkeypatch.setattr(
+        supervisor, "decide", AsyncMock(return_value=Decision(action=action, text=text))
+    )
+
+
+def _patch_close(monkeypatch, closed):
+    monkeypatch.setattr(supervisor, "close_coding_session", AsyncMock(return_value=closed))
 
 
 async def test_a_running_session_is_left_alone(monkeypatch):
@@ -284,3 +316,113 @@ async def test_a_decision_call_that_fails_leaves_the_session_alone(monkeypatch):
 
     assert await supervisor.tick() == []
     supervisor.store.mark_resolved.assert_not_awaited()
+
+
+@pytest.fixture
+def emitted(monkeypatch):
+    calls = []
+
+    async def _emit(linear_session_id, content, session_id=None):
+        calls.append((linear_session_id, content["type"]))
+        return True
+
+    monkeypatch.setattr(supervisor.activities, "emit", _emit)
+    return calls
+
+
+async def test_a_reply_emits_an_action(emitted, monkeypatch):
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "?"}]})
+    _patch_decision(monkeypatch, action="reply", text="Use the staging database.")
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "action") in emitted
+
+
+async def test_an_escalation_emits_an_elicitation(emitted, monkeypatch):
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "?"}]})
+    _patch_decision(monkeypatch, action="escalate", text="Which database?")
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "elicitation") in emitted
+
+
+async def test_finishing_emits_a_response_carrying_the_pull_requests(
+    emitted, monkeypatch
+):
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Fixed the login bug.")
+    _patch_close(monkeypatch, {"prs": [{"repo": "owner/repo", "pr_url": "https://pr/1"}]})
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "response") in emitted
+
+
+async def test_a_failure_emits_an_error(emitted, monkeypatch):
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "failed", "error": "the agent crashed"})
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "error") in emitted
+
+
+async def test_a_chat_dispatched_session_emits_nothing(emitted, monkeypatch):
+    # The overwhelmingly common case. A session with no Linear side must not
+    # cost a single call.
+    row = _row(status="running", linear_session_id=None)
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "?"}]})
+    _patch_decision(monkeypatch, action="reply", text="Carry on.")
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert emitted == []
+
+
+async def test_an_emission_failure_does_not_stop_the_session(monkeypatch):
+    async def _raising_emit(linear_session_id, content, session_id=None):
+        raise RuntimeError("linear is down")
+
+    monkeypatch.setattr(supervisor.activities, "emit", _raising_emit)
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Done.")
+    _patch_close(monkeypatch, {"prs": []})
+
+    # The session still resolves. Losing narration must never destroy work.
+    outcome = await supervisor._advance(row, _now(), _stale_after(), get_settings())
+    assert outcome["status"] == "finished"
+
+
+async def test_the_heartbeat_fires_after_the_threshold(emitted, monkeypatch):
+    now = _now()
+    stale_stamp = now - timedelta(minutes=11)
+    row = _row(
+        status="running", linear_session_id="lin_sess_1", linear_emitted_at=stale_stamp
+    )
+    # `running`, not `idle`: there is no decision to make, which is exactly
+    # when a long silence would otherwise strand the Linear session.
+    _patch_box(monkeypatch, {"status": "running", "activity": ["compiling"]})
+
+    await supervisor._advance(row, now, _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "thought") in emitted
+
+
+async def test_the_heartbeat_does_not_fire_before_the_threshold(emitted, monkeypatch):
+    now = _now()
+    row = _row(
+        status="running",
+        linear_session_id="lin_sess_1",
+        linear_emitted_at=now - timedelta(minutes=2),
+    )
+    _patch_box(monkeypatch, {"status": "running", "activity": ["compiling"]})
+
+    await supervisor._advance(row, now, _stale_after(), get_settings())
+
+    assert emitted == []
