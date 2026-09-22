@@ -31,6 +31,10 @@ class Member:
     # erroring on. Non-secret and per-member, so it belongs in the roster
     # rather than in settings.
     wardrobe_album: str | None = None
+    # EVE-27: the GitHub account whose label or assignment may commission a
+    # review as this member. Optional, and a member without one can never be
+    # resolved from a webhook, which is the safe direction.
+    github_login: str | None = None
 
     def can(self, permission: str) -> bool:
         return permission in self.permissions
@@ -52,6 +56,7 @@ class Family:
                     timezone=entry["timezone"],
                     permissions=frozenset(entry.get("permissions", [])),
                     wardrobe_album=entry.get("wardrobe_album") or None,
+                    github_login=entry.get("github_login") or None,
                 )
                 for entry in raw.get("members", [])
             ]
@@ -66,6 +71,21 @@ class Family:
             return self._by_sub[sub]
         except KeyError:
             raise UnknownMemberError(f"no family member with subject {sub!r}") from None
+
+    def by_github_login(self, login: str) -> Member:
+        """The member a GitHub webhook's actor maps to.
+
+        A valid webhook signature proves GitHub sent the event; it does not
+        prove the actor may spend Eve's tokens. This is where that second
+        question is answered, and it fails closed: an empty or unknown login
+        raises rather than defaulting to anybody.
+        """
+        if not login:
+            raise UnknownMemberError("no family member with an empty GitHub login")
+        for member in self._by_sub.values():
+            if member.github_login == login:
+                return member
+        raise UnknownMemberError(f"no family member with GitHub login {login!r}")
 
 
 @lru_cache(maxsize=1)

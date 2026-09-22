@@ -212,6 +212,27 @@ class Settings(BaseSettings):
     # answer, holding a subprocess, a worktree, and a concurrency slot.
     coding_session_timeout_seconds: int = 28800
 
+    # EVE-27 (auto-review pull requests). See docs/superpowers/specs/
+    # 2026-09-22-auto-review-prs-design.md.
+    #
+    # Off by default for the same reason coding_enabled is, and for one more:
+    # this is the first path where the public internet reaches a cluster
+    # service on a schedule Eve does not control. A deployment that has not
+    # deliberately enabled outbound review comments under Eve's GitHub
+    # identity posts none.
+    review_enabled: bool = False
+    # GitHub's webhook secret. The signature is an HMAC over the raw body,
+    # not a shared secret compared directly, so this is the HMAC key.
+    review_webhook_secret: str = ""
+    # The allowlist. A webhook can name any repository; only these spend
+    # tokens. Empty means none, which is the safe reading of "not configured".
+    review_repos: list[str] = Field(default_factory=list)
+    # The reviewer for a human-authored pull request, which has no
+    # implementing pair to differ from. Deliberately a strong model: this is
+    # the case where nothing else constrains the choice.
+    review_default_agent: str = "claude"
+    review_default_model: str = "anthropic/claude-sonnet-5"
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
