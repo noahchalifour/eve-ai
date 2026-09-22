@@ -21,10 +21,13 @@ so each repo's outcome is a dict and the failure rides in it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import tempfile
 from pathlib import Path
 
+from eve_computer.acp import review as review_findings
 from eve_computer.settings import get_computer_settings
 
 logger = logging.getLogger(__name__)
@@ -166,6 +169,114 @@ async def publish(session_dir: Path, repos: list[str], branch: str) -> list[dict
             result["error"] = f"{exc.__class__.__name__}: {exc}"
         results.append(result)
     return results
+
+
+async def changed_lines(tree: Path, merge_base: str) -> dict[str, set[int]]:
+    """Which lines of which files the pull request actually touches, on the
+    right-hand side of the diff. An inline comment on anything else makes
+    GitHub reject the entire review."""
+    diff = await _run(
+        "git", "diff", "--unified=0", f"{merge_base}...HEAD", cwd=tree
+    )
+    result: dict[str, set[int]] = {}
+    current: str | None = None
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[len("+++ b/") :]
+            result.setdefault(current, set())
+        elif line.startswith("@@") and current is not None:
+            # @@ -old,n +new,m @@
+            new_part = line.split("+", 1)[1].split("@@")[0].strip()
+            start, _, count = new_part.partition(",")
+            first = int(start)
+            length = int(count) if count else 1
+            result[current].update(range(first, first + length))
+    return result
+
+
+async def post_review(
+    repo: str,
+    pr_number: int,
+    review: dict,
+    agent: str,
+    model: str,
+    tree: Path,
+    merge_base: str,
+) -> dict:
+    """One `COMMENT` review on a pull request.
+
+    `repo` and `pr_number` are the CALLER's, taken from the webhook payload.
+    They are never read from `review`, so a findings file cannot redirect a
+    review onto a repository the agent chose. That is the highest-consequence
+    thing the agent could get wrong, and it is not expressible.
+
+    `event` is the literal "COMMENT". Not a parameter and not a setting: a
+    wrong REQUEST_CHANGES blocks a human's work and an APPROVE lets a model
+    approve its way into main, and neither is reachable if the verb cannot
+    vary.
+    """
+    qualified = _qualified(repo)
+    head_sha = await _run("git", "rev-parse", "HEAD", cwd=tree)
+
+    try:
+        existing = await _run(
+            "gh", "api", "--paginate",
+            f"/repos/{qualified}/pulls/{pr_number}/reviews",
+            cwd=tree,
+        )
+        for entry in json.loads(existing or "[]"):
+            if entry.get("commit_id") == head_sha:
+                logger.info(
+                    "a review for %s#%s at %s already exists; not duplicating",
+                    qualified, pr_number, head_sha[:8],
+                )
+                return {"posted": False, "skipped": True, "url": None}
+    except (GitError, FileNotFoundError, json.JSONDecodeError):
+        # Not fatal. Failing to READ existing reviews must not stop this one
+        # from being posted; the worst case is a duplicate, which the caller
+        # also guards against with its own row check.
+        logger.warning("could not list existing reviews on %s#%s", qualified, pr_number)
+
+    lines = await changed_lines(tree, merge_base)
+    comments, demoted = review_findings.split_comments(review, lines)
+    payload = {
+        "commit_id": head_sha,
+        "event": "COMMENT",
+        "body": review_findings.build_body(review, agent, model, demoted=demoted),
+        "comments": comments,
+    }
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, dir=str(tree)
+        ) as handle:
+            json.dump(payload, handle)
+            body_path = handle.name
+        try:
+            await _run(
+                "gh", "api", "--method", "POST",
+                f"/repos/{qualified}/pulls/{pr_number}/reviews",
+                "--input", body_path,
+                cwd=tree,
+            )
+        finally:
+            Path(body_path).unlink(missing_ok=True)
+    except (GitError, FileNotFoundError, OSError) as exc:
+        logger.warning("posting a review on %s#%s failed", qualified, pr_number,
+                       exc_info=True)
+        return {
+            "posted": False,
+            "skipped": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+
+    return {
+        "posted": True,
+        "skipped": False,
+        "url": f"https://github.com/{qualified}/pull/{pr_number}",
+        "comments": len(comments),
+        "demoted": len(demoted),
+    }
 
 
 async def remove_worktrees(session_dir: Path, repos: list[str]) -> None:
