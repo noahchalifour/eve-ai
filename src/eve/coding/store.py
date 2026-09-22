@@ -22,20 +22,32 @@ from eve.memory.db import get_pool
 async def create_session(
     session_id: str,
     member_sub: str,
-    thread_id: str,
+    thread_id: str | None,
     goal: str,
     agent: str,
     model: str,
     repos: list[str],
     context: str,
+    kind: str = "code",
+    pr_number: int | None = None,
+    head_sha: str | None = None,
 ) -> None:
+    """`thread_id` is `None` only for a `kind="review"` session: a review
+    triggered by a GitHub webhook has no member-owned conversation thread to
+    attach to, since nobody was chatting when GitHub fired the hook. A
+    `kind="code"` session still requires a thread, enforced in the database
+    by the `eve_coding_session_review_or_threaded` check constraint."""
     pool = await get_pool()
     async with pool.connection() as conn:
         await conn.execute(
             "INSERT INTO eve_coding_session"
-            " (id, member_sub, thread_id, goal, agent, model, repos, context, status)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running')",
-            (session_id, member_sub, thread_id, goal, agent, model, Jsonb(repos), context),
+            " (id, member_sub, thread_id, goal, agent, model, repos, context,"
+            "  status, kind, pr_number, head_sha)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s, %s)",
+            (
+                session_id, member_sub, thread_id, goal, agent, model,
+                Jsonb(repos), context, kind, pr_number, head_sha,
+            ),
         )
 
 
@@ -137,3 +149,26 @@ async def recently_resolved_sessions(since: datetime) -> list[dict]:
                 (since,),
             )
             return list(await cur.fetchall())
+
+
+async def review_exists_for(repo: str, pr_number: int, head_sha: str) -> bool:
+    """Whether this exact commit on this pull request has already been
+    reviewed.
+
+    Deliberately not scoped to a member: the question is about a commit, and
+    a second member relabelling a pull request Eve already reviewed should
+    get the existing review rather than a duplicate one. That makes this the
+    second of the two household-wide reads in this module, alongside
+    `live_sessions`.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT 1 FROM eve_coding_session"
+                " WHERE kind = 'review' AND pr_number = %s AND head_sha = %s"
+                "   AND repos ? %s"
+                " LIMIT 1",
+                (pr_number, head_sha, repo),
+            )
+            return await cur.fetchone() is not None
