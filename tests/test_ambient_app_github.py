@@ -118,6 +118,40 @@ def test_an_unknown_actor_gets_no_review(client):
     assert response.status_code == 403
 
 
+def test_a_known_actor_without_the_permission_gets_no_review(client, monkeypatch, tmp_path):
+    """A valid signature and a resolvable GitHub login are not enough: the
+    resolved member must also hold `code.review`, or any member with a
+    `github_login` mapped in `family.yaml` could trigger a paid review
+    session just by labelling a PR."""
+    mock_start = AsyncMock()
+    monkeypatch.setattr(dispatch, "start", mock_start)
+    roster = tmp_path / "family.yaml"
+    roster.write_text(
+        "members:\n"
+        "  - sub: 'sub-noah'\n"
+        "    name: 'Noah'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+        "    github_login: 'chalifournoah'\n"
+        "    permissions: []\n"
+    )
+    monkeypatch.setenv("EVE_FAMILY_FILE", str(roster))
+    from eve.family import get_family
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    get_family.cache_clear()
+    body = json.dumps(_payload()).encode()
+
+    response = client.post(
+        "/signals/github", content=body,
+        headers={"X-Hub-Signature-256": _sign(body), "X-GitHub-Event": "pull_request"},
+    )
+
+    assert response.status_code == 403
+    mock_start.assert_not_awaited()
+
+
 def test_a_ping_is_acknowledged_not_rejected(client):
     """Rejecting the hook-creation ping makes the hook look broken."""
     body = json.dumps({"zen": "hello"}).encode()

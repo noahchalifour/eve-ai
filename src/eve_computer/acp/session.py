@@ -123,6 +123,7 @@ class Session:
 _SESSIONS: dict[str, Session] = {}
 _lock = asyncio.Lock()
 _semaphore: asyncio.Semaphore | None = None
+_review_semaphore: asyncio.Semaphore | None = None
 
 
 def _limiter() -> asyncio.Semaphore:
@@ -130,6 +131,13 @@ def _limiter() -> asyncio.Semaphore:
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(get_computer_settings().max_concurrent_sessions)
     return _semaphore
+
+
+def _review_limiter() -> asyncio.Semaphore:
+    global _review_semaphore
+    if _review_semaphore is None:
+        _review_semaphore = asyncio.Semaphore(get_computer_settings().max_concurrent_reviews)
+    return _review_semaphore
 
 
 def _record_activity(session: Session, line: str) -> None:
@@ -248,9 +256,10 @@ async def _drive(
     session: Session, argv: list[str], env: dict[str, str], hint: str = _SYSTEM_HINT
 ) -> None:
     settings = get_computer_settings()
+    limiter = _review_limiter() if session.kind == "review" else _limiter()
     manager = None
     try:
-        async with _limiter():
+        async with limiter:
             client = SessionClient(
                 root=session.directory,
                 on_update=lambda update: _on_update(session, update),
@@ -281,9 +290,14 @@ async def _drive(
                     return
                 session.status = "running"
                 session._chunks = []  # type: ignore[attr-defined]
+                turn_timeout = (
+                    settings.review_session_timeout_seconds
+                    if session.kind == "review"
+                    else settings.session_turn_timeout_seconds
+                )
                 response = await asyncio.wait_for(
                     conn.prompt(session_id=acp_session_id, prompt=[text_block(text)]),
-                    timeout=settings.session_turn_timeout_seconds,
+                    timeout=turn_timeout,
                 )
                 reply = "".join(getattr(session, "_chunks", []))
                 if reply:

@@ -6,6 +6,7 @@ the wrong marker.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock
 
@@ -24,9 +25,12 @@ def _settings(tmp_path, monkeypatch):
     get_computer_settings.cache_clear()
     session_mod._SESSIONS.clear()
     session_mod._semaphore = None
+    session_mod._review_semaphore = None
     yield
     get_computer_settings.cache_clear()
     session_mod._SESSIONS.clear()
+    session_mod._semaphore = None
+    session_mod._review_semaphore = None
 
 
 def test_the_review_hint_forbids_editing_and_names_the_rubric():
@@ -113,3 +117,107 @@ async def test_the_worktree_is_torn_down_even_when_posting_fails(
         await session_mod.close_review("s1")
 
     removed.assert_awaited_once()
+
+
+async def _settle():
+    """Let background driver tasks run to their next await point."""
+    for _ in range(50):
+        await asyncio.sleep(0)
+
+
+async def test_a_review_session_uses_the_review_timeout_and_semaphore_not_the_coding_ones(
+    monkeypatch,
+):
+    """Two properties Finding 3 exists to guarantee, driven through the real
+    `_drive` loop with only the `_spawn` seam faked (same seam
+    test_acp_session.py uses):
+
+    (a) a review session serializes on `max_concurrent_reviews`, separate
+    from `max_concurrent_sessions` - if it used the coding limiter instead,
+    a second review session would proceed immediately despite
+    `max_concurrent_reviews=1`, because `max_concurrent_sessions` here is
+    set much higher.
+
+    (b) a review session's per-turn timeout comes from
+    `review_session_timeout_seconds`, not `session_turn_timeout_seconds` -
+    the two are set to very different values below, and the timeout that
+    actually reached `asyncio.wait_for` is captured and asserted on.
+    """
+    monkeypatch.setenv("EVE_COMPUTER_MAX_CONCURRENT_REVIEWS", "1")
+    monkeypatch.setenv("EVE_COMPUTER_MAX_CONCURRENT_SESSIONS", "5")
+    monkeypatch.setenv("EVE_COMPUTER_SESSION_TURN_TIMEOUT_SECONDS", "1800")
+    monkeypatch.setenv("EVE_COMPUTER_REVIEW_SESSION_TIMEOUT_SECONDS", "99")
+    from eve_computer.settings import get_computer_settings
+
+    get_computer_settings.cache_clear()
+    session_mod._semaphore = None
+    session_mod._review_semaphore = None
+
+    async def _add_review_worktree(repo, session_dir, pr_number, base_ref):
+        return {"merge_base": "base-sha", "head_sha": "head-sha"}
+
+    monkeypatch.setattr(session_mod.repo, "add_review_worktree", _add_review_worktree)
+    monkeypatch.setattr(session_mod.repo, "remove_worktrees", AsyncMock())
+
+    spawned: list[str] = []
+
+    class StubConn:
+        async def initialize(self, **kwargs):
+            return type("R", (), {"agent_capabilities": None})()
+
+        async def new_session(self, **kwargs):
+            return type("R", (), {"session_id": "acp-1"})()
+
+        async def prompt(self, session_id, prompt, **kwargs):
+            return type("R", (), {"stop_reason": "end_turn"})()
+
+        async def cancel(self, session_id, **kwargs):
+            pass
+
+        async def close_session(self, session_id, **kwargs):
+            pass
+
+    class NullManager:
+        async def __aexit__(self, *exc):
+            return False
+
+    async def _spawn(client, argv, env, cwd):
+        spawned.append(str(cwd))
+        return StubConn(), NullManager()
+
+    monkeypatch.setattr(session_mod, "_spawn", _spawn)
+
+    captured_timeouts: list[float] = []
+    real_wait_for = asyncio.wait_for
+
+    async def _spy_wait_for(coro, timeout=None):
+        captured_timeouts.append(timeout)
+        return await real_wait_for(coro, timeout=timeout)
+
+    monkeypatch.setattr(session_mod.asyncio, "wait_for", _spy_wait_for)
+
+    await session_mod.create(
+        "r1", "codex", "m", ["acme/repo"], "go", kind="review", pr_number=7,
+    )
+    await _settle()
+
+    assert len(spawned) == 1
+    assert captured_timeouts == [99]
+
+    await session_mod.create(
+        "r2", "codex", "m", ["acme/repo"], "go", kind="review", pr_number=8,
+    )
+    await _settle()
+
+    # r2 must still be blocked on the review semaphore's one slot, not
+    # running concurrently with r1.
+    assert len(spawned) == 1
+    assert session_mod.get("r2").status == "queued"
+
+    await session_mod.kill("r1")
+    await _settle()
+
+    assert len(spawned) == 2
+    assert session_mod.get("r2").status == "idle"
+
+    await session_mod.kill("r2")

@@ -362,6 +362,13 @@ async def github_signal(
         )
         raise HTTPException(status_code=403, detail="unknown actor") from None
 
+    if not member.can("code.review"):
+        logger.warning(
+            "refusing a review for %s: missing code.review permission",
+            payload_parsed.payload["actor"],
+        )
+        raise HTTPException(status_code=403, detail="missing code.review permission") from None
+
     dedup_key = ("review", payload_parsed.key)
     if dedup_key in _in_flight:
         return {"accepted": payload_parsed.key}

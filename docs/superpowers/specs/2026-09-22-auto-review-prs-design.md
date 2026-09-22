@@ -481,6 +481,24 @@ The one genuinely new posture is inbound public ingress, argued under "The
 trigger", and it is the reason `review_enabled` defaults to off. No ADR is
 warranted; this spec reference is enough.
 
+There is a second risk worth naming honestly rather than leaving implicit. The
+reviewing agent reads a hostile pull request's actual content: commit messages,
+file contents, code comments. That content is attacker-influenced input to the
+agent itself, not merely to the box it runs on. A sufficiently crafted pull
+request could attempt to manipulate the reviewing agent into acting beyond
+writing `review.json`, including invoking `gh` directly from its own shell
+access, because the box's determinism guarantee (`post_review` always posts
+`COMMENT`, only from the webhook's own repo and pull request) protects the
+posting path and does nothing to stop the agent from acting independently
+through the shell it already holds to read the codebase. This is not a new hole
+this feature opens on its own; it is the same posture `eve-computer`'s design
+already accepts, that no per-action approval gate exists on that box, extended
+to a new use of the same box. It is named here rather than left as an implicit
+consequence of an earlier decision because this is the first feature that feeds
+a reviewing agent attacker-influenced input alongside write-capable network
+egress under Eve's own GitHub identity. Nothing here closes that gap; naming it
+is the point.
+
 ## Open questions for implementation
 
 - Which repositories seed the allowlist. `eve-ai` and `open-assistant` are the
