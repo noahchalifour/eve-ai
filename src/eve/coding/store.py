@@ -22,16 +22,25 @@ from eve.memory.db import get_pool
 async def create_session(
     session_id: str,
     member_sub: str,
-    thread_id: str,
+    thread_id: str | None,
     goal: str,
     agent: str,
     model: str,
     repos: list[str],
     context: str,
+    kind: str = "code",
+    pr_number: int | None = None,
+    head_sha: str | None = None,
     linear_session_id: str | None = None,
     linear_issue_id: str | None = None,
 ) -> None:
-    """The two Linear columns are None for a chat-dispatched session, which
+    """`thread_id` is `None` only for a `kind="review"` session: a review
+    triggered by a GitHub webhook has no member-owned conversation thread to
+    attach to, since nobody was chatting when GitHub fired the hook. A
+    `kind="code"` session still requires a thread, enforced in the database
+    by the `eve_coding_session_review_or_threaded` check constraint.
+
+    The two Linear columns are None for a chat-dispatched session, which
     is every session that existed before EVE-26. The unique index on
     `linear_session_id` is what makes a retried Linear webhook insert fail
     rather than dispatch a second agent."""
@@ -40,8 +49,8 @@ async def create_session(
         await conn.execute(
             "INSERT INTO eve_coding_session"
             " (id, member_sub, thread_id, goal, agent, model, repos, context,"
-            "  status, linear_session_id, linear_issue_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s)",
+            "  status, kind, pr_number, head_sha, linear_session_id, linear_issue_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s, %s, %s, %s)",
             (
                 session_id,
                 member_sub,
@@ -51,6 +60,9 @@ async def create_session(
                 model,
                 Jsonb(repos),
                 context,
+                kind,
+                pr_number,
+                head_sha,
                 linear_session_id,
                 linear_issue_id,
             ),
@@ -155,6 +167,51 @@ async def recently_resolved_sessions(since: datetime) -> list[dict]:
                 (since,),
             )
             return list(await cur.fetchall())
+
+
+async def review_exists_for(repo: str, pr_number: int, head_sha: str) -> bool:
+    """Whether this exact commit on this pull request has already been
+    reviewed.
+
+    Deliberately not scoped to a member: the question is about a commit, and
+    a second member relabelling a pull request Eve already reviewed should
+    get the existing review rather than a duplicate one. That makes this the
+    second of the two household-wide reads in this module, alongside
+    `live_sessions`.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT 1 FROM eve_coding_session"
+                " WHERE kind = 'review' AND pr_number = %s AND head_sha = %s"
+                "   AND repos ? %s"
+                " LIMIT 1",
+                (pr_number, head_sha, repo),
+            )
+            return await cur.fetchone() is not None
+
+
+async def implementer_of(repo: str, head_sha: str) -> tuple[str, str] | None:
+    """The `(agent, model)` that opened this pull request, or `None` for a
+    human-authored one.
+
+    This is what makes "review with a different model than implemented"
+    checkable rather than aspirational: EVE-27's central requirement needs
+    to know what wrote the code, and this row is the only record of it.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT agent, model FROM eve_coding_session"
+                " WHERE kind = 'code' AND status = 'finished' AND repos ? %s"
+                "   AND result -> 'prs' @> %s::jsonb"
+                " ORDER BY finished_at DESC LIMIT 1",
+                (repo, Jsonb([{"head_sha": head_sha}]).obj),
+            )
+            row = await cur.fetchone()
+            return (row["agent"], row["model"]) if row else None
 
 
 async def get_by_linear_session(linear_session_id: str) -> dict | None:

@@ -30,6 +30,15 @@ class ComputerSettings(BaseSettings):
     session_timeout_seconds: int = 14400
     github_owner: str = ""
 
+    # EVE-27. A review is a session with a tighter ceiling than a coding
+    # session: four hours of reviewing is a failure at something other than
+    # reviewing, and it holds a slot a human is waiting on.
+    review_session_timeout_seconds: int = 3600
+    # Separate from max_concurrent_sessions so a burst of labelled pull
+    # requests cannot starve the delegated coding work that
+    # `check_coding_session` promises a member is in flight.
+    max_concurrent_reviews: int = 2
+
     # EVE-24 (the DeepSeek harness as an ACP agent). `dsh` keeps profiles,
     # sessions and credentials under one home; this one is on the PVC so a
     # pod reschedule does not lose the profile or replay the git pull.

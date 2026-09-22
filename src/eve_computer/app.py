@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from eve_computer import store
 from eve_computer.acp import session
 from eve_computer.acp.registry import UnknownAgent
+from eve_computer.acp.review import InvalidFindings
 from eve_computer.harness import run_task
 from eve_computer.settings import get_computer_settings
 
@@ -152,6 +153,10 @@ class SessionRequest(BaseModel):
     model: str
     repos: list[str]
     prompt: str
+    # EVE-27. `code` keeps every existing caller working unchanged.
+    kind: str = "code"
+    pr_number: int | None = None
+    base_ref: str = "main"
 
 
 class PromptRequest(BaseModel):
@@ -173,9 +178,22 @@ async def create_session_route(
     body: SessionRequest, authorization: str | None = Header(default=None)
 ) -> dict:
     _check_auth(authorization)
+    # EVE-27. Only forwarded off their "code" defaults: a pre-existing
+    # coding-session caller's call shape must stay exactly what it was
+    # before this feature, not merely behave the same.
+    review_kwargs = {}
+    if body.kind != "code":
+        review_kwargs["kind"] = body.kind
+    if body.pr_number is not None:
+        review_kwargs["pr_number"] = body.pr_number
+    if body.base_ref != "main":
+        review_kwargs["base_ref"] = body.base_ref
     try:
-        await session.create(body.id, body.agent, body.model, body.repos, body.prompt)
-    except UnknownAgent as exc:
+        await session.create(
+            body.id, body.agent, body.model, body.repos, body.prompt,
+            **review_kwargs,
+        )
+    except (UnknownAgent, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"id": body.id, "status": "queued"}
 
@@ -210,6 +228,18 @@ async def close_session_route(
     _check_auth(authorization)
     _require_session(session_id)
     return await session.close(session_id)
+
+
+@app.post("/sessions/{session_id}/review")
+async def close_review_route(
+    session_id: str, authorization: str | None = Header(default=None)
+) -> dict:
+    _check_auth(authorization)
+    _require_session(session_id)
+    try:
+        return await session.close_review(session_id)
+    except InvalidFindings as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.delete("/sessions/{session_id}")

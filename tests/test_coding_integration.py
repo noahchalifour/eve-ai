@@ -228,7 +228,13 @@ def test_a_session_with_no_commits_produces_no_pull_request(box):
         Path(os.environ["EVE_COMPUTER_SESSIONS_DIR"]) / "s1", "acme/repo"
     )
     _run("git", "reset", "--hard", "origin/main", cwd=tree)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tree, capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
     closed = box.post("/sessions/s1/close", headers=AUTH).json()
 
-    assert closed["prs"][0] == {"repo": "acme/repo", "commits": 0, "pr_url": None}
+    assert closed["prs"][0] == {
+        "repo": "acme/repo", "commits": 0, "pr_url": None, "head_sha": head,
+    }

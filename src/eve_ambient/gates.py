@@ -29,6 +29,7 @@ SOURCE_PERMISSION: dict[str, str] = {
     "home": "home.control",
     "computer": "computer.use",
     "coding": "code.delegate",
+    "review": "code.review",
     "routines": "routines",
 }
 

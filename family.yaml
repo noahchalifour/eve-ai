@@ -19,6 +19,9 @@ members:
     name: "Noah"
     role: adult
     timezone: "America/Vancouver"
+    # EVE-27: the GitHub account that may commission a review by labelling
+    # or assigning a pull request.
+    github_login: "chalifournoah"
     permissions:
       # Phase 4: receiving proactive calendar notifications. No existing
       # grant covered the calendar, because until now nothing read it.
@@ -41,6 +44,9 @@ members:
       # EVE-4: delegating coding work to Claude Code, Codex, or OpenCode,
       # which open pull requests under Eve's own GitHub account.
       - code.delegate
+      # EVE-27: commissioning a review by labelling a pull request. Distinct
+      # from code.delegate: delegating writes code, this only comments on it.
+      - code.review
       # EVE-25: creating and cancelling standing requests Eve runs on a
       # schedule. A bare noun like `finances`, because the tools are the
       # only write surface and there is no read-only half to distinguish.

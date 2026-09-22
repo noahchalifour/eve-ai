@@ -17,11 +17,12 @@ from hmac import compare_digest
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from eve.coding import supervisor
-from eve.family import get_family
+from eve.family import UnknownMemberError, get_family
 from eve.settings import get_settings
 from eve_ambient import store
 from eve_ambient.pipeline import handle_signal
 from eve_ambient.sources import SOURCES, Source
+from eve_ambient.sources import github
 from eve_ambient.sources.home import from_webhook
 from eve_ambient.types import Signal, SourcePollError
 from eve_linear import activities
@@ -349,6 +350,88 @@ async def home_assistant_signal(
     task.add_done_callback(_background.discard)
     task.add_done_callback(lambda _task, key=dedup_key: _in_flight.discard(key))
     return {"accepted": signal.key}
+
+
+@app.post("/signals/github", status_code=202)
+async def github_signal(
+    request: Request,
+    x_hub_signature_256: str | None = Header(default=None),
+    x_github_event: str | None = Header(default=None),
+) -> dict:
+    """GitHub's pull-request webhook.
+
+    The signature is verified against the RAW body before any parsing: a
+    body that reparses differently than it hashed is the classic bypass.
+
+    Unlike the other webhook routes, this one does not go through
+    `handle_signal`/`notify.deliver`: `eve.review.dispatch.start` is not a
+    tool bound to Eve's chat graph, so routing this through the ambient
+    notification pipeline would run an LLM turn that has no way to actually
+    start a review. This calls `dispatch.start` directly instead, in a
+    background task, using the existing `_in_flight`/`_background` sets only
+    for dedup and shutdown-draining.
+    """
+    settings = get_settings()
+    body = await request.body()
+    if not github.verify(settings.review_webhook_secret, x_hub_signature_256 or "", body):
+        logger.warning("rejected github webhook: invalid or missing signature")
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    if x_github_event != "pull_request":
+        # Including `ping`, which GitHub sends on hook creation. Rejecting it
+        # makes a correctly configured hook look broken in the GitHub UI.
+        return {"accepted": None}
+
+    try:
+        payload = json.loads(body)
+        payload_parsed = github.from_webhook(payload)
+    except ValueError:
+        # An action that does not commission a review is not an error: most
+        # pull-request events are `synchronize`, `closed`, and `edited`.
+        return {"accepted": None}
+
+    if not settings.review_enabled:
+        raise HTTPException(status_code=503, detail="reviewing is disabled")
+
+    try:
+        member = get_family().by_github_login(payload_parsed.payload["actor"])
+    except UnknownMemberError:
+        logger.warning(
+            "refusing a review for unknown GitHub login %r", payload_parsed.payload["actor"]
+        )
+        raise HTTPException(status_code=403, detail="unknown actor") from None
+
+    if not member.can("code.review"):
+        logger.warning(
+            "refusing a review for %s: missing code.review permission",
+            payload_parsed.payload["actor"],
+        )
+        raise HTTPException(status_code=403, detail="missing code.review permission") from None
+
+    dedup_key = ("review", payload_parsed.key)
+    if dedup_key in _in_flight:
+        return {"accepted": payload_parsed.key}
+    _in_flight.add(dedup_key)
+
+    async def _start_review() -> None:
+        from eve.review import dispatch
+        try:
+            result = await dispatch.start(
+                repo=payload_parsed.payload["repo"],
+                pr_number=payload_parsed.payload["pr_number"],
+                head_sha=payload_parsed.payload["head_sha"],
+                base_ref=payload_parsed.payload["base_ref"],
+                member_sub=member.sub,
+            )
+            logger.info("review dispatch for %s: %s", payload_parsed.key, result)
+        except Exception:
+            logger.warning("review dispatch for %s failed", payload_parsed.key, exc_info=True)
+
+    task = asyncio.create_task(_start_review())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    task.add_done_callback(lambda _task, key=dedup_key: _in_flight.discard(key))
+    return {"accepted": payload_parsed.key}
 
 
 async def _handle_in_background(signal: Signal) -> None:
