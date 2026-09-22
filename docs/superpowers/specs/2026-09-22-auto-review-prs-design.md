@@ -44,7 +44,8 @@ Three things, and no new deployment:
 - **No re-review when new commits land.** Stated as a non-goal rather than an
   oversight: it needs a debounce and a per-PR cap, and it is a cheap follow-up
   once real reviews exist. Tracked separately as
-  [EVE-32](https://linear.app/chalifour-development/issue/EVE-32/re-review-prs-when-new-commits-land).
+  [EVE-32](https://linear.app/chalifour-development/issue/EVE-32/re-review-prs-when-new-commits-land),
+  and since delivered: see `2026-09-23-pr-monitoring-design.md`.
 - **No review of repositories Eve was not configured to watch.** The webhook can
   carry any repository; an allowlist decides which ones spend tokens.
 - **No authoring of rules or preferences from a review.** A review is not a

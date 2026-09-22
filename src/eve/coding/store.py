@@ -203,15 +203,84 @@ async def implementer_of(repo: str, head_sha: str) -> tuple[str, str] | None:
     pool = await get_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            # `address` too (EVE-31): a follow-up that pushed fixes onto the
+            # branch is what wrote the new head, and it records its pushed
+            # commit in the same `prs` shape a coding session does.
             await cur.execute(
                 "SELECT agent, model FROM eve_coding_session"
-                " WHERE kind = 'code' AND status = 'finished' AND repos ? %s"
+                " WHERE kind IN ('code', 'address') AND status = 'finished'"
+                "   AND repos ? %s"
                 "   AND result -> 'prs' @> %s::jsonb"
                 " ORDER BY finished_at DESC LIMIT 1",
-                (repo, Jsonb([{"head_sha": head_sha}]).obj),
+                (repo, Jsonb([{"head_sha": head_sha}])),
             )
             row = await cur.fetchone()
             return (row["agent"], row["model"]) if row else None
+
+
+async def latest_review_for(repo: str, pr_number: int) -> dict | None:
+    """The most recent review of this pull request at any commit, or `None`
+    if Eve has never been asked to review it (EVE-32).
+
+    `None` is what keeps re-review opt-in: new commits on a pull request
+    nobody asked Eve to review commission nothing. The row also carries the
+    member who asked, on whose behalf a re-review runs, and the `head_sha`
+    that bounds the incremental diff.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM eve_coding_session"
+                " WHERE kind = 'review' AND pr_number = %s AND repos ? %s"
+                " ORDER BY created_at DESC LIMIT 1",
+                (pr_number, repo),
+            )
+            return await cur.fetchone()
+
+
+async def pr_session_stats(kind: str, repo: str, pr_number: int) -> dict:
+    """How many sessions of `kind` this pull request has had, and whether one
+    is still live. The per-PR cap (EVE-32, EVE-31) and the one-at-a-time
+    rule both read this, so they are answered by one query rather than two
+    that could disagree."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT count(*) AS total,"
+                "       count(*) FILTER (WHERE status IN ('running', 'idle', 'blocked'))"
+                "         AS live,"
+                "       max(created_at) AS latest"
+                " FROM eve_coding_session"
+                " WHERE kind = %s AND pr_number = %s AND repos ? %s",
+                (kind, pr_number, repo),
+            )
+            row = await cur.fetchone()
+            return {
+                "total": row["total"], "live": row["live"], "latest": row["latest"],
+            }
+
+
+async def origin_of_pr(pr_url: str) -> dict | None:
+    """The coding session that opened this pull request, or `None` when Eve
+    did not open it (EVE-31).
+
+    Matched on the URL `gh pr create` printed, which `publish` stores on the
+    row, rather than on repository name: rows may hold an unqualified
+    `name` while GitHub's webhook always says `owner/name`, and the URL is
+    the one identifier both sides spell the same way.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM eve_coding_session"
+                " WHERE kind = 'code' AND result -> 'prs' @> %s"
+                " ORDER BY finished_at DESC LIMIT 1",
+                (Jsonb([{"pr_url": pr_url}]),),
+            )
+            return await cur.fetchone()
 
 
 async def get_by_linear_session(linear_session_id: str) -> dict | None:

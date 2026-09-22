@@ -153,7 +153,7 @@ async def test_a_review_session_uses_the_review_timeout_and_semaphore_not_the_co
     session_mod._semaphore = None
     session_mod._review_semaphore = None
 
-    async def _add_review_worktree(repo, session_dir, pr_number, base_ref):
+    async def _add_review_worktree(repo, session_dir, pr_number, base_ref, since_sha=None):
         return {"merge_base": "base-sha", "head_sha": "head-sha"}
 
     monkeypatch.setattr(session_mod.repo, "add_review_worktree", _add_review_worktree)

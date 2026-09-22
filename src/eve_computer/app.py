@@ -157,6 +157,10 @@ class SessionRequest(BaseModel):
     kind: str = "code"
     pr_number: int | None = None
     base_ref: str = "main"
+    # EVE-32: the commit an earlier review covered.
+    since_sha: str | None = None
+    # EVE-31: whose feedback an address session is given.
+    trusted_authors: list[str] | None = None
 
 
 class PromptRequest(BaseModel):
@@ -188,6 +192,10 @@ async def create_session_route(
         review_kwargs["pr_number"] = body.pr_number
     if body.base_ref != "main":
         review_kwargs["base_ref"] = body.base_ref
+    if body.since_sha:
+        review_kwargs["since_sha"] = body.since_sha
+    if body.trusted_authors is not None:
+        review_kwargs["trusted_authors"] = body.trusted_authors
     try:
         await session.create(
             body.id, body.agent, body.model, body.repos, body.prompt,
@@ -238,6 +246,20 @@ async def close_review_route(
     _require_session(session_id)
     try:
         return await session.close_review(session_id)
+    except InvalidFindings as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/sessions/{session_id}/address")
+async def close_address_route(
+    session_id: str, authorization: str | None = Header(default=None)
+) -> dict:
+    """EVE-31. An address session's ending: push its fixes onto the pull
+    request's branch and reply on the threads."""
+    _check_auth(authorization)
+    _require_session(session_id)
+    try:
+        return await session.close_address(session_id)
     except InvalidFindings as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

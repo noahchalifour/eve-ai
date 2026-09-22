@@ -46,6 +46,10 @@ RUN chmod +x ./src/eve_computer/bootstrap.sh
 # build time, so a review is reproducible against a commit. See
 # prompts/code-review/SOURCE.md.
 COPY prompts/code-review ./prompts/code-review
+# EVE-31: how an address session receives the feedback it is addressing.
+# Vendored and pinned for the same reason. See
+# prompts/receiving-code-review/SOURCE.md.
+COPY prompts/receiving-code-review ./prompts/receiving-code-review
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app/src" \

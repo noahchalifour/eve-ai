@@ -89,6 +89,19 @@ avoided; for a human's, `EVE_REVIEW_DEFAULT_AGENT` is used.
 Reviews never approve and never request changes. They comment. See
 `docs/superpowers/specs/2026-09-22-auto-review-prs-design.md`.
 
+When new commits land on a pull request Eve has already reviewed, she
+re-reviews it once the branch has been quiet for five minutes, focused on
+what changed since her last review, up to `EVE_REVIEW_MAX_PER_PR` reviews.
+
+### Following up on her own pull requests
+
+With `EVE_PR_FOLLOWUP_ENABLED=true`, Eve watches the pull requests she opens
+(from chat or from Linear). When a family member reviews or comments on one,
+she starts a session on that pull request's branch that applies the vendored
+`prompts/receiving-code-review/` skill: verify each point, fix what is right,
+push back on what is wrong, then push and reply in the threads. See
+`docs/superpowers/specs/2026-09-23-pr-monitoring-design.md`.
+
 ## Quick start
 
 ```bash

@@ -233,6 +233,36 @@ class Settings(BaseSettings):
     review_default_agent: str = "claude"
     review_default_model: str = "anthropic/claude-sonnet-5"
 
+    # EVE-32 (re-review when new commits land). Opt-in by construction
+    # rather than by flag: only a pull request Eve has already been asked to
+    # review is re-reviewed, so the original label is still the signal. This
+    # flag exists to turn the behaviour off without turning reviewing off.
+    review_on_push: bool = True
+    # How long a pull request must go without a push before it is
+    # re-reviewed. A burst of commits is one review, not one per commit.
+    review_debounce_seconds: int = 300
+    # Reviews per pull request, counting the first, after which a push
+    # triggers nothing and a human relabels or asks by hand. Bounds a long
+    # back-and-forth that would otherwise spend indefinitely.
+    review_max_per_pr: int = 3
+
+    # EVE-31 (Eve monitors the pull requests she opens). A review or comment
+    # on a pull request Eve opened starts an `address` session: a coding
+    # agent on the PR's own branch that applies the receiving-code-review
+    # discipline, pushes its fixes, and replies on the thread. Off by
+    # default for review_enabled's reason, and one more: it pushes.
+    pr_followup_enabled: bool = False
+    # Eve's own GitHub account. Feedback authored by it is her own replies
+    # and reviews, and addressing those would be a loop, not a conversation.
+    github_login: str = ""
+    # A reviewer's inline comments arrive one webhook each; wait for the
+    # burst to settle so one session addresses the whole review.
+    pr_followup_debounce_seconds: int = 180
+    # Address sessions per pull request. Past this Eve stops and the member
+    # takes over: two agents trading review rounds forever is exactly the
+    # churn EVE-27's no-auto-fix non-goal warned about.
+    pr_followup_max_per_pr: int = 5
+
     # EVE-25 (Scheduled routines). See docs/superpowers/specs/
     # 2026-09-21-eve-routines-design.md.
     #

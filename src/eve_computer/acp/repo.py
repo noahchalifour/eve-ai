@@ -114,7 +114,11 @@ async def add_worktree(repo: str, session_dir: Path, branch: str) -> Path:
 
 
 async def add_review_worktree(
-    repo: str, session_dir: Path, pr_number: int, base_ref: str
+    repo: str,
+    session_dir: Path,
+    pr_number: int,
+    base_ref: str,
+    since_sha: str | None = None,
 ) -> dict:
     """A detached checkout of a pull request's head, plus the merge base to
     diff against.
@@ -128,6 +132,12 @@ async def add_review_worktree(
     branch that has since moved would otherwise show that branch's later
     commits as findings, and a reviewer reporting someone else's commits as
     problems in this change is worse than no reviewer.
+
+    `since_sha` is the commit a previous review covered (EVE-32). It comes
+    back as `since` only when it is still an ancestor of the new head: after
+    a force-push the old commit describes history the branch no longer has,
+    and an incremental diff against it would be meaningless, so the review
+    falls back to the whole pull request.
     """
     clone = await ensure_clone(repo)
     head_ref = f"refs/pull/{pr_number}/head"
@@ -144,7 +154,180 @@ async def add_review_worktree(
     tree = worktree_path(session_dir, repo)
     tree.parent.mkdir(parents=True, exist_ok=True)
     await _run("git", "worktree", "add", "--detach", str(tree), head_sha, cwd=clone)
-    return {"path": tree, "merge_base": merge_base, "head_sha": head_sha}
+
+    since = ""
+    if since_sha and since_sha != head_sha:
+        try:
+            await _run("git", "merge-base", "--is-ancestor", since_sha, head_sha, cwd=clone)
+            since = since_sha
+        except GitError:
+            logger.info(
+                "%s is not an ancestor of %s#%s's head; reviewing the whole pull request",
+                since_sha[:8], repo, pr_number,
+            )
+    return {"path": tree, "merge_base": merge_base, "head_sha": head_sha, "since": since}
+
+
+async def add_pr_worktree(repo: str, session_dir: Path, pr_number: int) -> dict:
+    """A checkout of a pull request's OWN branch, for addressing feedback on
+    it (EVE-31).
+
+    Unlike a review this is not detached: the fixes are pushed back onto the
+    same branch so they land on the same pull request. The branch name comes
+    from GitHub rather than from the caller, and a pull request from a fork
+    is refused, because Eve can only push to a branch in the repository
+    itself and a fork is by definition somebody else's.
+    """
+    clone = await ensure_clone(repo)
+    qualified = _qualified(repo)
+    described = json.loads(await _run(
+        "gh", "api", f"/repos/{qualified}/pulls/{pr_number}",
+        "--jq", "{branch: .head.ref, head_repo: .head.repo.full_name}",
+        cwd=clone,
+    ))
+    branch = described.get("branch") or ""
+    if not branch or described.get("head_repo") != qualified:
+        raise GitError(f"{qualified}#{pr_number} is not a branch in {qualified}")
+
+    await _run(
+        "git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        cwd=clone,
+    )
+    tree = worktree_path(session_dir, repo)
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    # -B: the local branch may survive from the session that opened the pull
+    # request (its worktree was removed, its branch was not); reset it to
+    # what is actually on the remote, which may include a human's commits.
+    await _run(
+        "git", "worktree", "add", "-B", branch, str(tree), f"origin/{branch}", cwd=clone
+    )
+    head_sha = await _run("git", "rev-parse", "HEAD", cwd=tree)
+    return {"path": tree, "branch": branch, "head_sha": head_sha}
+
+
+async def _gh_list(path: str, cwd: Path) -> list[dict]:
+    """A paginated GitHub list as one list. `--jq '.[]'` prints one compact
+    object per line across every page, which avoids parsing `--paginate`'s
+    concatenated arrays."""
+    out = await _run("gh", "api", "--paginate", path, "--jq", ".[]", cwd=cwd)
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+async def fetch_feedback(
+    repo: str, pr_number: int, cwd: Path, trusted_authors: list[str]
+) -> list[dict]:
+    """Every review, inline comment, and conversation comment on a pull
+    request by a trusted author, oldest first (EVE-31).
+
+    The box fetches this rather than the agent so that the ids the agent
+    replies against are ones this box has seen, and so that what the agent
+    is told to address is filtered to people Eve works for. A stranger's
+    comment on a public repository is attacker-influenced input to an agent
+    that pushes; it is dropped here rather than left to the agent's judgement.
+    """
+    qualified = _qualified(repo)
+    trusted = {login.lower() for login in trusted_authors if login}
+    items: list[dict] = []
+    sources = (
+        ("review", f"/repos/{qualified}/pulls/{pr_number}/reviews"),
+        ("review_comment", f"/repos/{qualified}/pulls/{pr_number}/comments"),
+        ("comment", f"/repos/{qualified}/issues/{pr_number}/comments"),
+    )
+    for kind, path in sources:
+        for entry in await _gh_list(path, cwd):
+            author = ((entry.get("user") or {}).get("login") or "")
+            body = entry.get("body") or ""
+            if author.lower() not in trusted or not (body.strip() or kind == "review"):
+                continue
+            items.append({
+                "kind": kind,
+                "id": entry.get("id"),
+                "author": author,
+                "body": body,
+                "state": entry.get("state"),
+                "path": entry.get("path"),
+                "line": entry.get("line"),
+                "in_reply_to_id": entry.get("in_reply_to_id"),
+                "at": entry.get("submitted_at") or entry.get("created_at") or "",
+            })
+    items.sort(key=lambda item: item["at"])
+    return items
+
+
+async def push_followup(session_dir: Path, repo: str, branch: str) -> dict:
+    """Push an address session's commits onto the pull request's branch.
+
+    Never forced. If someone pushed to the branch while the agent worked,
+    the push is rejected and the error rides in the result: overwriting a
+    human's commits to land an agent's is the wrong way round.
+    """
+    tree = worktree_path(session_dir, repo)
+    result: dict = {"repo": _qualified(repo), "commits": 0, "branch": branch}
+    try:
+        count = await _run(
+            "git", "rev-list", "--count", f"origin/{branch}..HEAD", cwd=tree
+        )
+        result["commits"] = int(count)
+        result["head_sha"] = await _run("git", "rev-parse", "HEAD", cwd=tree)
+        if result["commits"]:
+            await _run("git", "push", "origin", f"HEAD:refs/heads/{branch}", cwd=tree)
+    except (GitError, FileNotFoundError, ValueError) as exc:
+        logger.warning("pushing follow-up to %s %s failed", repo, branch, exc_info=True)
+        result["error"] = f"{exc.__class__.__name__}: {exc}"
+    return result
+
+
+async def _post_json(path: str, payload: dict, cwd: Path) -> None:
+    """A POST whose body is a file, never an argument: the text is model
+    output, and no part of it may become a flag or a shell word."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, dir=str(cwd)) as handle:
+        json.dump(payload, handle)
+        body_path = handle.name
+    try:
+        await _run("gh", "api", "--method", "POST", path, "--input", body_path, cwd=cwd)
+    finally:
+        Path(body_path).unlink(missing_ok=True)
+
+
+async def post_followup(
+    repo: str, pr_number: int, replies: list[dict], summary: str, cwd: Path
+) -> dict:
+    """Reply in each inline thread, then one conversation comment.
+
+    `repo` and `pr_number` are the caller's, never the agent's, for
+    `post_review`'s reason. `replies` has already been validated against the
+    ids `fetch_feedback` saw. One failed reply does not stop the rest: each
+    is a separate thread, and a reviewer should hear about the ones that did
+    post.
+    """
+    qualified = _qualified(repo)
+    posted = 0
+    errors: list[str] = []
+    for reply in replies:
+        try:
+            await _post_json(
+                f"/repos/{qualified}/pulls/{pr_number}/comments/{reply['comment_id']}/replies",
+                {"body": reply["body"]},
+                cwd,
+            )
+            posted += 1
+        except (GitError, FileNotFoundError, OSError) as exc:
+            errors.append(f"reply to {reply['comment_id']}: {exc}")
+    commented = False
+    if summary.strip():
+        try:
+            await _post_json(
+                f"/repos/{qualified}/issues/{pr_number}/comments", {"body": summary}, cwd
+            )
+            commented = True
+        except (GitError, FileNotFoundError, OSError) as exc:
+            errors.append(f"summary comment: {exc}")
+    return {
+        "replies": posted,
+        "commented": commented,
+        "error": "; ".join(errors) or None,
+        "url": f"https://github.com/{qualified}/pull/{pr_number}",
+    }
 
 
 async def publish(session_dir: Path, repos: list[str], branch: str) -> list[dict]:

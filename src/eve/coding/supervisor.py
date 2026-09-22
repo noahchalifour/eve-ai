@@ -34,6 +34,7 @@ from eve.coding import store
 from eve.models import Tier, get_model
 from eve.settings import get_settings
 from eve.tools_client import (
+    close_address_session,
     close_coding_session,
     close_review_session,
     get_coding_session,
@@ -82,8 +83,18 @@ Decide one of three things:
 `done` means the findings file is written, not that the agent sounded finished. An agent that says it is done without having written review.json is not done: reply and tell it to write the file."""
 
 
+_ADDRESS_SYSTEM = """You opened a pull request, people left feedback on it, and you asked a coding agent to ADDRESS that feedback. You are reading its latest turn.
+
+Decide one of three things:
+- reply: it asked something you can answer from the goal or from what you remember about this household and codebase. Answer briefly and let it keep working.
+- done: it has addressed the feedback (fixed what was right, pushed back on what was wrong), committed its fixes, AND written followup.json. Say so.
+- escalate: a reviewer asked for something only the family member can decide.
+
+`done` means followup.json is written, not that the agent sounded finished. An agent that says it is done without having written it is not done: reply and tell it to write the file. Do not tell it to accept feedback it has argued is wrong; verifying before implementing is the point."""
+
+
 def system_prompt_for(kind: str) -> str:
-    return _REVIEW_SYSTEM if kind == "review" else _SYSTEM
+    return {"review": _REVIEW_SYSTEM, "address": _ADDRESS_SYSTEM}.get(kind, _SYSTEM)
 
 
 async def decide(row: dict, turns: list[dict], pending: list[str]) -> Decision:
@@ -249,6 +260,16 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
         closed = await close_review_session(row["id"])
         if closed is None:
             result = {"error": "the review produced no usable findings file"}
+            await store.mark_resolved(row["id"], "failed", result)
+            return _resolved(row, "failed", result, now)
+        result = {"summary": decision.text, **closed}
+        await store.mark_resolved(row["id"], "finished", result)
+        return _resolved(row, "finished", result, now)
+
+    if row.get("kind") == "address":
+        closed = await close_address_session(row["id"])
+        if closed is None:
+            result = {"error": "the follow-up produced no usable followup.json"}
             await store.mark_resolved(row["id"], "failed", result)
             return _resolved(row, "failed", result, now)
         result = {"summary": decision.text, **closed}
