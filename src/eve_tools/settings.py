@@ -48,6 +48,11 @@ class ToolsSettings(BaseSettings):
     whoop_client_secret: str = ""
     oura_client_id: str = ""
     oura_client_secret: str = ""
+    # EVE-26: the actor=app OAuth token for the Linear workspace install.
+    # A plain setting rather than an oauth_store row because an app install
+    # is a one-time workspace grant with no refresh cycle, and that store
+    # exists to manage per-member refreshable grants.
+    linear_api_token: str = ""
 
 
 @lru_cache(maxsize=1)
