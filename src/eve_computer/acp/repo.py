@@ -110,6 +110,40 @@ async def add_worktree(repo: str, session_dir: Path, branch: str) -> Path:
     return tree
 
 
+async def add_review_worktree(
+    repo: str, session_dir: Path, pr_number: int, base_ref: str
+) -> dict:
+    """A detached checkout of a pull request's head, plus the merge base to
+    diff against.
+
+    WHY DETACHED. A review creates no branch and pushes nothing, so there is
+    no branch to name and none to leak. `remove_worktrees` then tears it down
+    unchanged.
+
+    WHY THE MERGE BASE IS RETURNED RATHER THAN THE BASE REF. The reviewer has
+    to diff three-dot (`merge_base...HEAD`). A pull request opened against a
+    branch that has since moved would otherwise show that branch's later
+    commits as findings, and a reviewer reporting someone else's commits as
+    problems in this change is worse than no reviewer.
+    """
+    clone = await ensure_clone(repo)
+    head_ref = f"refs/pull/{pr_number}/head"
+    # A named local ref, so the fetched commit survives a later `git gc` in
+    # the clone while the worktree is still using it.
+    local_ref = f"refs/eve-review/{pr_number}"
+    await _run("git", "fetch", "origin", f"+{head_ref}:{local_ref}", cwd=clone)
+
+    head_sha = await _run("git", "rev-parse", local_ref, cwd=clone)
+    merge_base = await _run(
+        "git", "merge-base", f"origin/{base_ref.split('/')[-1]}", head_sha, cwd=clone
+    )
+
+    tree = worktree_path(session_dir, repo)
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    await _run("git", "worktree", "add", "--detach", str(tree), head_sha, cwd=clone)
+    return {"path": tree, "merge_base": merge_base, "head_sha": head_sha}
+
+
 async def publish(session_dir: Path, repos: list[str], branch: str) -> list[dict]:
     results: list[dict] = []
     for repo in repos:
