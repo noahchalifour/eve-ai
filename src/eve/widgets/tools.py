@@ -10,12 +10,16 @@ kind, then recipe shape, then permissions, then storage.
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from eve.specialists.permissions import permission_denial
-from eve.widgets import recipe as recipe_rules, store
+from eve.state import EveState, turn_is_ambient
+from eve.widgets import recipe as recipe_rules
+from eve.widgets import store
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,7 @@ async def save_widget(
     title: str,
     kind: str,
     recipe: dict,
+    state: Annotated[EveState, InjectedState],
     config: RunnableConfig,
     filters: dict | None = None,
 ) -> str:
@@ -46,10 +51,12 @@ async def save_widget(
     member = configurable.get("member") or {}
     member_sub = member["sub"]
 
-    if configurable.get("is_ambient"):
-        # An ambient turn is composed from a webhook payload, not spoken by
-        # the member, and the ambient credential can impersonate anyone. It
-        # cannot create a durable resource in someone's account.
+    # An ambient turn is composed from a webhook payload, not spoken by the
+    # member, and the ambient credential can impersonate anyone. It cannot
+    # create a durable resource in someone's account. Keyed off the marker
+    # `compose_prompt` really emits, via the one shared predicate: nothing
+    # sets `configurable["is_ambient"]`, so checking that was inert (EVE-30).
+    if turn_is_ambient(state.get("messages") or []):
         return "A widget cannot be created from an ambient turn."
 
     if kind not in recipe_rules.KINDS:
