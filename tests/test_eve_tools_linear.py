@@ -83,6 +83,34 @@ async def test_a_graphql_error_body_is_raised_not_silently_treated_as_success(
         await linear_client.create_activity("sess-1", {"type": "thought", "body": "x"})
 
 
+async def test_a_well_formed_false_success_is_raised_not_silently_treated_as_delivered(
+    monkeypatch,
+):
+    """(fix round 5, item 2) Linear can answer 200 with no `errors` array at
+    all and a payload shaped `{"success": false}`: a rejected mutation with
+    no error detail. `_call` only raises on the `errors`-array shape, so
+    without this check `create_activity` would return this dict as a normal
+    success, and the caller would stamp a heartbeat for an activity Linear
+    never recorded."""
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers):
+            return _FakeResponse({"data": {"agentActivityCreate": {"success": False}}})
+
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", _FakeClient)
+
+    with pytest.raises(linear_client.LinearError, match="success: false"):
+        await linear_client.create_activity("sess-1", {"type": "thought", "body": "x"})
+
+
 async def test_a_missing_token_raises_rather_than_calling_linear(monkeypatch):
     monkeypatch.setenv("EVE_TOOLS_LINEAR_API_TOKEN", "")
     from eve_tools.settings import get_tools_settings

@@ -1071,7 +1071,12 @@ OAuth token can create activities, move issues, and act as Eve in Linear, so
 it lives in `eve-tools` behind the `linear.*` handlers
 (`src/eve_tools/linear_client.py`), exactly like every other credential
 that speaks to the outside world. See the ADR 0006 amendment below for the
-fuller argument.
+fuller argument. Setting Eve as delegate (the other half of Linear's
+best practice on accepting a delegation, alongside the issue-status move
+`handler.py` already performs) is not yet wired: `linear_client.set_delegate`
+and the `linear.set_delegate` tool exist, but nothing calls them yet; a
+follow-up needs Eve's own Linear actor id and a query for whether the issue
+already has a delegate, neither of which this design specifies.
 
 **Decision to activity mapping.** Every decision Eve or the supervisor makes
 about a Linear-originated session becomes a Linear activity

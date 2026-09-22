@@ -76,11 +76,20 @@ async def _call(query: str, variables: dict) -> dict:
 
 
 async def create_activity(session_id: str, content: dict) -> dict:
+    """Linear can answer 200 with no `errors` array and a payload shaped
+    `{"success": false}`: a rejected mutation with no error detail. `_call`
+    only catches the `errors`-array shape, so this checks the mutation's own
+    `success` field and raises on it too. Without this, a rejected activity
+    is reported all the way up as delivered, and the caller stamps a
+    heartbeat for something Linear never recorded."""
     data = await _call(
         _CREATE_ACTIVITY,
         {"input": {"agentSessionId": session_id, "content": content}},
     )
-    return data.get("agentActivityCreate") or {"success": False}
+    result = data.get("agentActivityCreate") or {"success": False}
+    if not result.get("success"):
+        raise LinearError("agentActivityCreate returned success: false")
+    return result
 
 
 async def move_issue_to_started(issue_id: str, team_id: str) -> dict:
