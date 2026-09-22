@@ -75,4 +75,5 @@ async def poll(_member_sub: str) -> list[Signal]:
             cooldown_hours=24,
         )
         for row in by_id.values()
+        if row.get("kind", "code") == "code"
     ]

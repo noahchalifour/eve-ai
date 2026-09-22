@@ -35,6 +35,7 @@ from eve.models import Tier, get_model
 from eve.settings import get_settings
 from eve.tools_client import (
     close_coding_session,
+    close_review_session,
     get_coding_session,
     kill_coding_session,
     prompt_coding_session,
@@ -70,6 +71,20 @@ Decide one of three things:
 Prefer reply. Escalating a question you could have answered wastes the delegation. Claiming done when the work is unfinished is worse than either."""
 
 
+_REVIEW_SYSTEM = """You asked a coding agent to REVIEW a pull request and are reading its latest turn.
+
+Decide one of three things:
+- reply: it asked something you can answer from the goal or from what you remember about this codebase. Answer briefly and let it keep reviewing.
+- done: it has finished reviewing AND written its findings to review.json. Say so.
+- escalate: it needs a decision only the family member can make.
+
+`done` means the findings file is written, not that the agent sounded finished. An agent that says it is done without having written review.json is not done: reply and tell it to write the file."""
+
+
+def system_prompt_for(kind: str) -> str:
+    return _REVIEW_SYSTEM if kind == "review" else _SYSTEM
+
+
 async def decide(row: dict, turns: list[dict], pending: list[str]) -> Decision:
     transcript = "\n".join(f"{t['role']}: {t['text']}" for t in turns)
     interjections = (
@@ -79,7 +94,7 @@ async def decide(row: dict, turns: list[dict], pending: list[str]) -> Decision:
         else ""
     )
     prompt = (
-        f"{_SYSTEM}\n\n"
+        f"{system_prompt_for(row.get('kind', 'code'))}\n\n"
         f"The goal you delegated: {row['goal']}\n"
         f"Repositories: {', '.join(row['repos'])}\n\n"
         f"What you remember that might bear on this:\n{row['context']}\n\n"
@@ -184,6 +199,16 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     if decision.action == "escalate":
         await store.set_status(row["id"], "blocked")
         return _resolved(row, "blocked", {"question": decision.text}, now)
+
+    if row.get("kind") == "review":
+        closed = await close_review_session(row["id"])
+        if closed is None:
+            result = {"error": "the review produced no usable findings file"}
+            await store.mark_resolved(row["id"], "failed", result)
+            return _resolved(row, "failed", result, now)
+        result = {"summary": decision.text, **closed}
+        await store.mark_resolved(row["id"], "finished", result)
+        return _resolved(row, "finished", result, now)
 
     closed = await close_coding_session(row["id"]) or {"prs": []}
     result = {"summary": decision.text, **closed}
