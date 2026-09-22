@@ -28,14 +28,32 @@ async def create_session(
     model: str,
     repos: list[str],
     context: str,
+    linear_session_id: str | None = None,
+    linear_issue_id: str | None = None,
 ) -> None:
+    """The two Linear columns are None for a chat-dispatched session, which
+    is every session that existed before EVE-26. The unique index on
+    `linear_session_id` is what makes a retried Linear webhook insert fail
+    rather than dispatch a second agent."""
     pool = await get_pool()
     async with pool.connection() as conn:
         await conn.execute(
             "INSERT INTO eve_coding_session"
-            " (id, member_sub, thread_id, goal, agent, model, repos, context, status)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running')",
-            (session_id, member_sub, thread_id, goal, agent, model, Jsonb(repos), context),
+            " (id, member_sub, thread_id, goal, agent, model, repos, context,"
+            "  status, linear_session_id, linear_issue_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running', %s, %s)",
+            (
+                session_id,
+                member_sub,
+                thread_id,
+                goal,
+                agent,
+                model,
+                Jsonb(repos),
+                context,
+                linear_session_id,
+                linear_issue_id,
+            ),
         )
 
 
@@ -137,3 +155,27 @@ async def recently_resolved_sessions(since: datetime) -> list[dict]:
                 (since,),
             )
             return list(await cur.fetchall())
+
+
+async def get_by_linear_session(linear_session_id: str) -> dict | None:
+    """How a `prompted` webhook finds the session it is answering."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM eve_coding_session WHERE linear_session_id = %s",
+                (linear_session_id,),
+            )
+            return await cur.fetchone()
+
+
+async def touch_linear_emitted(session_id: str) -> None:
+    """Stamped after every successful emission. The heartbeat reads it to
+    decide whether Linear has heard from us recently enough, so it must not
+    be stamped for an emission that failed."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE eve_coding_session SET linear_emitted_at = now() WHERE id = %s",
+            (session_id,),
+        )

@@ -87,3 +87,42 @@ def test_a_wardrobe_album_is_read_from_the_roster(tmp_path):
     )
     family = Family.from_yaml(path)
     assert family.get("sub-1").wardrobe_album == "album-uuid-1"
+
+
+def test_member_carries_an_optional_linear_id(tmp_path):
+    roster = tmp_path / "family.yaml"
+    roster.write_text(
+        "members:\n"
+        "  - sub: 'abc'\n"
+        "    name: 'Noah'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+        "    linear_id: 'lin_123'\n"
+        "    permissions: ['code.delegate']\n"
+        "  - sub: 'def'\n"
+        "    name: 'Kendra'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+        "    permissions: []\n"
+    )
+    family = Family.from_yaml(roster)
+    assert family.get("abc").linear_id == "lin_123"
+    assert family.get("def").linear_id is None
+
+
+def test_by_linear_id_finds_the_member_or_returns_none(tmp_path):
+    roster = tmp_path / "family.yaml"
+    roster.write_text(
+        "members:\n"
+        "  - sub: 'abc'\n"
+        "    name: 'Noah'\n"
+        "    role: adult\n"
+        "    timezone: 'America/Vancouver'\n"
+        "    linear_id: 'lin_123'\n"
+        "    permissions: []\n"
+    )
+    family = Family.from_yaml(roster)
+    assert family.by_linear_id("lin_123").sub == "abc"
+    assert family.by_linear_id("lin_nope") is None
+    # An unmapped member must never be reachable by a falsy lookup.
+    assert family.by_linear_id("") is None

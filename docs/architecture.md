@@ -1129,6 +1129,98 @@ across instances; the poll loop and the webhook handler both run in one
 process. A second replica would poll and push the same signals again and
 double-count the daily cap in `eve_ambient_notice`.
 
+`/signals/linear`, described in full below, shares this webhook posture
+(verify, acknowledge fast, do the real work in a background task) but
+deliberately bypasses the gate chain above: quiet hours and the daily cap
+exist to protect the family from unrequested interruptions, and would
+misfire on work a family member explicitly asked for by delegating an issue.
+
+## Linear
+
+Phase 6 (EVE-26) makes Eve a Linear agent: a family member assigns her an
+issue and she works it as a coding session, narrating progress back into
+Linear's own activity feed rather than a chat thread. The design and the
+implementation plan are in
+[`docs/superpowers/specs/2026-09-21-eve-linear-agent-design.md`](superpowers/specs/2026-09-21-eve-linear-agent-design.md)
+and
+[`docs/superpowers/plans/2026-09-21-eve-linear-agent.md`](superpowers/plans/2026-09-21-eve-linear-agent.md).
+
+**The endpoint and its verification.** `POST /signals/linear`
+(`src/eve_ambient/app.py`) lives beside `/signals/home-assistant` in
+`eve-ambient` and follows the same shape: read the raw body before parsing
+it, because a signature covers the exact bytes Linear sent and re-serialized
+JSON would not match; verify an HMAC-SHA256 signature in the
+`linear-signature` header against `EVE_LINEAR_WEBHOOK_SECRET` with
+`hmac.compare_digest`; check `webhookTimestamp` is fresh, rejecting a stale
+or missing one as a replay rather than a malformed payload. Only `created`
+(a fresh delegation) and `prompted` (a reply, or an answer to an
+elicitation) are handled; every other action Linear can send is
+acknowledged and dropped so Linear does not retry an event this feature will
+never process. An in-flight set keyed by the Linear session id collapses a
+concurrent duplicate delivery before it ever reaches the handler. Linear
+expects a response within 5 seconds and a first activity within 10 of
+`created`, so the handler (`src/eve_linear/handler.py`) is deliberately
+ordered: the three gate checks (identity, permission, the repo allowlist)
+run first because they are pure local computation, and only after the
+acknowledgement activity is emitted does anything that can block on a
+network or the database run: memory recall, the Aegra thread, the call to
+eve-computer.
+
+**The credential split.** The webhook signing secret and the OAuth token
+that actually reaches Linear's API are deliberately not the same
+credential, in the same place, for the same reason as every other
+third-party integration (ADR 0006): verification and action are separable.
+The signing secret proves a request came from Linear and grants no
+authority over the workspace, so it lives in `eve-ambient`
+(`EVE_LINEAR_WEBHOOK_SECRET`) beside the Home Assistant webhook secret. The
+OAuth token can create activities, move issues, and act as Eve in Linear, so
+it lives in `eve-tools` behind the `linear.*` handlers
+(`src/eve_tools/linear_client.py`), exactly like every other credential
+that speaks to the outside world. See the ADR 0006 amendment below for the
+fuller argument. Setting Eve as delegate (the other half of Linear's
+best practice on accepting a delegation, alongside the issue-status move
+`handler.py` already performs) is not yet wired: `linear_client.set_delegate`
+and the `linear.set_delegate` tool exist, but nothing calls them yet; a
+follow-up needs Eve's own Linear actor id and a query for whether the issue
+already has a delegate, neither of which this design specifies.
+
+**Decision to activity mapping.** Every decision Eve or the supervisor makes
+about a Linear-originated session becomes a Linear activity
+(`src/eve_linear/activities.py`), one of five server-validated shapes:
+`thought` (the ten-second acknowledgement, and the heartbeat), `elicitation`
+(an answerable refusal, or the supervisor's `escalate` decision: a question
+only the family member can resolve), `error` (an unanswerable refusal, a
+dispatch failure, a killed or timed-out session), `action` (the supervisor's
+`reply` decision, narrating what it told the coding agent), and `response`
+(the supervisor's `done` decision, with pull request links when there are
+any). `activities.emit` never raises: losing the narration is recoverable,
+but failing a running coding session over a GraphQL hiccup is not. It also
+stamps the heartbeat clock in `eve_coding_session.linear_emitted_at`, and
+only on a successful emission, so a failed one cannot make the heartbeat
+believe Linear has heard from Eve when it has not.
+
+**The allowlist as the injection boundary.** Issue text and guidance reach
+an agent that writes code and opens pull requests, so the one thing that
+text can never widen is which repositories are reachable.
+`EVE_LINEAR_REPO_ALLOWLIST` is read from settings, never from anything
+Linear sent, and `resolve_repos` (`src/eve_linear/identity.py`) only ever
+narrows a request down to the allowlist's intersection: an issue asking to
+work in a repo outside it gets a refusal, not a wider grant. This is the
+same posture as `eve-computer`'s `NetworkPolicy` and the family roster's
+permission checks: the boundary is enforced by something the untrusted input
+cannot touch.
+
+**The heartbeat.** Linear marks an agent session stale after 30 minutes of
+silence, and a coding agent can legitimately work far longer than that
+without producing a supervisor decision. `supervisor._heartbeat` checks, on
+every tick of a live session that has a `linear_session_id`, whether
+`EVE_LINEAR_HEARTBEAT_MINUTES` (default 10) has elapsed since the last
+emission or the session's creation, and if so emits a `thought` naming the
+coding agent's most recent activity. This is purely cosmetic against
+Linear's own staleness clock, since the underlying state is fully
+recoverable and a later activity un-stales it, so the heartbeat exists to avoid
+inviting a human to intervene in work that is, in fact, still going fine.
+
 ## Tool labels
 
 The client renders agent work as a one-line ticker above the answer, naming
