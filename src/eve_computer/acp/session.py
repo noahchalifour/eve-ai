@@ -30,7 +30,7 @@ import acp
 from acp import PROTOCOL_VERSION, spawn_agent_process, text_block
 from acp.schema import ClientCapabilities, FileSystemCapabilities, Implementation
 
-from eve_computer.acp import repo
+from eve_computer.acp import repo, review
 from eve_computer.acp.client import SessionClient
 from eve_computer.acp.registry import build
 from eve_computer.settings import get_computer_settings
@@ -53,6 +53,38 @@ _SYSTEM_HINT = (
     "stash stack here and you would pop someone else's work. Make a WIP commit "
     "on your own branch instead."
 )
+
+
+def review_hint(repos: list[str], pr_number: int, merge_base: str) -> str:
+    """The standing instruction for a review session.
+
+    Deliberately not `_SYSTEM_HINT` with a clause bolted on: a reviewer and
+    an implementer are told opposite things about editing files, and one
+    string trying to say both would be the design going wrong.
+    """
+    return (
+        "You are reviewing a pull request on behalf of an assistant named Eve. "
+        f"The repositories are {', '.join(repos)} and the pull request is "
+        f"#{pr_number}. The changes under review are `git diff {merge_base}...HEAD`.\n\n"
+        "You are REVIEWING, not fixing. Do not edit, create, or delete any "
+        "source file, and do not commit anything.\n\n"
+        "The review rubric is in `prompts/code-review/` in this repository's "
+        "checkout, or at /app/prompts/code-review/ if it is not: SKILL.md is "
+        "the five axes and the severity vocabulary, security-checklist.md and "
+        "performance-checklist.md are the detailed axes.\n\n"
+        "Apply ONLY the rubric sections that match this repository's stack. A "
+        "Python service gets no Core Web Vitals findings. Record every section "
+        "you skipped, and why, in `skipped_sections`.\n\n"
+        "When you are done, write your findings to `review.json` in the "
+        "session root directory, with this exact shape:\n"
+        '{"summary": "...", "skipped_sections": ["..."], "findings": '
+        '[{"severity": "critical|required|optional|nit|fyi", '
+        '"axis": "correctness|readability|architecture|security|performance", '
+        '"file": "path/from/repo/root.py", "line": 12, "body": "..."}]}\n\n'
+        "`line` must be a line the diff actually touches on the right-hand "
+        "side, or the finding cannot be anchored. Clean code is a legitimate "
+        "outcome: an empty findings list is a valid review."
+    )
 
 
 @dataclass
@@ -80,6 +112,12 @@ class Session:
     prompts: asyncio.Queue = field(default_factory=asyncio.Queue)
     driver: asyncio.Task | None = None
     conn: object | None = None
+    # EVE-27. `kind` is what `close` branches on; the rest are the pull
+    # request under review and the two commits that bound its diff.
+    kind: str = "code"
+    pr_number: int | None = None
+    merge_base: str = ""
+    head_sha: str = ""
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -158,34 +196,57 @@ async def _new_session(conn, session: Session):
 
 
 async def create(
-    session_id: str, agent: str, model: str, repos: list[str], prompt: str
+    session_id: str,
+    agent: str,
+    model: str,
+    repos: list[str],
+    prompt: str,
+    kind: str = "code",
+    pr_number: int | None = None,
+    base_ref: str = "main",
 ) -> Session:
     settings = get_computer_settings()
     # Raises UnknownAgent before anything is created, so a bad agent name
     # never leaves a half-built session or an orphaned worktree behind.
     argv, env = build(agent, model)
 
-    branch = f"eve/{repo.slug(prompt)}-{uuid.uuid4().hex[:8]}"
+    branch = "" if kind == "review" else f"eve/{repo.slug(prompt)}-{uuid.uuid4().hex[:8]}"
     directory = Path(settings.sessions_dir) / session_id
     directory.mkdir(parents=True, exist_ok=True)
 
     session = Session(
         id=session_id, agent=agent, model=model, repos=list(repos),
-        branch=branch, directory=directory,
+        branch=branch, directory=directory, kind=kind, pr_number=pr_number,
     )
     async with _lock:
         _SESSIONS[session_id] = session
 
-    for name in repos:
-        await repo.add_worktree(name, directory, branch)
+    if kind == "review":
+        if pr_number is None:
+            raise ValueError("a review session needs a pull request number")
+        for name in repos:
+            checkout = await repo.add_review_worktree(
+                name, directory, pr_number, base_ref
+            )
+            # One pull request lives in one repository, so the last (and
+            # only) checkout's commits are the session's.
+            session.merge_base = checkout["merge_base"]
+            session.head_sha = checkout["head_sha"]
+        hint = review_hint(list(repos), pr_number, session.merge_base)
+    else:
+        for name in repos:
+            await repo.add_worktree(name, directory, branch)
+        hint = _SYSTEM_HINT
 
     await session.prompts.put(prompt)
     session.turns.append(Turn(role="user", text=prompt))
-    session.driver = asyncio.create_task(_drive(session, argv, env))
+    session.driver = asyncio.create_task(_drive(session, argv, env, hint))
     return session
 
 
-async def _drive(session: Session, argv: list[str], env: dict[str, str]) -> None:
+async def _drive(
+    session: Session, argv: list[str], env: dict[str, str], hint: str = _SYSTEM_HINT
+) -> None:
     settings = get_computer_settings()
     manager = None
     try:
@@ -206,7 +267,7 @@ async def _drive(session: Session, argv: list[str], env: dict[str, str]) -> None
             )
             acp_session_id = (await _new_session(conn, session)).session_id
             await conn.prompt(
-                session_id=acp_session_id, prompt=[text_block(_SYSTEM_HINT)]
+                session_id=acp_session_id, prompt=[text_block(hint)]
             )
 
             turns = 0
@@ -293,6 +354,65 @@ async def close(session_id: str) -> dict:
     await repo.remove_worktrees(session.directory, session.repos)
     session.status = "finished"
     return {"prs": session.prs}
+
+
+async def close_review(session_id: str) -> dict:
+    """A review's ending: read the findings, post them, tear down.
+
+    Raises `InvalidFindings` rather than degrading to an empty review. A
+    review that silently becomes "no findings" is worse than no review,
+    because it looks like one.
+
+    `post_review` needs the worktree still on disk (it computes
+    `changed_lines` from it), so `remove_worktrees` runs in the OUTER
+    `finally` - after the post, not before it - while still firing on the
+    missing-findings path, where there is no post to wait for.
+    """
+    session = _SESSIONS[session_id]
+    try:
+        try:
+            findings = review.load(session.directory)
+        except review.InvalidFindings:
+            _fail(session, "the review produced no usable review.json")
+            raise
+        finally:
+            if session.driver:
+                await session.prompts.put(None)
+                session.driver.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await session.driver
+            with contextlib.suppress(Exception):
+                await session.conn.close_session(session_id=session_id)  # type: ignore[union-attr]
+
+        posted = await repo.post_review(
+            session.repos[0],
+            session.pr_number,
+            findings,
+            session.agent,
+            session.model,
+            repo.worktree_path(session.directory, session.repos[0]),
+            session.merge_base,
+        )
+    finally:
+        await repo.remove_worktrees(session.directory, session.repos)
+
+    session.status = "finished"
+    return {
+        "posted": posted.get("posted", False),
+        "skipped": posted.get("skipped", False),
+        "error": posted.get("error"),
+        "url": posted.get("url"),
+        "findings": len(findings["findings"]),
+        "counts": _severity_counts(findings),
+        "head_sha": session.head_sha,
+    }
+
+
+def _severity_counts(findings: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings["findings"]:
+        counts[finding["severity"]] = counts.get(finding["severity"], 0) + 1
+    return counts
 
 
 async def kill(session_id: str) -> None:
