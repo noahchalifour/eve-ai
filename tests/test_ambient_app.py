@@ -37,11 +37,13 @@ def _clear_background_tasks():
     # different event loop entirely.
     app_module._background.clear()
     app_module._in_flight.clear()
+    app_module._linear_in_flight.clear()
     app_module._last_tick["at"] = None
     app_module._last_tick["counts"] = {}
     yield
     app_module._background.clear()
     app_module._in_flight.clear()
+    app_module._linear_in_flight.clear()
     app_module._last_tick["at"] = None
     app_module._last_tick["counts"] = {}
 
@@ -976,3 +978,130 @@ def _fake_source():
         ]
 
     return Source("fake", False, "finances", _poll)
+
+
+import hashlib
+import hmac
+import json
+import time
+
+LINEAR_SECRET = "L" * 32
+
+
+@pytest.fixture
+def linear_settings(monkeypatch):
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "true")
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", LINEAR_SECRET)
+    monkeypatch.setenv("EVE_LINEAR_REPO_ALLOWLIST", '["owner/repo"]')
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _linear_post(client, payload, secret=LINEAR_SECRET):
+    body = json.dumps(payload).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/signals/linear",
+        content=body,
+        headers={"linear-signature": signature, "content-type": "application/json"},
+    )
+
+
+def _created_payload(**overrides):
+    payload = {
+        "action": "created",
+        "webhookTimestamp": int(time.time() * 1000),
+        "agentSession": {
+            "id": "lin_sess_1",
+            "issue": {"id": "lin_issue_1", "team": {"id": "lin_team_1"}},
+            "creator": {"id": "lin_noah"},
+            "guidance": "Work in owner/repo.",
+            "promptContext": "Fix the bug.",
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_linear_webhook_accepts_a_correctly_signed_created(
+    client, linear_settings, monkeypatch
+):
+    handled = []
+
+    async def _fake_created(event):
+        handled.append(event.session_id)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _fake_created)
+
+    response = _linear_post(client, _created_payload())
+    assert response.status_code == 202
+    assert response.json() == {"accepted": "lin_sess_1"}
+
+
+def test_linear_webhook_refuses_a_bad_signature(client, linear_settings):
+    response = _linear_post(client, _created_payload(), secret="wrong" * 8)
+    assert response.status_code == 401
+
+
+def test_linear_webhook_refuses_a_stale_timestamp(client, linear_settings):
+    stale = _created_payload(webhookTimestamp=int(time.time() * 1000) - 120_000)
+    response = _linear_post(client, stale)
+    assert response.status_code == 401
+
+
+def test_linear_webhook_answers_503_when_disabled(client, monkeypatch):
+    monkeypatch.setenv("EVE_LINEAR_ENABLED", "false")
+    monkeypatch.setenv("EVE_LINEAR_WEBHOOK_SECRET", LINEAR_SECRET)
+    from eve.settings import get_settings
+
+    get_settings.cache_clear()
+
+    response = _linear_post(client, _created_payload())
+    # The endpoint exists; the subsystem behind it is switched off.
+    assert response.status_code == 503
+
+
+def test_linear_webhook_dedups_a_concurrent_duplicate(
+    client, linear_settings, monkeypatch
+):
+    calls = []
+
+    async def _slow_created(event):
+        calls.append(event.session_id)
+        await asyncio.sleep(0.2)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _slow_created)
+
+    first = _linear_post(client, _created_payload())
+    second = _linear_post(client, _created_payload())
+    assert first.status_code == 202
+    assert second.status_code == 202
+    # The unique index is the durable guard; this one just avoids the wasted
+    # round trip while the first is still in flight.
+    assert len(calls) <= 1
+
+
+def test_linear_webhook_refuses_an_unusable_payload(client, linear_settings):
+    response = _linear_post(client, {"webhookTimestamp": int(time.time() * 1000)})
+    assert response.status_code == 422
+
+
+def test_linear_webhook_ignores_an_action_it_does_not_handle(
+    client, linear_settings, monkeypatch
+):
+    called = []
+
+    async def _fake_created(event):
+        called.append(event.session_id)
+        return "dispatched"
+
+    monkeypatch.setattr(app_module.linear_handler, "handle_created", _fake_created)
+
+    response = _linear_post(client, _created_payload(action="somethingElse"))
+    assert response.status_code == 202
+    assert called == []

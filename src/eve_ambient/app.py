@@ -7,6 +7,7 @@ double-count the daily cap.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -23,6 +24,8 @@ from eve_ambient.pipeline import handle_signal
 from eve_ambient.sources import SOURCES, Source
 from eve_ambient.sources.home import from_webhook
 from eve_ambient.types import Signal, SourcePollError
+from eve_linear import handler as linear_handler
+from eve_linear.verify import timestamp_is_fresh, verify_signature
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,12 @@ _in_flight: set[tuple[str, str]] = set()
 # this on its own.
 _MAX_CONCURRENT_WEBHOOK_SIGNALS = 5
 _webhook_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_WEBHOOK_SIGNALS)
+
+# Linear-originated work gets its own in-flight set and semaphore rather than
+# sharing the ambient ones: a burst of delegations must not starve the Home
+# Assistant path, and the two have different natural concurrencies.
+_linear_in_flight: set[str] = set()
+_linear_semaphore = asyncio.Semaphore(3)
 
 # Marked once per source, on the tick that primes it, whether or not that
 # tick found anything to prime. Priming has to be an explicit fact rather
@@ -319,3 +328,75 @@ async def _handle_in_background(signal: Signal) -> None:
             )
     except Exception:
         logger.warning("webhook signal %s failed", signal.key, exc_info=True)
+
+
+@app.post("/signals/linear", status_code=202)
+async def linear_signal(request: Request) -> dict:
+    """Linear wants a response within 5 seconds and a first activity within
+    10. Everything on this path is local computation; the dispatch, which is
+    neither, runs in a background task.
+
+    The raw body is read before parsing, because the signature covers the
+    exact bytes Linear sent and re-serializing parsed JSON changes them.
+    """
+    raw = await request.body()
+    settings = get_settings()
+    if not verify_signature(
+        raw, request.headers.get("linear-signature"), settings.linear_webhook_secret
+    ):
+        # The presented signature is deliberately not logged.
+        logger.warning("rejected linear webhook: invalid or missing signature")
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"unusable payload: {exc}") from exc
+
+    if not timestamp_is_fresh(payload.get("webhookTimestamp")):
+        # A replayed capture, or a clock we cannot reason about. 401 rather
+        # than 422: this is an authentication failure, not a shape problem.
+        logger.warning("rejected linear webhook: stale or missing timestamp")
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    event = linear_handler.parse_event(payload)
+    if not event.session_id:
+        raise HTTPException(status_code=422, detail="no agent session in payload")
+
+    if not settings.linear_enabled:
+        # Same lever, same position, same reason as the ambient check above.
+        raise HTTPException(status_code=503, detail="linear is disabled")
+
+    if event.action not in ("created", "prompted"):
+        # Acknowledged and ignored. A 4xx would make Linear retry an event
+        # this feature will never handle.
+        logger.info("ignoring linear action %r", event.action)
+        return {"accepted": event.session_id}
+
+    if event.session_id in _linear_in_flight:
+        logger.info(
+            "linear session %s is already in flight; not queuing a duplicate",
+            event.session_id,
+        )
+        return {"accepted": event.session_id}
+    _linear_in_flight.add(event.session_id)
+
+    task = asyncio.create_task(_handle_linear_in_background(event))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    task.add_done_callback(
+        lambda _task, key=event.session_id: _linear_in_flight.discard(key)
+    )
+    return {"accepted": event.session_id}
+
+
+async def _handle_linear_in_background(event) -> None:
+    try:
+        async with _linear_semaphore:
+            if event.action == "created":
+                outcome = await linear_handler.handle_created(event)
+            else:
+                outcome = await linear_handler.handle_prompted(event)
+            logger.info("linear session %s resolved as %s", event.session_id, outcome)
+    except Exception:
+        logger.warning("linear session %s failed", event.session_id, exc_info=True)
