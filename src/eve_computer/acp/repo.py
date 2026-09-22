@@ -157,6 +157,7 @@ async def publish(session_dir: Path, repos: list[str], branch: str) -> list[dict
             base = await _base_ref(clone)
             count = await _run("git", "rev-list", "--count", f"{base}..HEAD", cwd=tree)
             result["commits"] = int(count)
+            result["head_sha"] = await _run("git", "rev-parse", "HEAD", cwd=tree)
             if result["commits"] == 0:
                 results.append(result)
                 continue

@@ -167,3 +167,30 @@ async def close_coding_session(session_id: str) -> dict | None:
 async def kill_coding_session(session_id: str) -> str:
     body = await _session_request("DELETE", f"/sessions/{session_id}")
     return "ok" if body is not None else "error: eve-computer unavailable"
+
+
+async def create_review_session(
+    session_id: str,
+    agent: str,
+    model: str,
+    repo: str,
+    pr_number: int,
+    base_ref: str,
+    prompt: str,
+) -> str:
+    body = await _session_request(
+        "POST", "/sessions",
+        json_body={
+            "id": session_id, "agent": agent, "model": model,
+            "repos": [repo], "prompt": prompt, "kind": "review",
+            "pr_number": pr_number, "base_ref": base_ref,
+        },
+    )
+    return "ok" if body is not None else "error: eve-computer unavailable"
+
+
+async def close_review_session(session_id: str) -> dict | None:
+    """The review's ending: the box reads the findings and posts them.
+    `None` means the box could not be reached or refused, which the
+    supervisor reports rather than treating as a clean review."""
+    return await _session_request("POST", f"/sessions/{session_id}/review")

@@ -119,22 +119,37 @@ async def test_publish_opens_a_pr_for_a_repo_with_commits(tmp_path, fake_gh):
     (tree / "new.txt").write_text("x")
     _run("git", "add", "new.txt", cwd=tree)
     _run("git", "-c", "user.email=e@x", "-c", "user.name=E", "commit", "-m", "add new", cwd=tree)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tree, capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
     results = await publish(session_dir, ["acme/repo"], "eve/fix-1")
 
     assert results == [
-        {"repo": "acme/repo", "commits": 1, "pr_url": "https://github.com/acme/repo/pull/1"}
+        {
+            "repo": "acme/repo",
+            "commits": 1,
+            "pr_url": "https://github.com/acme/repo/pull/1",
+            "head_sha": head,
+        }
     ]
     assert "pr create" in fake_gh.read_text()
 
 
 async def test_publish_opens_no_pr_for_a_repo_with_no_commits(tmp_path, fake_gh):
     session_dir = tmp_path / "sessions" / "s1"
-    await add_worktree("acme/repo", session_dir, "eve/fix-1")
+    tree = await add_worktree("acme/repo", session_dir, "eve/fix-1")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tree, capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
     results = await publish(session_dir, ["acme/repo"], "eve/fix-1")
 
-    assert results == [{"repo": "acme/repo", "commits": 0, "pr_url": None}]
+    assert results == [
+        {"repo": "acme/repo", "commits": 0, "pr_url": None, "head_sha": head}
+    ]
     assert not fake_gh.exists()
 
 

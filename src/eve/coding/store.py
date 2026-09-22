@@ -172,3 +172,25 @@ async def review_exists_for(repo: str, pr_number: int, head_sha: str) -> bool:
                 (pr_number, head_sha, repo),
             )
             return await cur.fetchone() is not None
+
+
+async def implementer_of(repo: str, head_sha: str) -> tuple[str, str] | None:
+    """The `(agent, model)` that opened this pull request, or `None` for a
+    human-authored one.
+
+    This is what makes "review with a different model than implemented"
+    checkable rather than aspirational: EVE-27's central requirement needs
+    to know what wrote the code, and this row is the only record of it.
+    """
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT agent, model FROM eve_coding_session"
+                " WHERE kind = 'code' AND status = 'finished' AND repos ? %s"
+                "   AND result -> 'prs' @> %s::jsonb"
+                " ORDER BY finished_at DESC LIMIT 1",
+                (repo, Jsonb([{"head_sha": head_sha}]).obj),
+            )
+            row = await cur.fetchone()
+            return (row["agent"], row["model"]) if row else None
