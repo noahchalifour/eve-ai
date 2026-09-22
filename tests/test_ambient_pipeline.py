@@ -687,3 +687,52 @@ async def test_a_computer_signal_still_respects_the_permission_gate(wiring):
     )
     assert result == "unpermitted"
     assert wiring["delivered"] == []
+
+
+async def test_a_routine_signal_skips_the_relevance_filter(monkeypatch):
+    """A standing request the member wrote is not a guess about what they
+    might want to know."""
+    from eve_ambient import pipeline
+
+    async def unreachable(signal):
+        raise AssertionError("a routine must not be filtered")
+
+    monkeypatch.setattr(pipeline, "judge", unreachable)
+
+    assert "routines" in pipeline._REQUESTED_SOURCES
+
+
+async def test_a_routine_resolution_is_recorded_against_the_routine(monkeypatch):
+    from datetime import UTC, datetime
+
+    from eve_ambient import pipeline
+    from eve_ambient.types import Signal
+
+    recorded = {}
+
+    async def fake_record(signal, resolution):
+        recorded["key"] = signal.key
+        recorded["resolution"] = resolution
+
+    monkeypatch.setattr(pipeline.routines_source, "record_outcome", fake_record)
+    monkeypatch.setattr(
+        pipeline.store, "is_fresh", _async_return(False)
+    )
+
+    signal = Signal(
+        source="routines", key="r-1:2026-01-11T16:00:00+00:00",
+        occurred_at=datetime.now(UTC), member_sub="sub-noah",
+        summary="Routine due: Flights.", payload={"routine_id": "r-1"},
+    )
+
+    await pipeline.handle_signal(signal)
+
+    assert recorded["key"] == signal.key
+    assert recorded["resolution"] == "stale"
+
+
+def _async_return(value):
+    async def _fn(*args, **kwargs):
+        return value
+
+    return _fn

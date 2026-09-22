@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from eve_ambient.sources import calendar, coding, computer, finances, mail
+from eve_ambient.sources import calendar, coding, computer, finances, mail, routines
 from eve_ambient.types import Signal
 
 
@@ -26,4 +26,5 @@ SOURCES: tuple[Source, ...] = (
     Source("finances", False, "finances", finances.poll),
     Source("computer", False, "computer.use", computer.poll),
     Source("coding", False, "code.delegate", coding.poll),
+    Source("routines", False, "routines", routines.poll),
 )
