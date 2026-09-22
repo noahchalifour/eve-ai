@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # might want to know. The relevance filter is bypassed for these: an LLM
 # deciding the answer to a direct request is "not relevant" and swallowing
 # it is the worst failure mode available.
-_REQUESTED_SOURCES = ("computer", "coding")
+_REQUESTED_SOURCES = ("computer", "coding", "review")
 
 
 async def handle_signal(
