@@ -1072,22 +1072,39 @@ def test_linear_webhook_dedups_a_concurrent_duplicate(
 
     async def _slow_created(event):
         calls.append(event.session_id)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.05)
         return "dispatched"
 
     monkeypatch.setattr(app_module.linear_handler, "handle_created", _slow_created)
 
     first = _linear_post(client, _created_payload())
-    second = _linear_post(client, _created_payload())
     assert first.status_code == 202
+    second = _linear_post(client, _created_payload())
     assert second.status_code == 202
+
+    for _ in range(400):
+        if calls and not app_module._linear_in_flight:
+            break
+        time.sleep(0.005)
+
     # The unique index is the durable guard; this one just avoids the wasted
     # round trip while the first is still in flight.
-    assert len(calls) <= 1
+    assert len(calls) == 1
 
 
 def test_linear_webhook_refuses_an_unusable_payload(client, linear_settings):
     response = _linear_post(client, {"webhookTimestamp": int(time.time() * 1000)})
+    assert response.status_code == 422
+
+
+def test_linear_webhook_refuses_genuinely_malformed_json(client, linear_settings):
+    body = b"{not valid json at all"
+    signature = hmac.new(LINEAR_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    response = client.post(
+        "/signals/linear",
+        content=body,
+        headers={"linear-signature": signature, "content-type": "application/json"},
+    )
     assert response.status_code == 422
 
 
