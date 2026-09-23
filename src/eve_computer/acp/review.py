@@ -132,3 +132,57 @@ def build_body(
         f"carries no merge authority.</sub>",
     ])
     return "\n".join(lines)
+
+
+_FOLLOWUP_FILE = "followup.json"
+# GitHub's own comment ceiling is 65536 characters. Well under it, because a
+# reply longer than this is not a reply a reviewer will read.
+_MAX_REPLY_CHARS = 8000
+
+
+def load_followup(session_dir: Path, feedback: list[dict]) -> dict:
+    """`followup.json` from an address session (EVE-31), validated.
+
+    The same posture as `load`: this is model output about to be posted
+    under Eve's identity, so it is untrusted input to `gh`. A reply may only
+    name an inline comment the box itself fetched and gave the agent, so a
+    confused or manipulated agent cannot reply into some other thread; one
+    naming anything else fails the session rather than being posted or
+    silently dropped.
+    """
+    path = Path(session_dir) / _FOLLOWUP_FILE
+    if not path.is_file():
+        raise InvalidFindings(f"no {_FOLLOWUP_FILE} in {session_dir}")
+    try:
+        followup = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise InvalidFindings(f"{_FOLLOWUP_FILE} could not be read: {exc}") from exc
+    if not isinstance(followup, dict):
+        raise InvalidFindings(f"{_FOLLOWUP_FILE} is not an object")
+
+    summary = followup.get("summary", "")
+    if not isinstance(summary, str) or len(summary) > _MAX_REPLY_CHARS:
+        raise InvalidFindings(f"{_FOLLOWUP_FILE} summary is not a short string")
+
+    replies = followup.get("replies", [])
+    if not isinstance(replies, list):
+        raise InvalidFindings(f"{_FOLLOWUP_FILE} replies is not a list")
+    known = {
+        item["id"] for item in feedback
+        if item.get("kind") == "review_comment" and isinstance(item.get("id"), int)
+    }
+    for index, reply in enumerate(replies):
+        if not isinstance(reply, dict):
+            raise InvalidFindings(f"reply {index} is not an object")
+        comment_id = reply.get("comment_id")
+        if not isinstance(comment_id, int) or isinstance(comment_id, bool) \
+                or comment_id not in known:
+            raise InvalidFindings(
+                f"reply {index} names comment {comment_id!r}, which is not an"
+                " inline review comment in feedback.json"
+            )
+        body = reply.get("body")
+        if not isinstance(body, str) or not body.strip() or len(body) > _MAX_REPLY_CHARS:
+            raise InvalidFindings(f"reply {index} has no usable body")
+
+    return {"summary": summary, "replies": replies}

@@ -20,6 +20,7 @@ from eve.coding import supervisor
 from eve.family import UnknownMemberError, get_family
 from eve.settings import get_settings
 from eve_ambient import store
+from eve_ambient.debounce import Debouncer
 from eve_ambient.pipeline import handle_signal
 from eve_ambient.sources import SOURCES, Source
 from eve_ambient.sources import github
@@ -32,6 +33,10 @@ from eve_linear.verify import timestamp_is_fresh, verify_signature
 logger = logging.getLogger(__name__)
 
 _background: set[asyncio.Task] = set()
+# EVE-32 and EVE-31: pushes and comments arrive in bursts, and each would
+# otherwise start a paid session. Keyed per pull request, so a burst on one
+# does not delay another.
+_debounce = Debouncer()
 
 # Which `(source, key)` webhook signals are currently being handled, so a
 # second concurrent post for the same key can be deduped before it ever
@@ -267,6 +272,7 @@ async def lifespan(app: FastAPI):
             settings.coding_supervisor_interval_seconds,
         )
     yield
+    await _debounce.cancel_all()
     for running_task in (task, supervisor_task):
         if running_task:
             running_task.cancel()
@@ -377,6 +383,9 @@ async def github_signal(
         logger.warning("rejected github webhook: invalid or missing signature")
         raise HTTPException(status_code=401, detail="unauthorized")
 
+    if x_github_event in github.FEEDBACK:
+        return _feedback_event(x_github_event, body)
+
     if x_github_event != "pull_request":
         # Including `ping`, which GitHub sends on hook creation. Rejecting it
         # makes a correctly configured hook look broken in the GitHub UI.
@@ -384,10 +393,15 @@ async def github_signal(
 
     try:
         payload = json.loads(body)
+    except ValueError:
+        return {"accepted": None}
+    if payload.get("action") == "synchronize":
+        return _synchronize_event(payload)
+    try:
         payload_parsed = github.from_webhook(payload)
     except ValueError:
         # An action that does not commission a review is not an error: most
-        # pull-request events are `synchronize`, `closed`, and `edited`.
+        # pull-request events are `closed` and `edited`.
         return {"accepted": None}
 
     if not settings.review_enabled:
@@ -432,6 +446,85 @@ async def github_signal(
     task.add_done_callback(_background.discard)
     task.add_done_callback(lambda _task, key=dedup_key: _in_flight.discard(key))
     return {"accepted": payload_parsed.key}
+
+
+def _synchronize_event(payload: dict) -> dict:
+    """New commits on a pull request (EVE-32). Schedules a re-review for
+    when the branch has gone quiet; `dispatch.restart_on_push` decides then
+    whether one is owed. No actor check here, deliberately: the pusher is
+    not the one asking. The member who asked for the original review is,
+    and their grant is re-checked when the debounce fires.
+
+    Acknowledged rather than refused when disabled: a push is not a request,
+    and a 503 would make a hook that also carries labels look broken.
+    """
+    settings = get_settings()
+    if not (settings.review_enabled and settings.review_on_push):
+        return {"accepted": None}
+    try:
+        pushed = github.from_synchronize(payload)
+    except ValueError:
+        return {"accepted": None}
+    if pushed["repo"] not in settings.review_repos:
+        return {"accepted": None}
+
+    async def _rereview() -> None:
+        from eve.review import dispatch
+        result = await dispatch.restart_on_push(**pushed)
+        logger.info(
+            "re-review for %s#%s@%s: %s",
+            pushed["repo"], pushed["pr_number"], pushed["head_sha"][:8], result,
+        )
+
+    # Each push replaces the pending action, so what finally runs names the
+    # newest head.
+    _debounce.schedule(
+        ("review", pushed["repo"], pushed["pr_number"]),
+        settings.review_debounce_seconds,
+        _rereview,
+    )
+    return {"accepted": f"{pushed['repo']}#{pushed['pr_number']}@{pushed['head_sha']}"}
+
+
+def _feedback_event(event: str, body: bytes) -> dict:
+    """A review or comment on a pull request (EVE-31). Schedules a follow-up
+    for when the thread has gone quiet; `followup.start` decides then whether
+    the pull request is one Eve opened.
+
+    Only feedback from a family member counts, and never Eve's own: her
+    replies, and the reviews EVE-27 posts under her identity, must not wake
+    her up to answer herself.
+    """
+    settings = get_settings()
+    if not settings.pr_followup_enabled:
+        return {"accepted": None}
+    try:
+        feedback = github.feedback_from_webhook(event, json.loads(body))
+    except ValueError:
+        return {"accepted": None}
+
+    from eve.coding import followup
+    if not followup.is_trusted(feedback["author"]):
+        logger.info(
+            "ignoring %s on %s#%s from %r: not someone Eve works for",
+            event, feedback["repo"], feedback["pr_number"], feedback["author"],
+        )
+        return {"accepted": None}
+
+    async def _address() -> None:
+        result = await followup.start(
+            feedback["repo"], feedback["pr_number"], feedback["pr_url"]
+        )
+        logger.info(
+            "follow-up for %s#%s: %s", feedback["repo"], feedback["pr_number"], result
+        )
+
+    _debounce.schedule(
+        ("followup", feedback["repo"], feedback["pr_number"]),
+        settings.pr_followup_debounce_seconds,
+        _address,
+    )
+    return {"accepted": f"{feedback['repo']}#{feedback['pr_number']}"}
 
 
 async def _handle_in_background(signal: Signal) -> None:

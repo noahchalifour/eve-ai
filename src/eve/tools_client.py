@@ -177,15 +177,17 @@ async def create_review_session(
     pr_number: int,
     base_ref: str,
     prompt: str,
+    since_sha: str | None = None,
 ) -> str:
-    body = await _session_request(
-        "POST", "/sessions",
-        json_body={
-            "id": session_id, "agent": agent, "model": model,
-            "repos": [repo], "prompt": prompt, "kind": "review",
-            "pr_number": pr_number, "base_ref": base_ref,
-        },
-    )
+    json_body = {
+        "id": session_id, "agent": agent, "model": model,
+        "repos": [repo], "prompt": prompt, "kind": "review",
+        "pr_number": pr_number, "base_ref": base_ref,
+    }
+    if since_sha:
+        # EVE-32: a re-review, focused on what changed after this commit.
+        json_body["since_sha"] = since_sha
+    body = await _session_request("POST", "/sessions", json_body=json_body)
     return "ok" if body is not None else "error: eve-computer unavailable"
 
 
@@ -194,3 +196,37 @@ async def close_review_session(session_id: str) -> dict | None:
     `None` means the box could not be reached or refused, which the
     supervisor reports rather than treating as a clean review."""
     return await _session_request("POST", f"/sessions/{session_id}/review")
+
+
+# --- Addressing feedback on Eve's own pull requests (EVE-31) -----------
+
+
+async def create_address_session(
+    session_id: str,
+    agent: str,
+    model: str,
+    repo: str,
+    pr_number: int,
+    prompt: str,
+    trusted_authors: list[str],
+) -> str:
+    # Longer than the default: creating the session fetches the branch and
+    # every review and comment on the pull request before it returns.
+    body = await _session_request(
+        "POST", "/sessions",
+        json_body={
+            "id": session_id, "agent": agent, "model": model,
+            "repos": [repo], "prompt": prompt, "kind": "address",
+            "pr_number": pr_number, "trusted_authors": trusted_authors,
+        },
+        timeout=60.0,
+    )
+    return "ok" if body is not None else "error: eve-computer unavailable"
+
+
+async def close_address_session(session_id: str) -> dict | None:
+    """Pushes the fixes and posts the replies. `None` means the box could
+    not be reached or the agent left no usable followup.json."""
+    return await _session_request(
+        "POST", f"/sessions/{session_id}/address", timeout=120.0
+    )

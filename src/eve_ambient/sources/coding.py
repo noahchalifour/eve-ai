@@ -28,7 +28,27 @@ from eve_ambient.types import Signal
 _LOOKBACK = timedelta(hours=24)
 
 
+def _address_summary(row: dict) -> str:
+    """EVE-31. An address session reports on the pull request it answered,
+    not on a pull request it opened: it opened none."""
+    goal = row["goal"]
+    result = row["result"] or {}
+    url = result.get("url") or ""
+    if row["status"] == "blocked":
+        return f"A reviewer asked something I need you for, on {goal}: {result.get('question', '')}".rstrip()
+    if row["status"] != "finished":
+        return f"I couldn't {goal}. {result.get('error', '')}".rstrip()
+    if result.get("error"):
+        return f"I worked on {goal}, but not all of it reached GitHub: {result['error']} {url}".strip()
+    commits = result.get("commits", 0)
+    replies = result.get("replies", 0)
+    pushed = f"pushed {commits} commit(s)" if commits else "changed no code"
+    return f"I {goal}: {pushed} and replied in {replies} thread(s). {url}".strip()
+
+
 def _summary(row: dict) -> str:
+    if row.get("kind") == "address":
+        return _address_summary(row)
     goal = row["goal"]
     result = row["result"] or {}
 
@@ -75,5 +95,8 @@ async def poll(_member_sub: str) -> list[Signal]:
             cooldown_hours=24,
         )
         for row in by_id.values()
-        if row.get("kind", "code") == "code"
+        # `address` (EVE-31) is reported here rather than in its own source:
+        # it is delegated coding work, gated by the same `code.delegate`
+        # grant and reported on the thread the original change came from.
+        if row.get("kind", "code") in ("code", "address")
     ]
