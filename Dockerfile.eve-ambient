@@ -14,8 +14,15 @@ RUN uv sync --frozen --no-dev --no-install-project
 # eve.specialists.permissions, so both packages are copied. It imports
 # nothing from eve.graph: ambient is a caller of the graph over HTTP, not a
 # second host for it.
+#
+# eve_linear is copied too: app.py's /signals/linear webhook imports it
+# directly (handler, activities, verify), and eve.coding.supervisor - which
+# eve_ambient also imports, for the coding source's poll tick - imports
+# eve_linear.activities unconditionally (EVE-26/EVE-32). Without this, the
+# container fails at startup with ModuleNotFoundError: eve_linear.
 COPY src/eve ./src/eve
 COPY src/eve_ambient ./src/eve_ambient
+COPY src/eve_linear ./src/eve_linear
 COPY prompts ./prompts
 COPY family.yaml ./family.yaml
 
