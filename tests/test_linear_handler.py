@@ -250,3 +250,64 @@ async def test_a_thread_creation_failure_degrades_to_none_rather_than_raising(
 
     result = await handler._create_thread()
     assert result is None
+
+
+def _real_payload() -> dict:
+    """The shape Linear actually sends, captured from a live delivery.
+
+    Kept as a fixture rather than inlined because the nesting is the whole
+    point: `guidance` and `promptContext` are TOP-LEVEL, not inside
+    `agentSession`, and `guidance` is a list of origin/body objects rather
+    than a string. All three were wrong in the original implementation.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent / "fixtures" / "linear_agent_session_created.json"
+    return json.loads(path.read_text())
+
+
+def test_parse_event_reads_top_level_guidance_as_text():
+    """Linear sends `guidance` as a list of {origin, body} objects at the top
+    level of the payload. `resolve_repos` runs a regex over it, so a list
+    raises TypeError and the delegation dies with no activity emitted."""
+    event = handler.parse_event(_real_payload())
+    assert isinstance(event.guidance, str)
+    assert "owner/repo" in event.guidance
+    assert "owner/client-app" in event.guidance
+
+
+def test_parse_event_reads_top_level_prompt_context():
+    """`promptContext` is top-level too, not inside `agentSession`. Reading
+    it from the wrong place made the goal silently empty."""
+    event = handler.parse_event(_real_payload())
+    assert "EVE-1" in event.prompt_context
+
+
+def test_parse_event_still_reads_the_session_fields():
+    event = handler.parse_event(_real_payload())
+    assert event.action == "created"
+    assert event.session_id == "lin_sess_real"
+    assert event.issue_id == "lin_issue_1"
+    assert event.team_id == "lin_team_1"
+    assert event.actor_id == "lin_noah"
+
+
+def test_guidance_survives_every_shape_linear_might_send():
+    """A string, a list of objects, a list of bare strings, None, and a
+    malformed entry all have to produce a string, because the alternative is
+    a TypeError inside a background task that emits nothing at all."""
+    for raw, expected in (
+        ("plain string owner/repo", "owner/repo"),
+        ([{"body": "owner/repo"}], "owner/repo"),
+        (["owner/repo"], "owner/repo"),
+        ([{"origin": {}, "body": "a"}, {"body": "owner/repo"}], "owner/repo"),
+        (None, ""),
+        ([], ""),
+        ([{"no_body_key": "x"}], ""),
+    ):
+        event = handler.parse_event({"action": "created", "guidance": raw,
+                                     "agentSession": {"id": "s"}})
+        assert isinstance(event.guidance, str)
+        if expected:
+            assert expected in event.guidance
