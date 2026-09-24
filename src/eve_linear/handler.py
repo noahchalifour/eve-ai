@@ -186,6 +186,9 @@ async def handle_created(event: LinearEvent) -> str:
         session_id, agent, model, repos, goal
     )
     if isinstance(dispatched, str) and dispatched.startswith("error:"):
+        # A timeout is ambiguous: the box may have started the agent after
+        # the client gave up. With no row, nothing would ever supervise it.
+        await kill_coding_session(session_id)
         await activities.emit(
             event.session_id,
             activities.error(f"I couldn't start the coding session: {dispatched}"),

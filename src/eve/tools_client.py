@@ -133,6 +133,13 @@ async def _session_request(
         return None
 
 
+# `POST /sessions` clones (or fetches) every repo into a worktree before it
+# answers, so it is bounded by GitHub, not by the box. At the 15s default a
+# two-repo session timed out while the box went on to start the agent anyway,
+# leaving it unsupervised. Same budget as closing, which is also GitHub-bound.
+_CREATE_TIMEOUT = 120.0
+
+
 async def create_coding_session(
     session_id: str, agent: str, model: str, repos: list[str], prompt: str
 ) -> str:
@@ -140,6 +147,7 @@ async def create_coding_session(
         "POST", "/sessions",
         json_body={"id": session_id, "agent": agent, "model": model,
                    "repos": repos, "prompt": prompt},
+        timeout=_CREATE_TIMEOUT,
     )
     return "ok" if body is not None else "error: eve-computer unavailable"
 
@@ -187,7 +195,9 @@ async def create_review_session(
     if since_sha:
         # EVE-32: a re-review, focused on what changed after this commit.
         json_body["since_sha"] = since_sha
-    body = await _session_request("POST", "/sessions", json_body=json_body)
+    body = await _session_request(
+        "POST", "/sessions", json_body=json_body, timeout=_CREATE_TIMEOUT
+    )
     return "ok" if body is not None else "error: eve-computer unavailable"
 
 
