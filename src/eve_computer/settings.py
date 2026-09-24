@@ -15,6 +15,10 @@ class ComputerSettings(BaseSettings):
     api_key: str = ""
     litellm_base_url: str = "https://litellm.chalifour.dev"
     litellm_api_key: str = ""
+    # OPENA-22. The GUI task harness must name a model the LiteLLM key is
+    # allowed to call; left unset, Claude Code picks its own default, every
+    # request 401s, and the task hangs until task_timeout_seconds.
+    model: str = "anthropic/claude-sonnet-5"
     max_turns: int = 40
     task_timeout_seconds: int = 1800
     tasks_dir: str = "/home/eve/tasks"
