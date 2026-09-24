@@ -29,6 +29,7 @@ import asyncio
 import hashlib
 import secrets
 
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 
 from eve.family import UnknownMemberError, get_family
@@ -149,6 +150,11 @@ def main() -> None:
                     # A mistyped sub is the likeliest way to use this command
                     # wrong. A traceback buries the one line that says so.
                     raise SystemExit(f"eve-pat: {exc}") from None
+                except UniqueViolation:
+                    raise SystemExit(
+                        f"eve-pat: a live token with label {args.label!r} already "
+                        "exists; revoke it or pick another label"
+                    ) from None
                 print(token)
                 print(
                     "\nShown once and not stored. Present it as "
