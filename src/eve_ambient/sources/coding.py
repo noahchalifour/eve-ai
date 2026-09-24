@@ -60,10 +60,18 @@ def _summary(row: dict) -> str:
         return f"A coding session failed: {goal}. {result.get('error', '')}".rstrip()
 
     prs = [pr for pr in result.get("prs", []) if pr.get("pr_url")]
+    # A per-repo publish error is not "no changes" (EVE-47): saying so made
+    # Eve redo committed work and open a duplicate pull request.
+    failures = "; ".join(
+        f"{pr['repo']}: {pr['error']}" for pr in result.get("prs", []) if pr.get("error")
+    )
+    failed = f" Publishing failed for {failures}" if failures else ""
     if not prs:
+        if failed:
+            return f"Finished {goal}, but the pull request was not opened.{failed}"
         return f"Finished {goal}, but it made no changes, so there's no pull request."
     links = "; ".join(f"{pr['repo']}: {pr['pr_url']}" for pr in prs)
-    return f"Finished {goal}. {result.get('summary', '')} Pull requests: {links}".strip()
+    return f"Finished {goal}. {result.get('summary', '')} Pull requests: {links}{failed}".strip()
 
 
 async def poll(_member_sub: str) -> list[Signal]:

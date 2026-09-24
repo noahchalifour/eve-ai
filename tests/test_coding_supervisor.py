@@ -501,6 +501,41 @@ async def test_finishing_with_no_pr_leaves_the_issue_state_alone(
     assert invoked == []
 
 
+def test_the_code_prompt_says_done_is_what_opens_the_pull_request():
+    """EVE-47: with the work committed, the supervisor replied "please push
+    the branch and open the PR" - contradicting the agent's own standing
+    hint, and racing the box's `gh pr create` into "already exists"."""
+    prompt = supervisor._SYSTEM
+    assert "never ask it to push" in prompt.lower()
+    assert "choose done" in prompt.lower()
+
+
+async def test_a_publish_failure_is_not_reported_as_no_changes(monkeypatch):
+    """EVE-47: the repo had a commit, `gh pr create` failed, and Linear was
+    told "No changes, so there's no pull request" - false, and it hid the
+    error that explained what went wrong."""
+    bodies = []
+
+    async def _emit(linear_session_id, content, session_id=None):
+        bodies.append(content.get("body", ""))
+        return True
+
+    monkeypatch.setattr(supervisor.activities, "emit", _emit)
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Fixed it.")
+    _patch_close(
+        monkeypatch,
+        {"prs": [{"repo": "owner/a", "commits": 1, "pr_url": None, "error": "GitError: boom"}]},
+    )
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    final = bodies[-1]
+    assert "No changes" not in final
+    assert "owner/a" in final and "GitError: boom" in final
+
+
 async def test_a_chat_dispatched_session_never_touches_linear_issues(
     emitted, invoked, monkeypatch
 ):
