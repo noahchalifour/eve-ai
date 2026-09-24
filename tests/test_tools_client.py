@@ -305,3 +305,26 @@ async def test_every_session_call_sends_the_computer_bearer_token(monkeypatch):
     await tools_client.create_coding_session("s1", "codex", "m", ["r"], "p")
 
     assert route.calls.last.request.headers["authorization"] == f"Bearer {key}"
+
+
+async def test_creating_a_session_waits_for_the_clones(monkeypatch):
+    """`POST /sessions` clones every repo before it answers, which took
+    longer than the 15s default for a two-repo session on the live box. The
+    client gave up, reported 'eve-computer unavailable', and left the box
+    running an agent nobody was supervising. Creation has to wait as long as
+    closing does."""
+    from eve import tools_client
+
+    seen = {}
+
+    async def _request(method, path, *, json_body=None, params=None, timeout=15.0):
+        seen["timeout"] = timeout
+        return {"id": "s", "status": "queued"}
+
+    monkeypatch.setattr(tools_client, "_session_request", _request)
+    assert await tools_client.create_coding_session("s", "a", "m", ["o/r"], "p") == "ok"
+    assert seen["timeout"] >= 120.0
+
+    seen.clear()
+    assert await tools_client.create_review_session("s", "a", "m", "o/r", 1, "main", "p") == "ok"
+    assert seen["timeout"] >= 120.0

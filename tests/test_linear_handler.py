@@ -342,3 +342,25 @@ async def test_the_handler_opens_the_thread_as_the_resolved_member(spy):
     await handler.handle_created(_event())
     threads = [c for c in spy if c[0] == "thread"]
     assert threads and threads[0][1]
+
+
+async def test_a_failed_dispatch_stops_whatever_the_box_may_have_started(
+    spy, monkeypatch
+):
+    """A timed-out create is ambiguous: the box may have cloned and started
+    the agent after the client gave up, which is what happened live. With no
+    row nothing supervises it, so the handler kills the id it chose."""
+    killed = []
+
+    async def _failing_create(session_id, agent, model, repos, goal):
+        return "error: eve-computer unavailable"
+
+    async def _kill(session_id):
+        killed.append(session_id)
+        return "ok"
+
+    monkeypatch.setattr(handler, "create_coding_session", _failing_create)
+    monkeypatch.setattr(handler, "kill_coding_session", _kill)
+
+    assert await handler.handle_created(_event()) == "failed"
+    assert len(killed) == 1 and killed[0]
