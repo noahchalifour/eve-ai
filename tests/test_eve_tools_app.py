@@ -132,3 +132,16 @@ async def test_health_get_recovery_defaults_days_to_one(monkeypatch):
             headers={"Authorization": "Bearer test-key"},
         )
     mock_get.assert_awaited_once_with("sub-noah", 1)
+
+
+def test_there_is_no_linear_set_delegate_route():
+    """EVE-42. Linear's `delegateId` only accepts an agent (app) user; handing
+    an issue back to a human is rejected with "delegateId must correspond to
+    an app user". Eve is already the delegate once a session exists, so the
+    route had no caller that could ever succeed. Guard against it returning
+    as dead surface."""
+    from eve_tools import linear_client
+    from eve_tools.app import _HANDLERS
+
+    assert "linear.set_delegate" not in _HANDLERS
+    assert not hasattr(linear_client, "set_delegate")

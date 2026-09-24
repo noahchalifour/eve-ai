@@ -48,9 +48,8 @@ _TOKEN_PROPERTY = "linear_api_token"
 _TOKEN_URL = "https://api.linear.app/oauth/token"
 
 # read/write cover the agentActivityCreate and issueUpdate mutations
-# linear_client.py makes; app:assignable is what lets `set_delegate`
-# (issueUpdate's delegateId) succeed once it is wired up (see
-# docs/architecture.md's Linear section for why that call is not made yet).
+# linear_client.py makes; app:assignable is what lets a member delegate an
+# issue to Eve in the first place, which is what creates the agent session.
 _SCOPE = "read,write,app:assignable"
 
 

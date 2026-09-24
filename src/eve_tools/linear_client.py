@@ -66,12 +66,6 @@ mutation AttachmentLinkURL($issueId: String!, $url: String!) {
 }
 """
 
-_ISSUE_UPDATE_DELEGATE = """
-mutation IssueSetDelegate($id: String!, $delegateId: String!) {
-  issueUpdate(id: $id, input: { delegateId: $delegateId }) { success }
-}
-"""
-
 
 class LinearError(Exception):
     """Linear refused, or is unreachable, or is not configured."""
@@ -154,10 +148,3 @@ async def move_issue_to_review(issue_id: str, pr_urls: list[str]) -> dict:
         except Exception:
             logger.warning("could not attach %s to issue %s", url, issue_id, exc_info=True)
     return updated.get("issueUpdate") or {"success": False}
-
-
-async def set_delegate(issue_id: str, actor_id: str) -> dict:
-    data = await _call(
-        _ISSUE_UPDATE_DELEGATE, {"id": issue_id, "delegateId": actor_id}
-    )
-    return data.get("issueUpdate") or {"success": False}
