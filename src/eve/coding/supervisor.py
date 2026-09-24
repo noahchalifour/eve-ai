@@ -268,6 +268,9 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
             f"without reaching an answer: {row['goal']}. Could you take a look?"
         )
         await store.set_status(row["id"], "blocked")
+        # Same shape as escalate: without it the Linear session keeps looking
+        # busy while the row is actually waiting on a human.
+        await _emit_for(row, activities.elicitation(question))
         return _resolved(row, "blocked", {"question": question}, now)
 
     decision = await decide(row, turns, pending)

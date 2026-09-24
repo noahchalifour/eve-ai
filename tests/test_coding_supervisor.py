@@ -234,6 +234,18 @@ async def test_blowing_the_supervisor_budget_parks_and_asks_in_english(monkeypat
     assert "back and forth" in resolved[0]["result"]["question"]
 
 
+async def test_blowing_the_supervisor_budget_emits_an_elicitation(emitted, monkeypatch):
+    """Parking on `blocked` without telling Linear would leave its session
+    looking busy while it actually waits on a human (EVE-43)."""
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "?"}]})
+    supervisor.store.bump_supervisor_turns.return_value = 4  # cap is 3
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert ("lin_sess_1", "elicitation") in emitted
+
+
 async def test_a_session_past_its_wall_clock_bound_is_closed_out(monkeypatch):
     """The spec's per-session wall-clock bound. Without it a session parked
     on `blocked` that nobody ever answers sits live forever, holding a
