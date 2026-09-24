@@ -105,7 +105,7 @@ async def world(tmp_path, monkeypatch):
         state["order"].append("recall")
         return ""
 
-    async def _fake_thread():
+    async def _fake_thread(member_sub):
         return "thread-1"
 
     async def _fake_validate(model, agent):
