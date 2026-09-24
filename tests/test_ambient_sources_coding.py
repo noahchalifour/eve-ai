@@ -52,6 +52,22 @@ async def test_a_session_with_no_commits_says_so_rather_than_claiming_success():
     assert "no changes" in signals[0].summary.lower()
 
 
+async def test_a_commit_that_failed_to_publish_is_not_called_no_changes():
+    """EVE-47: this summary said "made no changes" for a committed fix whose
+    PR step errored, and Eve, believing it, re-ran the whole task through
+    the computer lane and opened a duplicate pull request."""
+    coding.supervisor.tick.return_value = [
+        _session(result={"summary": "done", "prs": [
+            {"repo": "acme/repo", "commits": 1, "pr_url": None, "error": "GitError: boom"}
+        ]})
+    ]
+
+    signals = await coding.poll("sub-noah")
+
+    assert "no changes" not in signals[0].summary.lower()
+    assert "GitError: boom" in signals[0].summary
+
+
 async def test_a_blocked_session_carries_its_question():
     coding.supervisor.tick.return_value = [
         _session(status="blocked", result={"question": "Which staging DB?"})
