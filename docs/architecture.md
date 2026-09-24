@@ -561,6 +561,18 @@ checkbox in your account (ADR 0015). Until that login exists, every
 delegated coding session fails loudly at `git push`, with the failure
 riding in the pull-request result Eve reports.
 
+**Coding sessions carry Noah's skills (EVE-45).** On every start,
+`bootstrap.sh` calls `acp/skills.py`, which clones or fetches
+`noahchalifour/agent-skills` into `/home/eve/.eve/agent-skills` and
+symlinks each `skills/<domain>/<name>/` into `~/.agents/skills` (dsh,
+Codex, OpenCode) and `~/.claude/skills` (Claude Code, OpenCode), the same
+layout as his laptop. The repository is private, so it rides the same
+collaborator model as everything else: Eve's GitHub account needs read
+access to it, granted once. The pull is best-effort. A failed fetch keeps
+the last good copy linked, and a name already taken by something Eve
+installed by hand is left alone. `EVE_COMPUTER_AGENT_SKILLS_REPO=""`
+turns it off.
+
 **The session lane (EVE-4).** Beside `/tasks` lives a second concurrency
 lane: ACP coding sessions (`POST /sessions`, `GET /sessions/{id}`,
 `POST /sessions/{id}/prompt`, `POST /sessions/{id}/close`,

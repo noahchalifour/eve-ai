@@ -177,3 +177,18 @@ def test_bootstrap_writes_all_three_routing_configs(computer_container):
     # The key itself is never written into a config file - only the name of
     # the environment variable holding it.
     assert "sk-probe" not in output
+
+
+def test_bootstrap_creates_the_agent_skill_directories(computer_container):
+    """EVE-45: the directories every coding agent reads skills from exist
+    even when the repository cannot be reached, and bootstrap survives it."""
+    script = (
+        "EVE_COMPUTER_AGENT_SKILLS_REPO=https://invalid.example/none.git "
+        "/app/src/eve_computer/bootstrap.sh >/dev/null 2>&1; "
+        "test -d /home/eve/.agents/skills && test -d /home/eve/.claude/skills"
+    )
+    result = subprocess.run(
+        ["docker", "exec", CONTAINER_NAME, "sh", "-c", script],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
