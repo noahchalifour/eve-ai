@@ -9,10 +9,16 @@ this token (which reaches Linear) lives only here.
 GRAPHQL ANSWERS 200 WITH AN ERRORS ARRAY. Checking the HTTP status alone
 would report a rejected mutation as a delivered activity, and the caller
 would stamp a heartbeat for something Linear never received.
+
+EVE-41: the app token is a client_credentials grant that expires after 30
+days with no refresh token. When the app's client id/secret are configured,
+an authentication failure mints a fresh token from the same grant
+scripts/linear_client_credentials_refresh.py uses and retries the call once.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -23,6 +29,18 @@ logger = logging.getLogger(__name__)
 
 _API_URL = "https://api.linear.app/graphql"
 _TIMEOUT = 15.0
+_TOKEN_URL = "https://api.linear.app/oauth/token"
+# Must match scripts/linear_client_credentials_refresh.py: a minted token
+# with fewer scopes would pass the retry and then fail the mutations.
+_SCOPE = "read,write,app:assignable"
+
+# A minted token lives only in this process. It is never written back to
+# Vault: that stays the refresh script's job, and a restart simply mints
+# again on the first 401.
+_minted_token: str | None = None
+# Concurrent calls that all hit the same expired token should mint once,
+# not once each.
+_refresh_lock = asyncio.Lock()
 
 _CREATE_ACTIVITY = """
 mutation AgentActivityCreate($input: AgentActivityCreateInput!) {
@@ -77,18 +95,79 @@ class LinearError(Exception):
     """Linear refused, or is unreachable, or is not configured."""
 
 
+def _is_auth_failure(response, body: dict) -> bool:
+    """Linear signals an expired token either as HTTP 401 or as a 200 whose
+    GraphQL errors carry an authentication code."""
+    if response.status_code == 401:
+        return True
+    for error in body.get("errors") or []:
+        extensions = error.get("extensions") or {}
+        if extensions.get("code") == "AUTHENTICATION_ERROR":
+            return True
+        if "authentication" in str(extensions.get("type", "")).lower():
+            return True
+    return False
+
+
+async def _post(client, query: str, variables: dict, token: str):
+    response = await client.post(
+        _API_URL,
+        json={"query": query, "variables": variables},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = response.json() if response.status_code < 400 else {}
+    return response, body
+
+
+async def _refresh(client, stale_token: str, client_id: str, client_secret: str) -> str:
+    global _minted_token
+    async with _refresh_lock:
+        # Another call may have minted while this one waited on the lock.
+        if _minted_token and _minted_token != stale_token:
+            return _minted_token
+        try:
+            response = await client.post(
+                _TOKEN_URL,
+                data={
+                    "grant_type": "client_credentials",
+                    "scope": _SCOPE,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise LinearError(f"could not refresh the Linear token: {exc}") from exc
+        if response.status_code >= 400:
+            raise LinearError(
+                f"could not refresh the Linear token: HTTP {response.status_code}"
+            )
+        access_token = response.json().get("access_token")
+        if not access_token:
+            raise LinearError("could not refresh the Linear token: no access_token")
+        logger.info("minted a fresh Linear app token after an authentication failure")
+        _minted_token = access_token
+        return access_token
+
+
 async def _call(query: str, variables: dict) -> dict:
-    token = get_tools_settings().linear_api_token
-    if not token:
+    settings = get_tools_settings()
+    client_id, client_secret = settings.linear_client_id, settings.linear_client_secret
+    can_refresh = bool(client_id and client_secret)
+    token = _minted_token or settings.linear_api_token
+    if not token and not can_refresh:
         raise LinearError("the Linear API token is not configured")
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.post(
-            _API_URL,
-            json={"query": query, "variables": variables},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        if not token:
+            token = await _refresh(client, "", client_id, client_secret)
+        response, body = await _post(client, query, variables, token)
+        if can_refresh and _is_auth_failure(response, body):
+            token = await _refresh(client, token, client_id, client_secret)
+            response, body = await _post(client, query, variables, token)
+            # Exactly one retry: a freshly minted token being rejected means
+            # the app itself is misconfigured, and minting again won't help.
+            if _is_auth_failure(response, body):
+                raise LinearError("Linear rejected a freshly minted token")
         response.raise_for_status()
-        body = response.json()
     if body.get("errors"):
         messages = "; ".join(e.get("message", "?") for e in body["errors"])
         raise LinearError(messages)

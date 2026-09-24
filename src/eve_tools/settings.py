@@ -53,6 +53,12 @@ class ToolsSettings(BaseSettings):
     # is a one-time workspace grant with no refresh cycle, and that store
     # exists to manage per-member refreshable grants.
     linear_api_token: str = ""
+    # EVE-41: the OAuth application's own credentials, the same
+    # kv/credentials/eve-tools properties the refresh script reads. With
+    # both set, linear_client mints a fresh client_credentials token when
+    # the one above expires. Unset, a 401 fails as it always has.
+    linear_client_id: str = ""
+    linear_client_secret: str = ""
 
 
 @lru_cache(maxsize=1)

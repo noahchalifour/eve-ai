@@ -254,3 +254,155 @@ async def test_a_failed_attachment_does_not_undo_the_state_move(monkeypatch):
     result = await linear_client.move_issue_to_review("issue-1", ["https://pr/1"])
 
     assert result["success"] is True
+
+
+# EVE-41: a client_credentials token expires after 30 days. With the app's
+# client id/secret configured, a 401 mints a fresh token and retries once.
+
+
+@pytest.fixture
+def client_credentials(monkeypatch):
+    monkeypatch.setenv("EVE_TOOLS_LINEAR_CLIENT_ID", "cid")
+    monkeypatch.setenv("EVE_TOOLS_LINEAR_CLIENT_SECRET", "csecret")
+    from eve_tools.settings import get_tools_settings
+
+    get_tools_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def no_minted_token(monkeypatch):
+    monkeypatch.setattr(linear_client, "_minted_token", None)
+
+
+def _scripted_client(graphql, token_responses=()):
+    """A fake AsyncClient that answers GraphQL posts from `graphql` (a list
+    of (status, payload) consumed in order) and token posts from
+    `token_responses`, recording every call."""
+    graphql = list(graphql)
+    token_responses = list(token_responses)
+    calls = []
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None, data=None):
+            calls.append({"url": url, "headers": headers, "data": data})
+            if url == linear_client._TOKEN_URL:
+                status, payload = token_responses.pop(0)
+            else:
+                status, payload = graphql.pop(0)
+            return _FakeResponse(payload, status)
+
+    return _FakeClient, calls
+
+
+_OK = (200, {"data": {"agentActivityCreate": {"success": True}}})
+_UNAUTHORIZED = (401, {"errors": [{"message": "Authentication required"}]})
+
+
+def _token_calls(calls):
+    return [c for c in calls if c["url"] == linear_client._TOKEN_URL]
+
+
+async def test_an_expired_token_is_refreshed_and_the_call_retried_once(
+    monkeypatch, client_credentials
+):
+    fake, calls = _scripted_client(
+        [_UNAUTHORIZED, _OK, _OK], [(200, {"access_token": "fresh"})]
+    )
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    result = await linear_client.create_activity("sess-1", {"type": "thought"})
+
+    assert result["success"] is True
+    [token_call] = _token_calls(calls)
+    assert token_call["data"]["grant_type"] == "client_credentials"
+    assert token_call["data"]["client_id"] == "cid"
+    assert token_call["data"]["client_secret"] == "csecret"
+    assert calls[-1]["headers"]["Authorization"] == "Bearer fresh"
+
+    # The minted token is cached: the next call uses it without re-minting.
+    await linear_client.create_activity("sess-1", {"type": "thought"})
+    assert len(_token_calls(calls)) == 1
+    assert calls[-1]["headers"]["Authorization"] == "Bearer fresh"
+
+
+async def test_a_graphql_authentication_error_also_triggers_a_refresh(
+    monkeypatch, client_credentials
+):
+    auth_error = (
+        200,
+        {
+            "errors": [
+                {
+                    "message": "Authentication required, not authenticated",
+                    "extensions": {
+                        "type": "authentication error",
+                        "code": "AUTHENTICATION_ERROR",
+                    },
+                }
+            ]
+        },
+    )
+    fake, calls = _scripted_client(
+        [auth_error, _OK], [(200, {"access_token": "fresh"})]
+    )
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    result = await linear_client.create_activity("sess-1", {"type": "thought"})
+
+    assert result["success"] is True
+    assert len(_token_calls(calls)) == 1
+
+
+async def test_a_failed_refresh_raises_linear_error(monkeypatch, client_credentials):
+    fake, _ = _scripted_client([_UNAUTHORIZED], [(400, {"error": "invalid_client"})])
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    with pytest.raises(linear_client.LinearError, match="refresh"):
+        await linear_client.create_activity("sess-1", {"type": "thought"})
+    assert linear_client._minted_token is None
+
+
+async def test_a_second_401_raises_linear_error_without_looping(
+    monkeypatch, client_credentials
+):
+    fake, calls = _scripted_client(
+        [_UNAUTHORIZED, _UNAUTHORIZED], [(200, {"access_token": "fresh"})]
+    )
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    with pytest.raises(linear_client.LinearError):
+        await linear_client.create_activity("sess-1", {"type": "thought"})
+    assert len(_token_calls(calls)) == 1
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("status", [400, 403])
+async def test_other_client_errors_do_not_refresh(
+    monkeypatch, client_credentials, status
+):
+    fake, calls = _scripted_client([(status, {"errors": [{"message": "no"}]})])
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    # Unchanged from before EVE-41: raise_for_status surfaces the error.
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        await linear_client.create_activity("sess-1", {"type": "thought"})
+    assert _token_calls(calls) == []
+    assert len(calls) == 1
+
+
+async def test_without_client_credentials_a_401_is_not_refreshed(monkeypatch):
+    fake, calls = _scripted_client([_UNAUTHORIZED])
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", fake)
+
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        await linear_client.create_activity("sess-1", {"type": "thought"})
+    assert _token_calls(calls) == []
