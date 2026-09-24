@@ -7,7 +7,10 @@ token, against the compose Postgres.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
+from psycopg.errors import UniqueViolation
 
 from eve import pat
 from eve.family import UnknownMemberError
@@ -55,6 +58,27 @@ async def test_resolution_is_inert_without_a_database_url(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     get_settings.cache_clear()
     assert await pat.subject_for(pat.generate()) is None
+
+
+def test_mint_cli_reports_a_duplicate_live_label(monkeypatch, capsys):
+    async def duplicate_label(sub, label):
+        raise UniqueViolation
+
+    async def close_pool():
+        pass
+
+    monkeypatch.setattr(pat, "mint", duplicate_label)
+    monkeypatch.setattr(pat, "close_pool", close_pool)
+    monkeypatch.setattr(sys, "argv", ["eve-pat", "mint", "sub-noah", "laptop"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        pat.main()
+
+    assert str(exc_info.value) == (
+        "eve-pat: a live token with label 'laptop' already exists; "
+        "revoke it or pick another label"
+    )
+    assert capsys.readouterr().out == ""
 
 
 # --- integration tier ------------------------------------------------------
