@@ -29,6 +29,7 @@ import asyncio
 import hashlib
 import secrets
 
+import psycopg.errors
 from psycopg.rows import dict_row
 
 from eve.family import UnknownMemberError, get_family
@@ -89,6 +90,10 @@ async def mint(sub: str, label: str) -> str:
     resolves the subject before it consults `family.yaml`, so a typo'd sub
     mints a token that 401s with a message about a subject the operator never
     typed anywhere they can see.
+
+    The partial unique index eve_pat_active_label raises UniqueViolation if a
+    live token already holds this label - deliberately not caught here: the
+    caller decides whether that is an error or a signal to revoke first.
     """
     get_family().get(sub)  # raises UnknownMemberError
     token = generate()
@@ -149,6 +154,15 @@ def main() -> None:
                     # A mistyped sub is the likeliest way to use this command
                     # wrong. A traceback buries the one line that says so.
                     raise SystemExit(f"eve-pat: {exc}") from None
+                except psycopg.errors.UniqueViolation:
+                    # mint() lets this propagate (see its docstring): the
+                    # partial unique index eve_pat_active_label is the real
+                    # backstop, and only the CLI layer knows what a friendly
+                    # answer looks like.
+                    raise SystemExit(
+                        f"eve-pat: a live token labeled {args.label!r} already "
+                        "exists; revoke it or choose another label"
+                    ) from None
                 print(token)
                 print(
                     "\nShown once and not stored. Present it as "

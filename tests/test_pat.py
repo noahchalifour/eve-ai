@@ -57,6 +57,39 @@ async def test_resolution_is_inert_without_a_database_url(monkeypatch):
     assert await pat.subject_for(pat.generate()) is None
 
 
+def test_cli_mint_reports_a_duplicate_live_label_without_a_traceback(
+    monkeypatch, capsys
+):
+    """main() - not mint() - decides that the partial unique index firing is
+    a one-line answer rather than a stack trace, the same split
+    tools_authoring/cli.py makes for `eve-tool approve`. No database is
+    touched: mint() is replaced outright, so a bare UniqueViolation is enough
+    to exercise the CLI's handling of it."""
+    from psycopg.errors import UniqueViolation
+
+    async def fake_mint(sub, label):
+        raise UniqueViolation("duplicate key value violates unique constraint")
+
+    closed = []
+
+    async def fake_close_pool():
+        closed.append(True)
+
+    monkeypatch.setattr(pat, "mint", fake_mint)
+    monkeypatch.setattr(pat, "close_pool", fake_close_pool)
+    monkeypatch.setattr("sys.argv", ["eve-pat", "mint", "sub-noah", "laptop"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        pat.main()
+
+    assert str(exc_info.value) == (
+        "eve-pat: a live token labeled 'laptop' already exists; revoke it "
+        "or choose another label"
+    )
+    assert closed == [True]
+    assert capsys.readouterr().out == ""
+
+
 # --- integration tier ------------------------------------------------------
 
 integration = pytest.mark.integration
