@@ -529,3 +529,31 @@ async def test_a_failed_state_move_does_not_stop_the_session(emitted, monkeypatc
 
     assert outcome["status"] == "finished"
     assert ("lin_sess_1", "response") in emitted
+
+
+async def test_a_session_the_box_lost_fails_right_away_and_says_why(emitted, monkeypatch):
+    """EVE-44: after an eve-computer restart the box answers 404 for a
+    session it used to hold. Waiting out the stale timeout would leave the
+    Linear session looking active for hours over work that is already gone."""
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    _patch_box(monkeypatch, {"status": "lost"})
+
+    outcome = await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert outcome["status"] == "failed"
+    assert "eve-computer restarted" in outcome["result"]["error"]
+    supervisor.store.mark_resolved.assert_awaited_once_with(
+        "s1", "failed", outcome["result"]
+    )
+    assert ("lin_sess_1", "error") in emitted
+
+
+async def test_an_unreachable_box_still_waits_for_the_stale_path(emitted, monkeypatch):
+    row = _row(status="running", linear_session_id="lin_sess_1")
+    monkeypatch.setattr(supervisor, "get_coding_session", AsyncMock(return_value=None))
+
+    outcome = await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert outcome is None
+    supervisor.store.mark_resolved.assert_not_awaited()
+    assert emitted == []

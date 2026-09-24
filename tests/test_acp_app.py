@@ -92,6 +92,17 @@ def test_an_unknown_session_is_404_everywhere(client, monkeypatch):
     assert client.delete("/sessions/nope", headers=AUTH).status_code == 404
 
 
+def test_an_unknown_session_says_so_in_the_body(client):
+    """EVE-44: after a restart `_SESSIONS` is empty, and the supervisor fails
+    a session only on this exact detail (tools_client._is_unknown_session).
+    Changing the wording would quietly send lost sessions back to the stale
+    path. Uses the real, empty session registry rather than a mock."""
+    response = client.get("/sessions/never-existed", headers=AUTH)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "unknown session"}
+
+
 def test_a_reply_is_sent_and_an_interjection_is_only_queued(client, monkeypatch):
     monkeypatch.setattr(app_mod.session, "get", lambda sid: object())
     send, enqueue = AsyncMock(), AsyncMock()
