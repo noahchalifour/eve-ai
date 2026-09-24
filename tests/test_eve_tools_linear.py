@@ -182,3 +182,75 @@ async def test_move_issue_to_started_is_a_no_op_when_no_started_state_exists(
 
     result = await linear_client.move_issue_to_started("issue-1", "team-1")
     assert result == {"success": False, "reason": "no started state"}
+
+
+def _review_client(calls, states, attach_success=True):
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers):
+            calls.append(json)
+            if "states" in json["query"]:
+                return _FakeResponse(
+                    {"data": {"issue": {"team": {"states": {"nodes": states}}}}}
+                )
+            if "attachmentLinkURL" in json["query"]:
+                return _FakeResponse(
+                    {"data": {"attachmentLinkURL": {"success": attach_success}}}
+                )
+            return _FakeResponse({"data": {"issueUpdate": {"success": True}}})
+
+    return _FakeClient
+
+
+async def test_move_issue_to_review_picks_the_in_review_state_by_name(monkeypatch):
+    # The team has two `started` states, so position cannot tell them apart.
+    calls = []
+    states = [
+        {"id": "s1", "name": "In Progress", "position": 1.0},
+        {"id": "s2", "name": "in review", "position": 2.0},
+    ]
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", _review_client(calls, states))
+
+    result = await linear_client.move_issue_to_review("issue-1", ["https://pr/1"])
+
+    assert result["success"] is True
+    # The team is resolved from the issue itself; no team id is needed.
+    assert calls[0]["variables"] == {"issueId": "issue-1"}
+    assert calls[1]["variables"] == {"id": "issue-1", "stateId": "s2"}
+    assert calls[2]["variables"]["issueId"] == "issue-1"
+    assert calls[2]["variables"]["url"] == "https://pr/1"
+
+
+async def test_move_issue_to_review_is_a_no_op_when_no_in_review_state_exists(
+    monkeypatch,
+):
+    calls = []
+    states = [{"id": "s1", "name": "In Progress", "position": 1.0}]
+    monkeypatch.setattr(linear_client.httpx, "AsyncClient", _review_client(calls, states))
+
+    result = await linear_client.move_issue_to_review("issue-1", ["https://pr/1"])
+
+    assert result == {"success": False, "reason": "no In Review state"}
+    assert not any("issueUpdate" in c["query"] for c in calls)
+
+
+async def test_a_failed_attachment_does_not_undo_the_state_move(monkeypatch):
+    calls = []
+    states = [{"id": "s2", "name": "In Review", "position": 2.0}]
+    monkeypatch.setattr(
+        linear_client.httpx,
+        "AsyncClient",
+        _review_client(calls, states, attach_success=False),
+    )
+
+    result = await linear_client.move_issue_to_review("issue-1", ["https://pr/1"])
+
+    assert result["success"] is True

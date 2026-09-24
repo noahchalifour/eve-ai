@@ -46,6 +46,26 @@ mutation IssueUpdate($id: String!, $stateId: String!) {
 }
 """
 
+# Through the issue rather than by team id: the coding-session row stores the
+# issue id but not the team, and one query here is cheaper than a migration.
+_ISSUE_TEAM_STARTED_STATES = """
+query IssueTeamStartedStatuses($issueId: String!) {
+  issue(id: $issueId) {
+    team {
+      states(filter: { type: { eq: "started" } }) {
+        nodes { id name position }
+      }
+    }
+  }
+}
+"""
+
+_ATTACH_URL = """
+mutation AttachmentLinkURL($issueId: String!, $url: String!) {
+  attachmentLinkURL(issueId: $issueId, url: $url) { success }
+}
+"""
+
 _ISSUE_UPDATE_DELEGATE = """
 mutation IssueSetDelegate($id: String!, $delegateId: String!) {
   issueUpdate(id: $id, input: { delegateId: $delegateId }) { success }
@@ -105,6 +125,34 @@ async def move_issue_to_started(issue_id: str, team_id: str) -> dict:
     updated = await _call(
         _ISSUE_UPDATE_STATE, {"id": issue_id, "stateId": target["id"]}
     )
+    return updated.get("issueUpdate") or {"success": False}
+
+
+async def move_issue_to_review(issue_id: str, pr_urls: list[str]) -> dict:
+    """The team has two `started` states (In Progress and In Review), so
+    position cannot pick one: match by name. A team without an In Review
+    state is a no-op for the same reason `move_issue_to_started` tolerates a
+    missing started state.
+
+    Attaching the PRs is best effort. The state move is what the board
+    reads; a PR that only appears in the activity text is still reachable."""
+    data = await _call(_ISSUE_TEAM_STARTED_STATES, {"issueId": issue_id})
+    team = (data.get("issue") or {}).get("team") or {}
+    nodes = (team.get("states") or {}).get("nodes") or []
+    target = next(
+        (n for n in nodes if (n.get("name") or "").strip().lower() == "in review"),
+        None,
+    )
+    if target is None:
+        return {"success": False, "reason": "no In Review state"}
+    updated = await _call(
+        _ISSUE_UPDATE_STATE, {"id": issue_id, "stateId": target["id"]}
+    )
+    for url in pr_urls:
+        try:
+            await _call(_ATTACH_URL, {"issueId": issue_id, "url": url})
+        except Exception:
+            logger.warning("could not attach %s to issue %s", url, issue_id, exc_info=True)
     return updated.get("issueUpdate") or {"success": False}
 
 

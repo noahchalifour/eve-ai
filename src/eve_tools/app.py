@@ -67,6 +67,9 @@ _HANDLERS = {
     "linear.move_issue_to_started": lambda a: linear_client.move_issue_to_started(
         a["issue_id"], a["team_id"]
     ),
+    "linear.move_issue_to_review": lambda a: linear_client.move_issue_to_review(
+        a["issue_id"], a.get("pr_urls") or []
+    ),
     "linear.set_delegate": lambda a: linear_client.set_delegate(
         a["issue_id"], a["actor_id"]
     ),

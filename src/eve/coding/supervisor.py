@@ -38,6 +38,7 @@ from eve.tools_client import (
     close_coding_session,
     close_review_session,
     get_coding_session,
+    invoke,
     kill_coding_session,
     prompt_coding_session,
 )
@@ -162,6 +163,32 @@ async def _emit_for(row: dict, content: dict) -> None:
     except Exception:
         logger.warning(
             "emitting to linear for session %s raised", row["id"], exc_info=True
+        )
+
+
+async def _move_to_review(row: dict, pr_urls: list[str]) -> None:
+    """A Linear-delegated session that opened a PR has handed the work to a
+    human reviewer, and the board should say so rather than leave the issue
+    in In Progress. Only called with at least one PR: a session that ended
+    with no changes has nothing to review, so the issue stays where it is and
+    the `response` activity is what tells the delegator why.
+
+    Never raises, for the same reason `_emit_for` does not: the session is
+    already resolved, and a board that lags is survivable."""
+    issue_id = row.get("linear_issue_id")
+    if not row.get("linear_session_id") or not issue_id:
+        return
+    try:
+        result = await invoke(
+            "linear.move_issue_to_review", {"issue_id": issue_id, "pr_urls": pr_urls}
+        )
+        if isinstance(result, str) and result.startswith("error:"):
+            logger.warning(
+                "moving issue %s to In Review failed: %s", issue_id, result
+            )
+    except Exception:
+        logger.warning(
+            "moving issue %s to In Review raised", issue_id, exc_info=True
         )
 
 
@@ -294,4 +321,8 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
             f"{decision.text} No changes, so there's no pull request."
         ),
     )
+    # No PR means no changes, so there is nothing to review: the issue keeps
+    # its state and the response above explains why.
+    if prs:
+        await _move_to_review(row, [pr["pr_url"] for pr in prs])
     return _resolved(row, "finished", result, now)

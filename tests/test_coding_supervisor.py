@@ -21,6 +21,7 @@ def _row(
     updated_at=None,
     linear_session_id=None,
     linear_emitted_at=None,
+    linear_issue_id=None,
 ):
     return {
         "id": session_id, "member_sub": "sub-noah", "thread_id": "t1",
@@ -31,6 +32,7 @@ def _row(
         "created_at": datetime.now(UTC),
         "linear_session_id": linear_session_id,
         "linear_emitted_at": linear_emitted_at,
+        "linear_issue_id": linear_issue_id,
     }
 
 
@@ -432,3 +434,86 @@ async def test_the_heartbeat_does_not_fire_before_the_threshold(emitted, monkeyp
     await supervisor._advance(row, now, _stale_after(), get_settings())
 
     assert emitted == []
+
+
+@pytest.fixture
+def invoked(monkeypatch):
+    calls = []
+
+    async def _invoke(tool, arguments, *a, **k):
+        calls.append((tool, arguments))
+        return "{}"
+
+    monkeypatch.setattr(supervisor, "invoke", _invoke)
+    return calls
+
+
+async def test_finishing_with_a_pr_moves_the_issue_to_in_review(
+    emitted, invoked, monkeypatch
+):
+    row = _row(
+        status="running", linear_session_id="lin_sess_1", linear_issue_id="issue-1"
+    )
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Fixed it.")
+    _patch_close(
+        monkeypatch,
+        {"prs": [
+            {"repo": "owner/a", "pr_url": "https://pr/1"},
+            {"repo": "owner/b", "commits": 0, "pr_url": ""},
+        ]},
+    )
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert invoked == [
+        (
+            "linear.move_issue_to_review",
+            {"issue_id": "issue-1", "pr_urls": ["https://pr/1"]},
+        )
+    ]
+
+
+async def test_finishing_with_no_pr_leaves_the_issue_state_alone(
+    emitted, invoked, monkeypatch
+):
+    row = _row(
+        status="running", linear_session_id="lin_sess_1", linear_issue_id="issue-1"
+    )
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Nothing to change.")
+    _patch_close(monkeypatch, {"prs": []})
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert invoked == []
+
+
+async def test_a_chat_dispatched_session_never_touches_linear_issues(
+    emitted, invoked, monkeypatch
+):
+    row = _row(status="running")
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Fixed it.")
+    _patch_close(monkeypatch, {"prs": [{"repo": "owner/a", "pr_url": "https://pr/1"}]})
+
+    await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert invoked == []
+
+
+async def test_a_failed_state_move_does_not_stop_the_session(emitted, monkeypatch):
+    monkeypatch.setattr(
+        supervisor, "invoke", AsyncMock(side_effect=RuntimeError("linear is down"))
+    )
+    row = _row(
+        status="running", linear_session_id="lin_sess_1", linear_issue_id="issue-1"
+    )
+    _patch_box(monkeypatch, {"status": "idle", "turns": [{"role": "agent", "text": "done"}]})
+    _patch_decision(monkeypatch, action="done", text="Fixed it.")
+    _patch_close(monkeypatch, {"prs": [{"repo": "owner/a", "pr_url": "https://pr/1"}]})
+
+    outcome = await supervisor._advance(row, _now(), _stale_after(), get_settings())
+
+    assert outcome["status"] == "finished"
+    assert ("lin_sess_1", "response") in emitted
