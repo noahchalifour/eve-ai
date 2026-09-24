@@ -175,6 +175,37 @@ async def test_publish_reports_a_failed_pr_without_losing_the_other_repos(tmp_pa
     assert "error" in results[0]
 
 
+async def test_publish_adopts_a_pr_the_agent_already_opened(tmp_path, monkeypatch):
+    """EVE-47: the agent pushed and ran `gh pr create` itself, so the box's
+    own `gh pr create` failed with "already exists" and the session reported
+    no pull request at all - Linear was told there were no changes, and the
+    issue never moved to In Review. The PR is real; report it."""
+    session_dir = tmp_path / "sessions" / "s1"
+    tree = await add_worktree("acme/repo", session_dir, "eve/fix-1")
+    (tree / "new.txt").write_text("x")
+    _run("git", "add", "new.txt", cwd=tree)
+    _run("git", "-c", "user.email=e@x", "-c", "user.name=E", "commit", "-m", "add new", cwd=tree)
+    bin_dir = tmp_path / "bin-exists"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1 $2" = "pr create" ]; then\n'
+        '  echo \'a pull request for branch "eve/fix-1" into branch "main" already exists:\' >&2\n'
+        '  echo "https://github.com/acme/repo/pull/7" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'if [ "$1 $2" = "pr view" ]; then echo "https://github.com/acme/repo/pull/7"; exit 0; fi\n'
+        "exit 1\n"
+    )
+    (bin_dir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    results = await publish(session_dir, ["acme/repo"], "eve/fix-1")
+
+    assert results[0]["pr_url"] == "https://github.com/acme/repo/pull/7"
+    assert "error" not in results[0]
+
+
 async def test_remove_worktrees_leaves_the_branch_behind(tmp_path):
     session_dir = tmp_path / "sessions" / "s1"
     tree = await add_worktree("acme/repo", session_dir, "eve/fix-1")

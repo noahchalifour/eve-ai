@@ -345,9 +345,19 @@ async def publish(session_dir: Path, repos: list[str], branch: str) -> list[dict
                 results.append(result)
                 continue
             await _run("git", "push", "-u", "origin", branch, cwd=tree)
-            result["pr_url"] = await _run(
-                "gh", "pr", "create", "--fill", "--head", branch, cwd=tree
-            ) or None
+            try:
+                result["pr_url"] = await _run(
+                    "gh", "pr", "create", "--fill", "--head", branch, cwd=tree
+                ) or None
+            except GitError as exc:
+                # The agent opened it itself despite the hint (EVE-47). The
+                # PR is real; reporting none would tell the member there
+                # were no changes and leave the Linear issue in progress.
+                if "already exists" not in str(exc):
+                    raise
+                result["pr_url"] = await _run(
+                    "gh", "pr", "view", branch, "--json", "url", "--jq", ".url", cwd=tree
+                ) or None
         except (GitError, FileNotFoundError, ValueError) as exc:
             logger.warning("publishing %s failed", repo, exc_info=True)
             result["error"] = f"{exc.__class__.__name__}: {exc}"

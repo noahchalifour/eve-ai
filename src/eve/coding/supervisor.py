@@ -71,6 +71,8 @@ Decide one of three things:
 - done: the work is finished. Say so.
 - escalate: it needs a decision only the family member can make - a credential, a product choice, a preference you have never been told.
 
+Choosing done is what pushes the branch and opens the pull request; the agent has been told not to. Once the work is committed, choose done. Never ask it to push or open a pull request.
+
 Prefer reply. Escalating a question you could have answered wastes the delegation. Claiming done when the work is unfinished is worse than either."""
 
 
@@ -325,13 +327,20 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
     await store.mark_resolved(row["id"], "finished", result)
     prs = [pr for pr in result.get("prs", []) if pr.get("pr_url")]
     links = "; ".join(f"{pr['repo']}: {pr['pr_url']}" for pr in prs)
-    await _emit_for(
-        row,
-        activities.response(
-            f"{decision.text} Pull requests: {links}" if links else
-            f"{decision.text} No changes, so there's no pull request."
-        ),
+    # A repo that errored while publishing is not a repo with no changes
+    # (EVE-47): say what failed rather than claim there was nothing to do.
+    failures = "; ".join(
+        f"{pr['repo']}: {pr['error']}" for pr in result.get("prs", []) if pr.get("error")
     )
+    if links:
+        body = f"{decision.text} Pull requests: {links}"
+    elif failures:
+        body = f"{decision.text} Opening the pull request failed: {failures}"
+    else:
+        body = f"{decision.text} No changes, so there's no pull request."
+    if links and failures:
+        body += f" Failed: {failures}"
+    await _emit_for(row, activities.response(body))
     # No PR means no changes, so there is nothing to review: the issue keeps
     # its state and the response above explains why.
     if prs:
