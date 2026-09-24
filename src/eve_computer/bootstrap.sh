@@ -7,7 +7,8 @@ set -eu
 
 PACKAGES_FILE="/home/eve/.eve/packages.txt"
 mkdir -p /home/eve/.eve /home/eve/tasks /home/eve/sessions /home/eve/code \
-         /home/eve/.codex /home/eve/.config/opencode /home/eve/.dsh
+         /home/eve/.codex /home/eve/.config/opencode /home/eve/.dsh \
+         /home/eve/.agents/skills /home/eve/.claude/skills
 
 # The package replay is best-effort, not a precondition for the desktop
 # starting: a typo'd package name in packages.txt or a transient apt mirror
@@ -60,6 +61,15 @@ export LITELLM_API_KEY="${EVE_COMPUTER_LITELLM_API_KEY:-}"
 # unreachable must cost Eve her preferences, not her desktop.
 if ! python -c "from eve_computer.acp import harness; harness.prepare()"; then
     echo "bootstrap.sh: preparing the dsh harness home failed; sessions on that agent will not start" >&2
+fi
+
+# Noah's agent-skills, for every coding agent (EVE-45). Pulled here rather
+# than baked into the image: the repository is private to Eve's own `gh`
+# login on the PVC, and skills change more often than Eve ships. Linked
+# into ~/.agents/skills and ~/.claude/skills, which between them cover all
+# four agents. Best-effort: a failed pull keeps the last good copy.
+if ! python -c "from eve_computer.acp import skills; skills.sync()"; then
+    echo "bootstrap.sh: syncing agent-skills failed; sessions start without them" >&2
 fi
 
 # 1024x768, not 1920x1080: Anthropic's vision API downscales any screenshot

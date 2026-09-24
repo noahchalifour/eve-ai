@@ -51,6 +51,19 @@ class ComputerSettings(BaseSettings):
     dsh_profile_repo: str = ""
     dsh_profile_branch: str = "main"
 
+    # EVE-45. Noah's skills, for every ACP coding session regardless of
+    # agent. Named by default because the issue names it; empty disables.
+    # Cloned onto the PVC so a failed fetch still leaves the last good copy.
+    agent_skills_repo: str = "https://github.com/noahchalifour/agent-skills.git"
+    agent_skills_branch: str = "main"
+    agent_skills_dir: str = "/home/eve/.eve/agent-skills"
+    # dsh and Codex read ~/.agents/skills, Claude Code ~/.claude/skills,
+    # OpenCode both - two directories cover all four agents.
+    agent_skills_link_dirs: tuple[str, ...] = (
+        "/home/eve/.agents/skills",
+        "/home/eve/.claude/skills",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_computer_settings() -> ComputerSettings:
