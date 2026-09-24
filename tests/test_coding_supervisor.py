@@ -280,8 +280,9 @@ async def test_decide_asks_tier_code_and_gets_a_structured_answer(monkeypatch):
     captured = {}
 
     class FakeModel:
-        def with_structured_output(self, schema):
+        def with_structured_output(self, schema, **kwargs):
             captured["schema"] = schema
+            captured["kwargs"] = kwargs
             return self
 
         async def ainvoke(self, messages):
@@ -302,6 +303,11 @@ async def test_decide_asks_tier_code_and_gets_a_structured_answer(monkeypatch):
 
     assert captured["tier"] is Tier.CODE
     assert captured["schema"] is Decision
+    # Tier.CODE is a chatgpt/* Responses-API model. Through the LiteLLM proxy
+    # the default json_schema method returns bare text with no `parsed`
+    # field, so every decision raised and no session ever closed (live,
+    # EVE-38). Same fix as eval/scorers.py.
+    assert captured["kwargs"].get("method") == "function_calling"
     assert decision.action == "done"
     # The recall snapshot and the goal both reach the model.
     prompt = str(captured["messages"])

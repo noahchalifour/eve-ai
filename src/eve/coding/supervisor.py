@@ -113,7 +113,13 @@ async def decide(row: dict, turns: list[dict], pending: list[str]) -> Decision:
         f"New turns from the agent:\n{transcript}"
         f"{interjections}"
     )
-    model = get_model(Tier.CODE).with_structured_output(Decision)
+    # function_calling, not the default json_schema: Tier.CODE is a chatgpt/*
+    # Responses-API model, and through the LiteLLM proxy json_schema comes
+    # back as bare text with no `parsed` field, so every decision raised and
+    # no session ever closed. Same finding as eval/scorers.py.
+    model = get_model(Tier.CODE).with_structured_output(
+        Decision, method="function_calling"
+    )
     return await model.ainvoke([HumanMessage(content=prompt)])
 
 
