@@ -328,3 +328,45 @@ async def test_creating_a_session_waits_for_the_clones(monkeypatch):
     seen.clear()
     assert await tools_client.create_review_session("s", "a", "m", "o/r", 1, "main", "p") == "ok"
     assert seen["timeout"] >= 120.0
+
+
+@respx.mock
+async def test_get_coding_session_reports_a_session_the_box_does_not_know_as_lost():
+    """EVE-44: sessions live in eve-computer's memory, so a restart makes
+    the box answer 404 for every session it had. That is a definite answer,
+    not an outage, and the supervisor needs to tell the two apart."""
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    respx.get("http://eve-computer:8092/sessions/s1").mock(
+        return_value=HTTPXResponse(404, json={"detail": "unknown session"})
+    )
+
+    assert await tools_client.get_coding_session("s1") == {"status": "lost"}
+
+
+@respx.mock
+async def test_a_404_that_is_not_the_boxs_own_answer_is_still_unreachable():
+    """A 404 from something in front of the box (a wrong base URL, an
+    ingress with no route) must not fail every live session at once."""
+    from httpx import Response as HTTPXResponse
+
+    from eve import tools_client
+
+    respx.get("http://eve-computer:8092/sessions/s1").mock(
+        return_value=HTTPXResponse(404, text="404 page not found")
+    )
+
+    assert await tools_client.get_coding_session("s1") is None
+
+
+@respx.mock
+async def test_get_coding_session_returns_none_on_a_connection_error():
+    import httpx
+
+    from eve import tools_client
+
+    respx.get("http://eve-computer:8092/sessions/s1").mock(side_effect=httpx.ConnectError)
+
+    assert await tools_client.get_coding_session("s1") is None

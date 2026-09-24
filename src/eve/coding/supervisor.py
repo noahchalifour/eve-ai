@@ -233,6 +233,14 @@ async def _advance(row: dict, now, stale_after, settings) -> dict | None:
         return None
 
     status = box.get("status")
+    if status == "lost":
+        # EVE-44: the box restarted and dropped its in-memory sessions. The
+        # worktree may survive on the volume, but nothing is left to drive
+        # it, so say so now instead of waiting out the stale timeout.
+        result = {"error": "eve-computer restarted; the session was lost"}
+        await store.mark_resolved(row["id"], "failed", result)
+        await _emit_for(row, activities.error(result["error"]))
+        return _resolved(row, "failed", result, now)
     if status == "failed":
         result = {"error": box.get("error") or "the session failed"}
         await store.mark_resolved(row["id"], "failed", result)

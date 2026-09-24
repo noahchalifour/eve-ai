@@ -152,10 +152,41 @@ async def create_coding_session(
     return "ok" if body is not None else "error: eve-computer unavailable"
 
 
+# EVE-44: eve-computer holds sessions in memory, so after a restart it
+# answers 404 "unknown session" for every one it had. That is a definite
+# answer, unlike an outage, and it means the session is gone for good. Only
+# the box's own detail counts: a bare 404 from an ingress or a wrong base URL
+# must stay "unreachable", or one misconfiguration would fail every session.
+LOST = {"status": "lost"}
+
+
 async def get_coding_session(session_id: str, since: int = 0) -> dict | None:
-    return await _session_request(
-        "GET", f"/sessions/{session_id}", params={"since": since}
-    )
+    """The box's snapshot, `LOST` when the box says it has never heard of
+    the session, or `None` when the box could not be asked."""
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{settings.computer_base_url}/sessions/{session_id}",
+                params={"since": since},
+                headers={"Authorization": f"Bearer {settings.computer_api_key}"},
+            )
+            if response.status_code == 404 and _is_unknown_session(response):
+                return dict(LOST)
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        logger.warning(
+            "eve-computer session call GET /sessions/%s failed", session_id, exc_info=True
+        )
+        return None
+
+
+def _is_unknown_session(response: httpx.Response) -> bool:
+    try:
+        return response.json().get("detail") == "unknown session"
+    except Exception:
+        return False
 
 
 async def prompt_coding_session(session_id: str, text: str, kind: str = "reply") -> str:
