@@ -69,8 +69,14 @@ async def run_task(task_id: str, goal: str) -> dict:
     workdir = Path(settings.tasks_dir) / task_id
     (workdir / "out").mkdir(parents=True, exist_ok=True)
 
+    # OPENA-22: every model Claude Code might reach for - the main loop and
+    # its background "small fast" calls - is pinned to one the LiteLLM key
+    # may call. Its own default is not on that list, and a 401 there is
+    # retried silently until the wall-clock timeout, not surfaced.
+    model = settings.model
     options = ClaudeAgentOptions(
         cwd=str(workdir),
+        model=model,
         max_turns=settings.max_turns,
         system_prompt=_SYSTEM_PROMPT,
         mcp_servers={"computer-use": computer_use_server},
@@ -78,6 +84,11 @@ async def run_task(task_id: str, goal: str) -> dict:
         env={
             "ANTHROPIC_BASE_URL": settings.litellm_base_url,
             "ANTHROPIC_API_KEY": settings.litellm_api_key,
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_SMALL_FAST_MODEL": model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
         },
     )
 
