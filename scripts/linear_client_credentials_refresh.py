@@ -5,12 +5,12 @@ store it where eve-tools reads it.
 
 A client_credentials token has no refresh token and is valid 30 days
 (design doc: docs/superpowers/specs/2026-09-21-eve-linear-agent-design.md).
-There is nothing to rotate automatically - re-run this before the token
-expires, or eve-tools starts logging "the Linear API token is not
-configured" (a missing token) or every emission failing with a 401 (an
-expired one, since `linear_client.py` has no 401-retry of its own). A cron
-entry or calendar reminder every ~25 days is the operator's job; this script
-is the mechanism, not the schedule.
+When eve-tools also has `linear_client_id` and `linear_client_secret`,
+`linear_client.py` mints a fresh token in-process on a 401 and retries once
+(EVE-41), so an expired token here no longer breaks emission. Without them,
+re-run this before the token expires, or every emission fails with a 401.
+Either way this script is what keeps the stored token current, so a restart
+does not start from an expired one.
 
 Reads `linear_client_id` and `linear_client_secret` from
 kv/credentials/eve-tools (the OAuth application's own credentials, from
