@@ -72,8 +72,8 @@ def spy(monkeypatch):
     async def _store_create(**kwargs):
         calls.append(("row", kwargs.get("linear_session_id")))
 
-    async def _thread():
-        calls.append(("thread", None))
+    async def _thread(member_sub):
+        calls.append(("thread", member_sub))
         return "thread-1"
 
     async def _move(issue_id, team_id):
@@ -248,7 +248,7 @@ async def test_a_thread_creation_failure_degrades_to_none_rather_than_raising(
 
     monkeypatch.setattr("langgraph_sdk.get_client", lambda **kwargs: _RaisingClient())
 
-    result = await handler._create_thread()
+    result = await handler._create_thread("sub-noah")
     assert result is None
 
 
@@ -311,3 +311,34 @@ def test_guidance_survives_every_shape_linear_might_send():
         assert isinstance(event.guidance, str)
         if expected:
             assert expected in event.guidance
+
+
+async def test_thread_creation_acts_on_behalf_of_the_member(monkeypatch):
+    """The ambient token is refused without `x-eve-on-behalf-of`, and the
+    thread has to belong to the member anyway so they can talk in it. The
+    first live delegation failed exactly here: 'the ambient token requires
+    an x-eve-on-behalf-of header'."""
+    seen: dict = {}
+
+    class _Client:
+        class threads:
+            @staticmethod
+            async def create(metadata):
+                return {"thread_id": "t-1"}
+
+    def _get_client(**kwargs):
+        seen.update(kwargs.get("headers") or {})
+        return _Client()
+
+    monkeypatch.setattr("langgraph_sdk.get_client", _get_client)
+
+    result = await handler._create_thread("sub-noah")
+    assert result == "t-1"
+    assert seen.get("x-eve-on-behalf-of") == "sub-noah"
+    assert seen.get("Authorization", "").startswith("Bearer ")
+
+
+async def test_the_handler_opens_the_thread_as_the_resolved_member(spy):
+    await handler.handle_created(_event())
+    threads = [c for c in spy if c[0] == "thread"]
+    assert threads and threads[0][1]

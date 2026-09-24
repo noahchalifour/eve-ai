@@ -100,11 +100,16 @@ def parse_event(payload: dict) -> LinearEvent:
     )
 
 
-async def _create_thread() -> str | None:
+async def _create_thread(member_sub: str) -> str | None:
     """A Linear session gets an Aegra thread too, so the family still gets
     the push notification and a thread to talk in when it resolves. Isolated
     into its own function so the handler's tests can replace it without an
     Aegra client.
+
+    The ambient token only authenticates alongside `x-eve-on-behalf-of`
+    (see `eve.auth`), which is also what makes the thread the delegating
+    member's rather than nobody's - the same pairing `eve_ambient.notify`
+    uses.
 
     Degrades to None on failure rather than raising: `handle_created` already
     treats a None thread_id as a failure to emit as an `error` activity, and
@@ -117,7 +122,10 @@ async def _create_thread() -> str | None:
     settings = get_settings()
     client = get_client(
         url=settings.ambient_aegra_base_url,
-        headers={"Authorization": f"Bearer {settings.ambient_token}"},
+        headers={
+            "Authorization": f"Bearer {settings.ambient_token}",
+            "x-eve-on-behalf-of": member_sub,
+        },
     )
     try:
         thread = await client.threads.create(metadata={"linear": True})
@@ -160,7 +168,7 @@ async def handle_created(event: LinearEvent) -> str:
     )
 
     context = await _recall_context(goal, member.sub)
-    thread_id = await _create_thread()
+    thread_id = await _create_thread(member.sub)
     if not thread_id:
         await activities.emit(
             event.session_id,
