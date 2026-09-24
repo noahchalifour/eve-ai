@@ -41,10 +41,43 @@ logger = logging.getLogger(__name__)
 _ASSISTANT = "eve"
 
 
+def _guidance_text(raw: object) -> str:
+    """Linear sends `guidance` as a list of `{origin, body}` objects, one per
+    scope (workspace, parent team, team), not as a string.
+
+    `resolve_repos` runs a regex over this, and a regex over a list raises
+    TypeError inside the webhook's background task - which surfaces as a
+    session that emits nothing at all and goes stale, the least diagnosable
+    failure this path has. Every shape therefore has to come out as text:
+    a bare string passes through, a list contributes each entry's `body`,
+    and anything unrecognised contributes nothing rather than raising.
+    """
+    if isinstance(raw, str):
+        return raw
+    if not isinstance(raw, list):
+        return ""
+    parts: list[str] = []
+    for entry in raw:
+        if isinstance(entry, str):
+            parts.append(entry)
+        elif isinstance(entry, dict):
+            body = entry.get("body")
+            if isinstance(body, str):
+                parts.append(body)
+    return "\n".join(parts)
+
+
 def parse_event(payload: dict) -> LinearEvent:
     """Total over every payload shape Linear sends. Absent nesting becomes
     None rather than a KeyError, because a mention in a document is a real
-    event this feature refuses rather than crashes on."""
+    event this feature refuses rather than crashes on.
+
+    `guidance` and `promptContext` are TOP-LEVEL on the AgentSessionEvent
+    payload, not inside `agentSession` - verified against a live delivery.
+    Reading them from the session left both silently empty, so every
+    delegation refused for want of a repo and every goal arrived blank. The
+    session is still checked as a fallback in case Linear moves them.
+    """
     session = payload.get("agentSession") or {}
     issue = session.get("issue") or {}
     team = issue.get("team") or {}
@@ -57,9 +90,13 @@ def parse_event(payload: dict) -> LinearEvent:
         issue_id=issue.get("id"),
         team_id=team.get("id"),
         actor_id=creator.get("id"),
-        guidance=session.get("guidance") or "",
+        guidance=_guidance_text(
+            payload.get("guidance") or session.get("guidance")
+        ),
         prompt_body=content.get("body") or "",
-        prompt_context=session.get("promptContext") or "",
+        prompt_context=(
+            payload.get("promptContext") or session.get("promptContext") or ""
+        ),
     )
 
 

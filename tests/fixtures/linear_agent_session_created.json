@@ -1,0 +1,37 @@
+{
+  "action": "created",
+  "type": "AgentSessionEvent",
+  "createdAt": "2026-09-23T23:45:58.149Z",
+  "organizationId": "org-redacted",
+  "oauthClientId": "client-redacted",
+  "webhookId": "webhook-redacted",
+  "webhookTimestamp": 1790207158173,
+  "appUserId": "e14b59d7-1dd6-4078-b0cc-16662005489d",
+  "guidance": [
+    {
+      "origin": {
+        "type": "Team",
+        "team": {
+          "id": "team-1",
+          "key": "EVE",
+          "name": "Eve AI"
+        }
+      },
+      "body": "When making changes use the owner/client-app GitHub repository for client changes and owner/repo GitHub repository for backend changes"
+    }
+  ],
+  "promptContext": "<issue identifier=\"EVE-1\">\n<title>Test</title>\n</issue>",
+  "agentSession": {
+    "id": "lin_sess_real",
+    "creator": {
+      "id": "lin_noah"
+    },
+    "issue": {
+      "id": "lin_issue_1",
+      "team": {
+        "id": "lin_team_1"
+      }
+    },
+    "status": "pending"
+  }
+}
