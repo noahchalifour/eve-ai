@@ -1221,6 +1221,9 @@ Linear's own staleness clock, since the underlying state is fully
 recoverable and a later activity un-stales it, so the heartbeat exists to avoid
 inviting a human to intervene in work that is, in fact, still going fine.
 
+The webhook reaches the cluster through a path-scoped Ingress at
+`eve-ambient.chalifour.dev`.
+
 ## Tool labels
 
 The client renders agent work as a one-line ticker above the answer, naming
