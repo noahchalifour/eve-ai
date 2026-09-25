@@ -60,6 +60,17 @@ def supports(
     return set(catalog_ids).issubset(ids)
 
 
+def catalog_versions(config: RunnableConfig | None) -> frozenset[str]:
+    """Which surface catalog versions the connected client renders (EVE-21,
+    spec 4.2). A client from before versioning sends nothing and means "1".
+    Unknown versions are dropped: advertising "9" must not make this server
+    stamp something it cannot validate."""
+    declared = ((config or {}).get("configurable") or {}).get("catalog_versions")
+    known = set(protocol.CATALOG_VERSIONS)
+    advertised = set(declared) & known if isinstance(declared, list) else set()
+    return frozenset(advertised | {protocol.CATALOG_VERSION})
+
+
 def emit(operation: dict) -> bool:
     """Validate, then write one operation to the `custom` stream.
 

@@ -274,3 +274,46 @@ async def test_an_invented_component_names_the_catalog_not_the_client(written):
     # on properties and the missing `id`, one round trip later. The message
     # now carries both, so one correction is enough.
     assert "`id`" in result.content
+
+
+IMAGE_CLIENT = {
+    "configurable": {
+        **CONFIG["configurable"],
+        "assistant_ui": {**CONFIG["configurable"]["assistant_ui"],
+                         "catalogIds": [*CONFIG["configurable"]["assistant_ui"]["catalogIds"], "image"]},
+        "catalog_versions": ["1", "2"],
+        "thread_id": "t1",
+        "member": {"sub": "sub-noah"},
+    }
+}
+PHOTO = [{"id": "c", "type": "card", "properties": {"title": "Today"}, "children": [
+    {"id": "i", "type": "image", "properties": {"imageId": "3f2a9c01", "alt": "navy blazer"}}]}]
+
+
+async def test_an_image_surface_is_emitted_at_version_2(written, monkeypatch):
+    from tests.test_ui_surface import FULL, _row
+
+    async def fake_resolve(ref, member_sub, thread_id, *, now=None):
+        return _row()
+
+    monkeypatch.setattr("eve.ui.surface.store.resolve", fake_resolve)
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": PHOTO}, "id": "t-img"},
+        config=IMAGE_CLIENT,
+    )
+    operation = result.artifact
+    assert operation["surface"]["catalogVersion"] == "2"
+    assert operation["surface"]["components"][0]["children"][0]["properties"]["imageId"] == FULL
+    assert written[0]["assistant_ui"] == operation
+
+
+async def test_an_old_client_gets_the_same_surface_as_text_at_version_1(written):
+    old = {"configurable": {**CONFIG["configurable"], "thread_id": "t1",
+                            "member": {"sub": "sub-noah"}}}
+    result = await tools.show_surface.ainvoke(
+        {"type": "tool_call", "name": "show_surface", "args": {"components": PHOTO}, "id": "t-old"},
+        config=old,
+    )
+    operation = result.artifact
+    assert operation["surface"]["catalogVersion"] == "1"
+    assert operation["surface"]["components"][0]["children"][0]["type"] == "text"

@@ -15,9 +15,15 @@ emission, `eve.ui.tools` owns the tool.
 
 from __future__ import annotations
 
+import copy
+import logging
 import uuid
 
-from eve.ui import protocol
+from eve.context import principal_sub
+from eve.images import store
+from eve.ui import protocol, stream
+
+logger = logging.getLogger(__name__)
 
 ROOT_CATALOG_ID = "column"
 
@@ -29,7 +35,9 @@ def new_surface_id() -> str:
     return f"sf-{uuid.uuid4().hex[:8]}"
 
 
-def build_create(surface_id: str, components: list) -> dict:
+def build_create(
+    surface_id: str, components: list, *, catalog_version: str = protocol.CATALOG_VERSION
+) -> dict:
     """The `create` operation for one model-authored surface.
 
     `data` is empty and `localState` is unseeded, deliberately. Nothing
@@ -38,6 +46,11 @@ def build_create(surface_id: str, components: list) -> dict:
     WHOLE-surface fallback rather than a partial tree. `localState` is the
     client's own presentation memory, restored from its cache on reopen; a
     value here would fight that restore for it.
+
+    `catalog_version` defaults to the V1 baseline so every caller that
+    predates `image` (EVE-21) keeps stamping exactly what it always did;
+    `eve.ui.tools._show_surface` is the one caller that passes "2", and only
+    when `prepare_images` actually found one.
     """
     return {
         "protocol": protocol.PROTOCOL,
@@ -45,7 +58,7 @@ def build_create(surface_id: str, components: list) -> dict:
         "surface": {
             "surfaceId": surface_id,
             "catalogId": ROOT_CATALOG_ID,
-            "catalogVersion": protocol.CATALOG_VERSION,
+            "catalogVersion": catalog_version,
             "components": components,
             "data": {},
             "localState": {},
@@ -80,3 +93,68 @@ def component_types(components: object) -> set[str]:
         if isinstance(children, list):
             stack.extend(children)
     return found
+
+
+def aspect_of(width: int, height: int) -> str:
+    """Bucket a stored image's real dimensions into one of the protocol's
+    three aspect words, so the client can reserve layout space before the
+    bytes themselves arrive. `>1.2`/`<1/1.2` gives a small dead zone around
+    1:1 that both directions round down to `square`, rather than a coin-flip
+    at exactly `ratio == 1`."""
+    ratio = width / height if height else 1.0
+    if ratio > 1.2:
+        return "landscape"
+    if ratio < 1 / 1.2:
+        return "portrait"
+    return "square"
+
+
+def _as_text(node: dict, alt: str) -> dict:
+    return {"id": node["id"], "type": "text", "properties": {"text": alt}}
+
+
+async def prepare_images(components: list, config) -> tuple[list, bool]:
+    """Fit every `image` in a model-authored tree to this client and this
+    member BEFORE validation (spec 4.1, 4.2).
+
+    Server-side provenance: the client drops an unfetchable image silently,
+    so an id this member was never shown in this thread is caught here,
+    logged, and shown as its alt text - which is the reason protocol.py
+    exists at all. And server-side downgrade: an older phone gets a readable
+    text line instead of a dropped surface.
+    """
+    if "image" not in component_types(components):
+        return components, False
+    tree = copy.deepcopy(components)
+    can_render = protocol.IMAGE_VERSION in stream.catalog_versions(config)
+    member_sub = principal_sub(config)
+    thread_id = ((config or {}).get("configurable") or {}).get("thread_id")
+    shown = False
+
+    async def visit(nodes: list) -> None:
+        nonlocal shown
+        for index, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                continue
+            props = node.get("properties")
+            if node.get("type") == "image" and isinstance(props, dict) and isinstance(props.get("alt"), str):
+                if not can_render:
+                    nodes[index] = _as_text(node, props["alt"])
+                    continue
+                row = await store.resolve(str(props.get("imageId", "")), member_sub, thread_id) if member_sub else None
+                if row is None:
+                    logger.warning(
+                        "image %s did not resolve for this member and thread; shown as text",
+                        props.get("imageId"),
+                    )
+                    nodes[index] = _as_text(node, props["alt"])
+                    continue
+                props["imageId"] = row.id
+                props.setdefault("aspect", aspect_of(row.width, row.height))
+                shown = True
+            children = node.get("children")
+            if isinstance(children, list):
+                await visit(children)
+
+    await visit(tree)
+    return tree, shown
