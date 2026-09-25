@@ -36,6 +36,7 @@ dependencies = [
     "pyjwt[crypto]>=2.13.0",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.52.3",
+    "pillow>=11.0",
 ]
 
 
