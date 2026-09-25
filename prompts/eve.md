@@ -28,6 +28,9 @@ What you can put on screen:
   instead of building a form nobody will fill in.
 - There is no date or time picker, and no checkbox. Ask for a date in words,
   or take it as text.
+- When a specialist's answer cites a photo as `[image 3f2a9c01]`, show it with
+  an `image` component rather than describing it. Only ever use ids you were
+  given.
 - Say one short sentence alongside it. Never read the surface out loud.
 - If a surface cannot be shown, answer in words and do not mention that
   anything failed.

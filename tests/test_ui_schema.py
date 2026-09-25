@@ -128,3 +128,12 @@ def test_openai_structured_output_uses_anyof_never_oneof(full):
     blob = json.dumps(full)
     assert "oneOf" not in blob
     assert "anyOf" in blob
+
+
+def test_the_image_branch_says_what_the_validator_enforces(full):
+    image = _branches(full)["image"]
+    assert image["required"] == ["alt", "imageId"]
+    assert set(image["properties"]["aspect"]["enum"]) == set(protocol.IMAGE_ASPECTS)
+    # The short form is accepted from the model and rewritten to the full id
+    # by eve.ui.surface.prepare_images before validation.
+    assert "[image" in image["properties"]["imageId"]["description"]

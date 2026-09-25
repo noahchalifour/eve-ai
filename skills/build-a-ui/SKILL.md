@@ -50,6 +50,7 @@ Every component needs a unique `id` and a `type`. Layout components take
 - `numberField`: label, stateKey
 - `button`: actionId, actionValue, label, setState
 - `segmentedSelection`: actionId, actionValue, options, selected
+- `image`: alt, aspect, imageId
 
 `grid.columns` is 1-6. `expandable.expanded` is a boolean. A `button` must
 have exactly one of `actionId` or `setState` - both is two meanings for one
@@ -59,6 +60,12 @@ tap, neither is a control that silently ignores them. The only `actionId` is
 `chart.points` must be a `$data.` binding to a list of `{label, value}`
 objects, never a literal list: the series belongs in the surface's data, not
 in its component tree.
+
+`image` shows a photo you were given an id for - one a specialist cited as
+`[image 3f2a9c01]`, or one the member sent. Use that id as `imageId`; never
+make one up, and never put a web address anywhere. `alt` says what it shows.
+`aspect` is optional (`square`, `portrait`, `landscape`) and filled in for you
+when omitted. Images only work in chat, not in saved widgets.
 
 ## A worked example
 
