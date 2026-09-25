@@ -209,3 +209,13 @@ def test_linear_is_off_by_default(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
     assert Settings().linear_enabled is False
+
+
+def test_image_settings_default_to_the_spec(monkeypatch):
+    from eve.settings import Settings
+
+    s = Settings()
+    assert s.image_retention_days == 30
+    assert s.image_cache_days == 1
+    assert s.image_hydrate_turns == 2
+    assert s.image_max_upload_bytes == 15 * 1024 * 1024
