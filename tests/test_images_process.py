@@ -62,3 +62,15 @@ def test_png_with_alpha_is_flattened_not_rejected():
 def test_non_images_raise_value_error():
     with pytest.raises(ValueError):
         normalise(b"%PDF-1.7 not an image")
+
+
+def test_a_declared_pixel_count_over_the_bomb_threshold_raises_value_error(monkeypatch):
+    # DecompressionBombError is a bare Exception subclass, not OSError - it
+    # must be caught and turned into the same ValueError as any other
+    # undecodable image, or it escapes normalise()'s "never raise anything
+    # but ValueError" contract. Lowering the threshold trips Pillow's own
+    # safety check on an ordinary tiny image instead of allocating a real
+    # ~89-megapixel one.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
+    with pytest.raises(ValueError):
+        normalise(_jpeg(640, 480))

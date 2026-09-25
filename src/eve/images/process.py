@@ -31,7 +31,12 @@ def normalise(raw: bytes) -> Normalised:
     try:
         image = Image.open(io.BytesIO(raw))
         image.load()
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        # DecompressionBombError is a bare Exception subclass (not OSError):
+        # a tiny file can still declare an enormous pixel count, and both
+        # callers (the upload route's 15MB byte cap doesn't bound pixels, and
+        # from_immich) rely on normalise() never raising anything but a clean
+        # ValueError.
         raise ValueError("not a decodable image") from exc
 
     image = ImageOps.exif_transpose(image)
