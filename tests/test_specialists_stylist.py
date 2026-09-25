@@ -227,3 +227,8 @@ async def test_the_stylist_reads_the_wardrobe_through_its_loop(monkeypatch):
     )
 
     assert "navy wool blazer" in result
+
+
+def test_the_stylist_accepts_images():
+    schema = stylist_module.ask_stylist.tool_call_schema.model_json_schema()
+    assert "image_ids" in schema["properties"]

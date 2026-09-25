@@ -147,4 +147,5 @@ ask_stylist = build_specialist(
     system_prompt=SYSTEM_PROMPT,
     permission="wardrobe",
     model_factory=lambda _tier: _model_for_test(),
+    accepts_images=True,
 )

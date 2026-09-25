@@ -216,3 +216,118 @@ async def test_exhausting_the_inner_loop_answers_a_sentence_not_a_traceback():
     assert "GraphRecursionError" not in result
     assert "recursion" not in result.lower()
     assert "home" in result
+
+
+import json
+
+SNAPSHOT = {
+    "description": "Ask the widgets specialist to handle a request in its domain.",
+    "properties": {"request": {"title": "Request", "type": "string"}},
+    "required": ["request"],
+    "title": "ask_widgets",
+    "type": "object",
+}
+
+
+def test_the_default_schema_is_unchanged():
+    specialist = build_specialist(
+        name="widgets", tools=[get_widget], system_prompt="x",
+        permission="home.control", model_factory=lambda _t: None,
+    )
+    assert json.loads(json.dumps(specialist.tool_call_schema.model_json_schema())) == SNAPSHOT
+
+
+def test_accepts_images_adds_an_optional_image_ids_list():
+    specialist = build_specialist(
+        name="widgets", tools=[get_widget], system_prompt="x",
+        permission="home.control", model_factory=lambda _t: None, accepts_images=True,
+    )
+    schema = specialist.tool_call_schema.model_json_schema()
+    assert "image_ids" in schema["properties"]
+    assert schema["required"] == ["request"]
+
+
+async def test_image_ids_become_references_on_the_inner_request(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from eve.images.store import ImageRow
+
+    full = "aaaaaaaa-0000-4000-8000-000000000001"
+    captured = {}
+
+    class _Agent:
+        async def ainvoke(self, payload, config):
+            captured["payload"] = payload
+            captured["config"] = config
+            return {"messages": [AIMessage(content="done")]}
+
+    def fake_create_agent(model, tools, system_prompt, middleware=()):
+        captured["middleware"] = middleware
+        return _Agent()
+
+    async def fake_resolve(ref, member_sub, thread_id, *, now=None):
+        now = datetime.now(UTC)
+        if ref == "aaaaaaaa":
+            return ImageRow(full, member_sub, thread_id, "upload", None, "image/jpeg",
+                            b"", 1, 1, None, now, now + timedelta(days=1))
+        return None
+
+    monkeypatch.setattr("eve.specialists.base.create_agent", fake_create_agent)
+    monkeypatch.setattr("eve.specialists.base.image_store.resolve", fake_resolve)
+    specialist = build_specialist(
+        name="widgets", tools=[get_widget], system_prompt="x",
+        permission="home.control", model_factory=lambda _t: None, accepts_images=True,
+    )
+    config = {"configurable": {"thread_id": "t1"}}
+    await specialist.coroutine("does this match?", STATE, config, image_ids=["aaaaaaaa", "zzzzzzzz"])
+
+    content = captured["payload"]["messages"][0].content
+    assert content == [
+        {"type": "text", "text": "does this match?"},
+        {"type": "eve_image", "image_id": full, "alt": "image aaaaaaaa"},
+    ]
+    assert len(captured["middleware"]) == 1
+
+
+async def test_the_default_specialist_gets_no_middleware(monkeypatch):
+    captured = {}
+
+    def fake_create_agent(model, tools, system_prompt, middleware=()):
+        captured["middleware"] = middleware
+        return _AGENT_STUB
+
+    monkeypatch.setattr("eve.specialists.base.create_agent", fake_create_agent)
+    specialist = build_specialist(
+        name="widgets", tools=[get_widget], system_prompt="x",
+        permission="home.control", model_factory=lambda _t: None,
+    )
+    await specialist.coroutine("hi", STATE, CONFIG)
+    assert tuple(captured["middleware"]) == ()
+
+
+async def test_the_image_middleware_hydrates_the_inner_model_call(monkeypatch):
+    from eve.specialists import base
+
+    seen = {}
+
+    async def fake_hydrate(messages, member_sub, *, native, window=None):
+        seen.update(member_sub=member_sub, native=native)
+        return ["hydrated"]
+
+    class _Request:
+        messages = ["raw"]
+
+        def override(self, **kw):
+            seen["override"] = kw
+            return self
+
+    async def handler(request):
+        return "response"
+
+    monkeypatch.setattr(base, "hydrate", fake_hydrate)
+    monkeypatch.setattr(base, "get_config", lambda: {"configurable": {"member": {"sub": "sub-noah"}}})
+    result = await base._image_middleware.awrap_model_call(_Request(), handler)
+
+    assert result == "response"
+    assert seen["override"] == {"messages": ["hydrated"]}
+    assert seen["member_sub"] == "sub-noah"

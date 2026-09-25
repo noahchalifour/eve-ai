@@ -13,14 +13,19 @@ from time import perf_counter
 from typing import Annotated
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import wrap_model_call
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
+from langgraph.config import get_config
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import InjectedState
 from opentelemetry import trace
 
-from eve.models import Tier, get_model
+from eve.context import principal_sub
+from eve.images import store as image_store
+from eve.images.hydrate import hydrate, reference
+from eve.models import TIER_VISION, Tier, get_model
 from eve.settings import get_settings
 from eve.skills.specialist_search import build_skills_search
 from eve.specialists.permissions import permission_denial
@@ -57,22 +62,42 @@ def _loop_exhausted(name: str) -> str:
     )
 
 
+@wrap_model_call
+async def _image_middleware(request, handler):
+    """Hydrates reference blocks right before each inner model call, on the
+    specialist's own tier (MECHANICAL) - the same function Eve's loop uses,
+    so an image means the same thing at both levels (EVE-21, spec 3.3).
+
+    The agent is cached in `agent_holder` across calls, so this cannot close
+    over the outer `member` variable from one particular `ask` invocation;
+    `get_config()` returns the INNER run's config at the moment the model is
+    actually being called, which is the only reliable source here."""
+    member_sub = principal_sub(get_config())
+    messages = await hydrate(
+        request.messages, member_sub, native=TIER_VISION[Tier.MECHANICAL]
+    )
+    return await handler(request.override(messages=messages))
+
+
 def build_specialist(
     name: str,
     tools: list[BaseTool],
     system_prompt: str,
     permission: str | list[str],
     model_factory=get_model,
+    *,
+    accepts_images: bool = False,
 ) -> BaseTool:
     # Built lazily, on first non-denied call, not here: `model_factory` must
     # never run before the permission check below has had a chance to deny
     # the request (test_denies_the_call_before_touching_the_model).
     agent_holder: dict[str, object] = {}
 
-    async def ask(
+    async def _run(
         request: str,
         state: Annotated[EveState, InjectedState],
         config: RunnableConfig,
+        image_ids: list[str],
     ) -> str:
         # Design doc section 10: "which specialists actually get used" and
         # "is the permission boundary being hit in practice" are both
@@ -96,6 +121,7 @@ def build_specialist(
                 system_prompt=SystemMessage(
                     system_prompt, additional_kwargs=_OPENAI_DEVELOPER_ROLE
                 ),
+                **({"middleware": [_image_middleware]} if accepts_images else {}),
             )
         agent = agent_holder["agent"]
         started = perf_counter()
@@ -106,10 +132,22 @@ def build_specialist(
                 get_settings().specialist_max_iterations
             ),
         }
+        human: HumanMessage = HumanMessage(request)
+        if image_ids:
+            thread_id = (config.get("configurable") or {}).get("thread_id")
+            refs = []
+            for ref in image_ids:
+                row = await image_store.resolve(ref, member["sub"], thread_id)
+                if row is not None:
+                    refs.append(reference(row.id, f"image {image_store.short_id(row.id)}"))
+            if len(refs) < len(image_ids):
+                span.set_attribute(
+                    "eve.specialist.images_dropped", len(image_ids) - len(refs)
+                )
+            if refs:
+                human = HumanMessage(content=[{"type": "text", "text": request}, *refs])
         try:
-            result = await agent.ainvoke(
-                {"messages": [HumanMessage(request)]}, inner_config
-            )
+            result = await agent.ainvoke({"messages": [human]}, inner_config)
         except GraphRecursionError:
             span.set_attribute("eve.specialist.loop_exhausted", True)
             return _loop_exhausted(name)
@@ -120,6 +158,33 @@ def build_specialist(
             )
         return str(result["messages"][-1].content)
 
+    # The schema `tool()` infers comes straight from this signature, so the
+    # two variants are two separate function definitions rather than one
+    # with a conditionally-added parameter - the only way to keep the
+    # default schema byte-identical to before this flag existed.
+    if accepts_images:
+
+        async def ask(
+            request: str,
+            state: Annotated[EveState, InjectedState],
+            config: RunnableConfig,
+            image_ids: list[str] | None = None,
+        ) -> str:
+            return await _run(request, state, config, image_ids or [])
+    else:
+
+        async def ask(
+            request: str,
+            state: Annotated[EveState, InjectedState],
+            config: RunnableConfig,
+        ) -> str:
+            return await _run(request, state, config, [])
+
     ask.__name__ = f"ask_{name}"
     ask.__doc__ = f"Ask the {name} specialist to handle a request in its domain."
+    if accepts_images:
+        ask.__doc__ += (
+            '\n\nimage_ids: ids of photos from this conversation, as written '
+            'in "[image <id>]".'
+        )
     return tool(ask)
