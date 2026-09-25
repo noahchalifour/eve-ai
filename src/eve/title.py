@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from eve.memory.db import get_pool
 from eve.models import Tier, get_model
-from eve.state import is_ambient_text
+from eve.state import is_ambient_text, text_of
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +72,19 @@ def _aegra_default_title(human: str) -> str:
 
 
 def _first_exchange(messages: list) -> tuple[str, str] | None:
+    """`text_of` on both sides, not `str(.content)`: a Responses-API AI
+    message's content is a list of blocks too, and Phase 3 gives a
+    HumanMessage the same `[{"type": "text", ...}, {"type": "eve_image",
+    ...}]` shape a raw `str()` would render as a list repr instead of the
+    words said."""
     human = next((m for m in messages if isinstance(m, HumanMessage)), None)
-    if human is None or is_ambient_text(str(human.content)):
+    if human is None or is_ambient_text(text_of(human.content)):
         return None
     ai = next((m for m in messages if isinstance(m, AIMessage)), None)
     if ai is None:
         return None
-    human_text = str(human.content).strip()
-    ai_text = str(ai.content).strip()
+    human_text = text_of(human.content).strip()
+    ai_text = text_of(ai.content).strip()
     return (human_text, ai_text) if human_text and ai_text else None
 
 

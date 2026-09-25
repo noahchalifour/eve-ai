@@ -168,3 +168,14 @@ def test_turn_is_ambient_handles_list_content():
     marked = [{"type": "text", "text": ambient_marker("Noah") + "\nA thing."}]
 
     assert turn_is_ambient([HumanMessage(content=marked)]) is True
+
+
+def test_text_of_ignores_image_references():
+    from eve.state import text_of
+
+    content = [
+        {"type": "text", "text": "does this go with navy?"},
+        {"type": "eve_image", "image_id": "3f2a9c01-0000-4000-8000-000000000001", "alt": "photo"},
+    ]
+    assert text_of(content) == "does this go with navy?"
+    assert text_of("plain") == "plain"

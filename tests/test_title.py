@@ -122,3 +122,15 @@ async def test_generate_swallows_model_and_update_failures(monkeypatch):
     await title_mod.generate(
         _state(), _config(), get_thread=get_thread, update_thread=update_thread
     )
+
+
+def test_first_exchange_reads_text_out_of_a_content_list():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.title import _first_exchange
+
+    human = HumanMessage(content=[
+        {"type": "text", "text": "what about this jacket"},
+        {"type": "eve_image", "image_id": "x", "alt": "photo"},
+    ])
+    assert _first_exchange([human, AIMessage("Lovely.")]) == ("what about this jacket", "Lovely.")
