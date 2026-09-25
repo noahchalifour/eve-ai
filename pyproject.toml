@@ -42,6 +42,7 @@ dependencies = [
 
 [project.scripts]
 eve-eval = "eve.eval.cli:main"
+eve-images = "eve.images.cli:main"
 eve-migrate = "eve.memory.db:main"
 eve-pat = "eve.pat:main"
 eve-skill = "eve.skills.cli:main"
