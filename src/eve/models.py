@@ -78,6 +78,30 @@ TIER_MODELS: dict[Tier, str] = {
 }
 
 
+# Which tiers are handed native image blocks (EVE-21, spec 3.2). Decided by
+# tests/test_live_models.py::test_subscription_tier_sees_pixels on 2026-09-22,
+# not assumed: VOICE (chatgpt/gpt-5.6-terra) and MECHANICAL
+# (chatgpt/gpt-5.6-luna) both correctly named the colour of a red square sent
+# as an `image` content block through the LiteLLM proxy - no error, pass.
+# DEEP shares gpt-5.6-sol's family with CODE but was not itself probed; kept
+# False per the brief rather than assumed True from a sibling tier's result.
+# False means `eve.images.hydrate` sends a cached REFLEX caption instead, so
+# the feature still works end to end with less visual detail. Keyed to the
+# primary model, like `use_responses_api`: a fallback hop that refuses
+# pixels is handled at call time (graph.py's caption fallback), not here -
+# the fallback probe itself (test_fallback_model_sees_pixels) failed with a
+# 401 key_model_access_denied, an unrelated key-scope issue (the same key
+# already fails test_fallback_model_emits_tool_calls the same way), not a
+# vision capability finding.
+TIER_VISION: dict[Tier, bool] = {
+    Tier.VOICE: True,
+    Tier.DEEP: False,
+    Tier.MECHANICAL: True,
+    Tier.CODE: False,   # never handed images
+    Tier.REFLEX: True,  # wardrobe/vision.py
+}
+
+
 @lru_cache(maxsize=None)
 def get_model(tier: Tier) -> BaseChatModel:
     settings = get_settings()

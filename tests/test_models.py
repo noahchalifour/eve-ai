@@ -52,3 +52,12 @@ def test_voice_model_declares_streaming(monkeypatch):
     model = get_model(Tier.VOICE)
     assert "streaming" in model.model_fields_set
     assert model.streaming is True
+
+
+def test_tier_vision_names_every_tier_and_reflex_sees():
+    from eve.models import TIER_VISION, Tier
+
+    assert set(TIER_VISION) == set(Tier)
+    # wardrobe/vision.py has sent REFLEX images since EVE-20; the caption
+    # path depends on it.
+    assert TIER_VISION[Tier.REFLEX] is True

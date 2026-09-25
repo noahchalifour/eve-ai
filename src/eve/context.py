@@ -104,15 +104,29 @@ def build_system_prompt(
     return prompt + "\n## What you remember\n" + body
 
 
+def principal_sub(config: RunnableConfig | None) -> str | None:
+    """The member this run acts for. `configurable.member` inside a
+    specialist's loop (build_specialist sets it); otherwise Aegra's principal,
+    which is a pydantic `User` in production and a dict in tests - the same
+    tolerance `load_context` has always needed."""
+    configurable = (config or {}).get("configurable") or {}
+    member = configurable.get("member")
+    if isinstance(member, Mapping) and member.get("sub"):
+        return member["sub"]
+    principal = configurable.get("langgraph_auth_user")
+    if principal is None:
+        return None
+    if isinstance(principal, Mapping):
+        return principal.get("identity")
+    return getattr(principal, "identity", None)
+
+
 async def load_context(state: EveState, config: RunnableConfig) -> dict:
     # Aegra injects a pydantic `aegra_api.models.auth.User` here, which has no
     # `__getitem__`; the LangGraph SDK's own documentation describes a
     # dict-shaped principal, and the shape our unit tests hand-build. Read it
     # tolerantly so neither shape breaks the graph.
-    principal = config["configurable"]["langgraph_auth_user"]
-    identity = (
-        principal["identity"] if isinstance(principal, Mapping) else principal.identity
-    )
+    identity = principal_sub(config)
     member = get_family().get(identity)
     member_ctx = build_member_context(member, datetime.now(tz=ZoneInfo("UTC")))
     return {

@@ -139,3 +139,17 @@ async def test_a_list_shaped_ai_content_gets_a_text_block_not_a_string():
     assert blocks[0] == {"type": "text", "text": "Nice out."}
     assert blocks[-1]["type"] == "text"
     assert "<assistant-ui>" in blocks[-1]["text"]
+
+
+def test_a_persisted_image_costs_its_id_and_alt_not_its_pixels():
+    from eve.ui import protocol
+
+    op = {"protocol": protocol.PROTOCOL, "op": "create", "surface": {
+        "surfaceId": "sf-1", "catalogId": "column", "catalogVersion": "2",
+        "components": [{"id": "i", "type": "image", "properties": {
+            "imageId": "3f2a9c01-0000-4000-8000-000000000001",
+            "alt": "navy blazer", "aspect": "portrait"}}],
+        "data": {}, "localState": {}}}
+    assert protocol.validate_operation(op) is None
+    image_node = protocol._compact(op["surface"]["components"][0])
+    assert len(image_node.encode()) < 160

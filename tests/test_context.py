@@ -237,3 +237,17 @@ def test_rules_render_by_default():
     assert "A rule." in build_system_prompt(
         "P", member, _bundle(rules=[_mem("A rule.", "rule")])
     )
+
+
+def test_principal_sub_reads_every_shape():
+    from types import SimpleNamespace
+
+    from eve.context import principal_sub
+
+    assert principal_sub({"configurable": {"member": {"sub": "sub-a"}}}) == "sub-a"
+    assert principal_sub({"configurable": {"langgraph_auth_user": {"identity": "sub-b"}}}) == "sub-b"
+    assert principal_sub(
+        {"configurable": {"langgraph_auth_user": SimpleNamespace(identity="sub-c")}}
+    ) == "sub-c"
+    assert principal_sub({}) is None
+    assert principal_sub(None) is None

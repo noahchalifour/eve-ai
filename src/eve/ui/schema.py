@@ -117,12 +117,18 @@ def _properties(legal: list[str]) -> dict:
 
 def _properties_for(kind: str) -> dict:
     allowed = sorted(protocol._ALLOWED_PROPERTIES.get(kind, frozenset()))
-    return {
+    document = {
         "title": kind,
         "type": "object",
         "additionalProperties": False,
         "properties": {name: _property(name) for name in allowed},
     }
+    if kind == "image":
+        # Mirrors `_validate_component` rejecting an image missing either key
+        # with `component-schema` - said up front rather than discovered by
+        # a rejected surface.
+        document["required"] = ["alt", "imageId"]
+    return document
 
 
 def _property(name: str) -> dict:
@@ -159,4 +165,16 @@ def _property(name: str) -> dict:
         }
     if name == "options":
         return {"type": "array", "items": {"type": "string"}}
+    if name == "imageId":
+        return {
+            "type": "string",
+            "description": (
+                "The id of an image you were shown, as it appeared: "
+                "`[image 3f2a9c01]` means imageId `3f2a9c01`. Never invent one."
+            ),
+        }
+    if name == "aspect":
+        return {"type": "string", "enum": sorted(protocol.IMAGE_ASPECTS)}
+    if name == "alt":
+        return {"type": "string", "description": "What the image shows, in a few words."}
     return {"type": "string"}

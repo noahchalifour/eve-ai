@@ -87,6 +87,7 @@ def schema_hint(types: set[str]) -> str:
 async def _show_surface(
     components: list, config: RunnableConfig
 ) -> tuple[str, dict | None]:
+    components, has_image = await surface.prepare_images(components, config)
     requested = surface.component_types(components)
     unknown = requested - protocol.CATALOG_IDS
     if unknown:
@@ -114,7 +115,11 @@ async def _show_surface(
         )
         return (_NO_CLIENT_SUPPORT.format(missing=", ".join(missing) or "surfaces"), None)
 
-    operation = surface.build_create(surface.new_surface_id(), components)
+    operation = surface.build_create(
+        surface.new_surface_id(),
+        components,
+        catalog_version=protocol.IMAGE_VERSION if has_image else protocol.CATALOG_VERSION,
+    )
     error = protocol.validate_operation(operation)
     if error is not None:
         # The client rejects SILENTLY - one neutral "This content can't be

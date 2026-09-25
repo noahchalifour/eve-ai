@@ -30,6 +30,7 @@ from eve.memory.store import (
 )
 from eve.memory.types import Memory, MemoryBundle
 from eve.settings import get_settings
+from eve.state import text_of
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ EMBED_BUDGET_OVERRIDE_S: float | None = None
 def _last_human_text(messages: list) -> str:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
-            return str(message.content)
+            return text_of(message.content)
     return ""
 
 

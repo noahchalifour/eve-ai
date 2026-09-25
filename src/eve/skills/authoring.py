@@ -25,7 +25,7 @@ from langgraph.prebuilt import InjectedState
 from opentelemetry import trace
 
 from eve.memory.store import add, procedure_by_name, supersede
-from eve.state import EveState, may_author
+from eve.state import EveState, may_author, text_of
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ async def write_skill(
     # predicate with eve.memory.extract - see eve.state.may_author.
     human = next(
         (
-            str(m.content)
+            text_of(m.content)
             for m in reversed(state["messages"])
             if isinstance(m, HumanMessage)
         ),

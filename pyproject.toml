@@ -36,11 +36,13 @@ dependencies = [
     "pyjwt[crypto]>=2.13.0",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.52.3",
+    "pillow>=11.0",
 ]
 
 
 [project.scripts]
 eve-eval = "eve.eval.cli:main"
+eve-images = "eve.images.cli:main"
 eve-migrate = "eve.memory.db:main"
 eve-pat = "eve.pat:main"
 eve-skill = "eve.skills.cli:main"

@@ -72,14 +72,18 @@ def turn_is_ambient(messages: list) -> bool:
     """
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
-            return is_ambient_text(_text_of(message.content))
+            return is_ambient_text(text_of(message.content))
     return True
 
 
-def _text_of(content) -> str:
+def text_of(content) -> str:
     """Content is a string on the Chat Completions path and a list of blocks
     on the Responses path - the same split `eve_ambient.notify._text_of`
-    handles for AI messages."""
+    handles for AI messages. Public: this is the one place that reads a
+    HumanMessage's text, image blocks and all, so a member turn carrying
+    `[{"type": "text", ...}, {"type": "eve_image", ...}]` (Phase 3) still
+    yields the words the member typed instead of a Python list repr
+    everywhere that used to do `str(human.content)`."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

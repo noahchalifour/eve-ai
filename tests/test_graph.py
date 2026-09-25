@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from eve.family import Family, Member
 from eve.graph import build_graph
+from eve.models import TIER_VISION, Tier
 from tests.conftest import FakeToolCallingModel
 
 NOAH = Member(
@@ -1498,3 +1499,106 @@ def test_a_disabled_tool_takes_its_label_with_it(monkeypatch):
     monkeypatch.setenv("EVE_CODING_ENABLED", "true")
     get_settings.cache_clear()
     assert "delegate_coding_task" in _labels_for(_static_tools())
+
+
+IMAGE_ID = "aaaaaaaa-0000-4000-8000-000000000001"
+
+
+class _RecordingModel(FakeToolCallingModel):
+    seen: list = []
+
+    async def ainvoke(self, messages, config=None, **kwargs):
+        type(self).seen.append(messages)
+        return await super().ainvoke(messages, config, **kwargs)
+
+
+def _photo_turn():
+    return HumanMessage(content=[
+        {"type": "text", "text": "does this go with navy?"},
+        {"type": "eve_image", "image_id": IMAGE_ID, "alt": "photo sent by Noah"},
+    ])
+
+
+async def test_voice_sees_the_image_and_state_keeps_only_the_reference(monkeypatch):
+    from eve.images import hydrate as hydrate_module
+    from tests.test_images_hydrate import _row
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph.TIER_VISION", {**TIER_VISION, Tier.VOICE: True})
+
+    async def fake_get(image_id, member_sub, *, include_expired=False, now=None):
+        return _row(IMAGE_ID)
+
+    monkeypatch.setattr(hydrate_module.store, "get", fake_get)
+    _RecordingModel.seen = []
+    app = build_graph(
+        model_factory=lambda _t: _RecordingModel(messages=iter([AIMessage("Yes.")])),
+        recall_fn=_no_recall, extract_fn=_no_extract, suggest_fn=_no_suggest,
+    ).compile()
+
+    result = await app.ainvoke({"messages": [_photo_turn()]}, CONFIG)
+
+    sent_human = _RecordingModel.seen[0][1]
+    assert any(b.get("type") == "image" for b in sent_human.content)
+    stored_human = result["messages"][0]
+    assert stored_human.content[1] == {
+        "type": "eve_image", "image_id": IMAGE_ID, "alt": "photo sent by Noah"}
+
+
+async def test_a_rejected_image_retries_once_with_captions(monkeypatch):
+    import httpx
+    import openai
+
+    from eve.images import hydrate as hydrate_module
+    from tests.test_images_hydrate import _row
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph.TIER_VISION", {**TIER_VISION, Tier.VOICE: True})
+
+    async def fake_get(image_id, member_sub, *, include_expired=False, now=None):
+        return _row(IMAGE_ID, caption="a navy blazer")
+
+    monkeypatch.setattr(hydrate_module.store, "get", fake_get)
+    calls = []
+
+    class _PickyModel(FakeToolCallingModel):
+        async def ainvoke(self, messages, config=None, **kwargs):
+            calls.append(messages)
+            if any(isinstance(b, dict) and b.get("type") == "image"
+                   for m in messages for b in (m.content if isinstance(m.content, list) else [])):
+                request = httpx.Request("POST", "http://litellm/v1/responses")
+                raise openai.BadRequestError(
+                    "image input not supported",
+                    response=httpx.Response(400, request=request), body=None)
+            return await super().ainvoke(messages, config, **kwargs)
+
+    app = build_graph(
+        model_factory=lambda _t: _PickyModel(messages=iter([AIMessage("It works.")])),
+        recall_fn=_no_recall, extract_fn=_no_extract, suggest_fn=_no_suggest,
+    ).compile()
+
+    result = await app.ainvoke({"messages": [_photo_turn()]}, CONFIG)
+
+    assert result["messages"][-1].content == "It works."
+    assert len(calls) == 2
+    assert {"type": "text", "text": "[image aaaaaaaa: a navy blazer]"} in calls[1][1].content
+
+
+async def test_a_turn_without_images_never_touches_the_image_store(monkeypatch):
+    from eve.images import hydrate as hydrate_module
+
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    async def boom(*_a, **_k):
+        raise AssertionError("no store call on a text-only turn")
+
+    monkeypatch.setattr(hydrate_module.store, "get", boom)
+    app = build_graph(
+        model_factory=_fake_factory, recall_fn=_no_recall,
+        extract_fn=_no_extract, suggest_fn=_no_suggest,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
+    assert result["messages"][-1].content == "Hi Noah."

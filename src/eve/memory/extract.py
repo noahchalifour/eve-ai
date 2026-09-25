@@ -26,7 +26,7 @@ from eve.memory.store import (
 from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
-from eve.state import is_ambient_text, may_author
+from eve.state import is_ambient_text, may_author, text_of
 from eve.ui import protocol
 
 logger = logging.getLogger(__name__)
@@ -156,10 +156,13 @@ def _visible_content(message: HumanMessage | AIMessage) -> object:
     later model can read it back. Left in, REFLEX can mint junk memories
     out of the surface JSON ("temperature 20", "condition sunny") as if Eve
     had said them, and a digest refresh would summarise a card as prose. A
-    `HumanMessage` never carries a frame, so it passes through untouched."""
+    `HumanMessage` never carries a frame, so it passes through untouched.
+    The human branch reads through `text_of` so a content list (Phase 3's
+    `[{"type": "text", ...}, {"type": "eve_image", ...}]`) yields the words
+    a member typed rather than the list itself."""
     if isinstance(message, AIMessage):
         return protocol.strip_frames_from_content(message.content)
-    return message.content
+    return text_of(message.content)
 
 
 def last_exchange(messages: list) -> tuple[str, str]:
@@ -172,7 +175,7 @@ def last_exchange(messages: list) -> tuple[str, str]:
     ai = next(
         (_visible_content(m) for m in reversed(messages) if isinstance(m, AIMessage)), ""
     )
-    return str(human), str(ai)
+    return text_of(human), str(ai)
 
 
 _AUTHORED_LAYERS = ("rule", "procedure")

@@ -218,3 +218,11 @@ def test_emit_tool_labels_survives_a_writer_that_raises(monkeypatch, caplog):
 
     assert "tool_labels write failed" in caplog.text
     assert "Reading your mail" not in caplog.text
+
+
+def test_catalog_versions_defaults_to_the_baseline():
+    assert stream.catalog_versions({}) == frozenset({"1"})
+    assert stream.catalog_versions({"configurable": {"catalog_versions": ["1", "2"]}}) == {"1", "2"}
+    # Unknown versions are ignored rather than trusted; junk is ignored.
+    assert stream.catalog_versions({"configurable": {"catalog_versions": ["2", "9"]}}) == {"1", "2"}
+    assert stream.catalog_versions({"configurable": {"catalog_versions": "2"}}) == {"1"}

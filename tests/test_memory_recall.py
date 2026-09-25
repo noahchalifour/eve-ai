@@ -409,3 +409,15 @@ async def test_a_real_pending_extraction_delays_the_next_turns_read(
         assert events == ["write", "read"]
     finally:
         pending.clear()
+
+
+def test_the_recall_query_is_the_text_not_a_list_repr():
+    from langchain_core.messages import HumanMessage
+
+    from eve.memory.recall import _last_human_text
+
+    human = HumanMessage(content=[
+        {"type": "text", "text": "navy blazer"},
+        {"type": "eve_image", "image_id": "x", "alt": "photo"},
+    ])
+    assert _last_human_text([human]) == "navy blazer"

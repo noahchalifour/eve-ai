@@ -146,6 +146,55 @@ async def test_a_member_without_the_wardrobe_permission_is_denied():
     assert "wardrobe" in result
 
 
+async def test_photo_of_caches_the_garments_photo_and_cites_its_short_id(monkeypatch):
+    calls = {}
+
+    async def fake_list(member_sub):
+        return [{"name": "Navy blazer", "asset_id": "a-7", "category": "outerwear"}]
+
+    async def fake_from_immich(member_sub, asset_id, *, thread_id):
+        calls["args"] = (member_sub, asset_id, thread_id)
+        return "3f2a9c01-0000-4000-8000-000000000001"
+
+    monkeypatch.setattr(stylist_module.wardrobe_store, "list_items", fake_list)
+    monkeypatch.setattr(stylist_module, "from_immich", fake_from_immich)
+    config = {"configurable": {**CONFIG["configurable"], "thread_id": "t1"}}
+
+    result = await stylist_module.photo_of.ainvoke({"garment": "navy blazer"}, config=config)
+
+    assert result == "[image 3f2a9c01] Navy blazer"
+    assert calls["args"] == ("sub-noah", "a-7", "t1")
+
+
+async def test_photo_of_an_unknown_garment_says_so(monkeypatch):
+    async def fake_list(member_sub):
+        return [{"name": "Navy blazer", "asset_id": "a-7", "category": "outerwear"}]
+
+    monkeypatch.setattr(stylist_module.wardrobe_store, "list_items", fake_list)
+    result = await stylist_module.photo_of.ainvoke({"garment": "red scarf"}, config=CONFIG)
+    assert "no garment called" in result.lower()
+
+
+async def test_photo_of_when_immich_is_down_says_so(monkeypatch):
+    async def fake_list(member_sub):
+        return [{"name": "Navy blazer", "asset_id": "a-7", "category": "outerwear"}]
+
+    async def fake_from_immich(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(stylist_module.wardrobe_store, "list_items", fake_list)
+    monkeypatch.setattr(stylist_module, "from_immich", fake_from_immich)
+    result = await stylist_module.photo_of.ainvoke({"garment": "Navy blazer"}, config=CONFIG)
+    assert "photo" in result.lower() and "[image" not in result
+
+
+def test_the_stylist_is_given_photo_of():
+    import inspect
+
+    source = inspect.getsource(stylist_module)
+    assert "photo_of" in source.split("ask_stylist = build_specialist(")[1]
+
+
 async def test_the_stylist_reads_the_wardrobe_through_its_loop(monkeypatch):
     tool_call = {
         "name": "read_wardrobe",
@@ -178,3 +227,8 @@ async def test_the_stylist_reads_the_wardrobe_through_its_loop(monkeypatch):
     )
 
     assert "navy wool blazer" in result
+
+
+def test_the_stylist_accepts_images():
+    schema = stylist_module.ask_stylist.tool_call_schema.model_json_schema()
+    assert "image_ids" in schema["properties"]

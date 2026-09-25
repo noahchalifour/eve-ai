@@ -133,3 +133,45 @@ async def test_the_reflex_tier_produces_usable_reply_suggestions():
         word in " ".join(chips).lower()
         for word in ("kitchen", "downstairs", "both", "all")
     ), f"suggestions do not answer the question asked: {chips!r}"
+
+
+def _red_square_b64() -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (220, 20, 20)).save(buf, "JPEG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _colour_question() -> HumanMessage:
+    # The standard LangChain block, exactly what `eve.images.hydrate` emits.
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": "What colour is this square? One word."},
+            {"type": "image", "base64": _red_square_b64(), "mime_type": "image/jpeg"},
+        ]
+    )
+
+
+@pytest.mark.parametrize("tier", [Tier.VOICE, Tier.MECHANICAL])
+async def test_subscription_tier_sees_pixels(tier):
+    """EVE-21 section 3.2: decides TIER_VISION[tier]. A failure here is a
+    finding, not a bug - record False in models.py and the caption path
+    carries the feature."""
+    reply = await get_model(tier).ainvoke([_colour_question()])
+    assert "red" in _text_of(reply).lower(), reply.content
+
+
+async def test_fallback_model_sees_pixels():
+    settings = get_settings()
+    model = ChatOpenAI(
+        model="anthropic/claude-sonnet-5",
+        base_url=settings.litellm_base_url,
+        api_key=settings.litellm_api_key or "unset",
+        use_responses_api=False,
+    )
+    reply = await model.ainvoke([_colour_question()])
+    assert "red" in _text_of(reply).lower(), reply.content

@@ -912,3 +912,15 @@ def test_last_exchange_returns_empty_strings_when_a_side_is_missing():
 
     assert last_exchange([HumanMessage("hi")]) == ("hi", "")
     assert last_exchange([]) == ("", "")
+
+
+def test_last_exchange_reads_text_out_of_a_content_list():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from eve.memory.extract import last_exchange
+
+    human = HumanMessage(content=[
+        {"type": "text", "text": "does this go with navy?"},
+        {"type": "eve_image", "image_id": "x", "alt": "photo"},
+    ])
+    assert last_exchange([human, AIMessage("Yes.")]) == ("does this go with navy?", "Yes.")

@@ -24,7 +24,7 @@ CATALOG_VERSION = "1"
 # The closed V1 catalog. The same ids are legal as a surface's
 # `catalogId` AND as a component's `type` - the client checks both against one
 # set (`DynamicSurfaceProtocol._componentTypes`), so this file does too.
-CATALOG_IDS = frozenset(
+CATALOG_IDS_V1 = frozenset(
     {
         "column",
         "row",
@@ -43,6 +43,20 @@ CATALOG_IDS = frozenset(
         "numberField",
     }
 )
+
+# EVE-21: version 2 is version 1 plus `image`. A surface is stamped with the
+# LOWEST version that holds its components (eve.ui.surface), so every
+# surface without a photo stays readable by a phone that predates this.
+IMAGE_VERSION = "2"
+CATALOG_VERSIONS: dict[str, frozenset[str]] = {
+    "1": CATALOG_IDS_V1,
+    IMAGE_VERSION: CATALOG_IDS_V1 | {"image"},
+}
+# Every type this server can validate, whatever the version. The schema, the
+# skill document and graph._static_tools' intersection all mean this.
+CATALOG_IDS = frozenset().union(*CATALOG_VERSIONS.values())
+IMAGE_ASPECTS = frozenset({"square", "portrait", "landscape"})
+_IMAGE_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # One interactive contract: a button that hands the surface's localState back
 # to Eve as a turn. A provider cannot invent an action.
@@ -84,6 +98,9 @@ _ALLOWED_PROPERTIES: dict[str, frozenset[str]] = {
     "expandable": frozenset({"label", "expanded"}),
     "textField": frozenset({"stateKey", "label"}),
     "numberField": frozenset({"stateKey", "label"}),
+    # No URL property, ever - the client fetches only `GET /images/{imageId}`
+    # on Eve's own base URL (spec 4.1), never an arbitrary origin.
+    "image": frozenset({"imageId", "alt", "aspect"}),
     "column": frozenset(),
     "row": frozenset(),
     "list": frozenset(),
@@ -285,11 +302,14 @@ def _validate_create(operation: dict, *, widget: bool = False) -> str | None:
         value = surface.get(key)
         if not isinstance(value, str) or not value or len(value) > MAX_STRING:
             return "string"
-    if surface["catalogVersion"] != CATALOG_VERSION:
+    allowed = CATALOG_VERSIONS.get(surface["catalogVersion"])
+    if allowed is None:
         return "catalog-version"
-    if surface["catalogId"] not in CATALOG_IDS:
+    if surface["catalogId"] not in CATALOG_IDS_V1:
         return "catalog"
-    error = _validate_components(surface.get("components", []), widget=widget)
+    error = _validate_components(
+        surface.get("components", []), widget=widget, allowed=allowed
+    )
     if error:
         return error
     normalized = {
@@ -336,7 +356,9 @@ def _validate_patch(operation: dict, *, widget: bool = False) -> str | None:
     return None
 
 
-def _validate_components(components: object, *, widget: bool = False) -> str | None:
+def _validate_components(
+    components: object, *, widget: bool = False, allowed: frozenset[str] = CATALOG_IDS
+) -> str | None:
     if not isinstance(components, list):
         return "component-type"
     seen = 0
@@ -354,7 +376,12 @@ def _validate_components(components: object, *, widget: bool = False) -> str | N
             value = component.get(key)
             if not isinstance(value, str) or not value or len(value) > MAX_STRING:
                 return "string"
-        if component["type"] not in CATALOG_IDS:
+        if component["type"] not in allowed:
+            return "component-type"
+        # Widget snapshots refresh on a schedule and need their own
+        # image-lifetime design; spec 4.1. Chat surfaces are unaffected -
+        # `allowed` already excludes `image` unless catalogVersion is 2.
+        if widget and component["type"] == "image":
             return "component-type"
         error = _validate_properties(
             component["type"], component.get("properties", {}), widget=widget
@@ -397,6 +424,8 @@ def _validate_properties(
         declared = ("actionId" in properties) + ("setState" in properties)
         if declared != 1:
             return "component-schema"
+    if component_type == "image" and not {"imageId", "alt"} <= properties.keys():
+        return "component-schema"
     return None
 
 
@@ -446,6 +475,14 @@ def _validate_property(key: str, value: object, *, widget: bool = False) -> str 
         if not isinstance(value, str):
             return "component-schema"
         return "binding" if not _BINDING.match(value) else None
+    if key == "imageId":
+        return None if isinstance(value, str) and _IMAGE_ID.match(value) else "component-schema"
+    if key == "alt":
+        if not isinstance(value, str) or not value.strip():
+            return "component-schema"
+        return validate_json_value(value)
+    if key == "aspect":
+        return None if value in IMAGE_ASPECTS else "component-schema"
     return "component-schema"
 
 

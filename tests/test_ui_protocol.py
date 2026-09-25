@@ -51,9 +51,9 @@ def test_a_catalog_id_outside_the_closed_v1_set_is_rejected():
     assert protocol.validate_operation(_surface(catalogId="thermostat")) == "catalog"
 
 
-def test_a_catalog_version_other_than_1_is_rejected():
+def test_an_unknown_catalog_version_is_rejected():
     assert (
-        protocol.validate_operation(_surface(catalogVersion="2")) == "catalog-version"
+        protocol.validate_operation(_surface(catalogVersion="3")) == "catalog-version"
     )
 
 
@@ -517,3 +517,72 @@ def test_the_widget_range_action_id_is_legal_only_in_widget_mode():
     )
 
 
+
+
+IMAGE_ID = "3f2a9c01-0000-4000-8000-000000000001"
+
+
+def _image(**properties) -> dict:
+    return {
+        "id": "i1",
+        "type": "image",
+        "properties": {"imageId": IMAGE_ID, "alt": "navy blazer", **properties},
+        "children": [],
+    }
+
+
+def test_an_image_surface_is_valid_at_version_2():
+    assert protocol.validate_operation(
+        _surface(catalogVersion="2", components=[_image(aspect="portrait")])
+    ) is None
+
+
+def test_an_image_is_illegal_in_a_version_1_surface():
+    assert protocol.validate_operation(
+        _surface(components=[_image()])
+    ) == "component-type"
+
+
+def test_a_version_2_surface_without_an_image_is_still_valid():
+    assert protocol.validate_operation(_surface(catalogVersion="2")) is None
+
+
+def test_image_requires_image_id_and_alt():
+    for missing in ("imageId", "alt"):
+        component = _image()
+        del component["properties"][missing]
+        assert protocol.validate_operation(
+            _surface(catalogVersion="2", components=[component])
+        ) == "component-schema", missing
+
+
+def test_image_id_must_be_a_full_uuid_never_a_url():
+    for bad in ("3f2a9c01", "https://evil.example/x.jpg", "", 7):
+        assert protocol.validate_operation(
+            _surface(catalogVersion="2", components=[_image(imageId=bad)])
+        ) == "component-schema", bad
+
+
+def test_aspect_is_a_closed_set():
+    assert protocol.validate_operation(
+        _surface(catalogVersion="2", components=[_image(aspect="wide")])
+    ) == "component-schema"
+
+
+def test_alt_is_a_bounded_non_empty_string():
+    for bad in ("", "x" * (protocol.MAX_STRING + 1), 3):
+        assert protocol.validate_operation(
+            _surface(catalogVersion="2", components=[_image(alt=bad)])
+        ) is not None, bad
+
+
+def test_image_is_chat_only_never_in_a_widget_snapshot():
+    assert protocol.validate_operation(
+        _surface(catalogVersion="2", components=[_image()]), widget=True
+    ) == "component-type"
+
+
+def test_catalog_versions_nest():
+    assert protocol.CATALOG_VERSIONS["1"] < protocol.CATALOG_VERSIONS["2"]
+    assert protocol.CATALOG_VERSIONS["2"] - protocol.CATALOG_VERSIONS["1"] == {"image"}
+    assert protocol.CATALOG_IDS == protocol.CATALOG_VERSIONS["2"]

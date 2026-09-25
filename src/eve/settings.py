@@ -303,6 +303,19 @@ class Settings(BaseSettings):
     # once should queue, not fan out to five agents on one box.
     linear_max_live_sessions: int = 3
 
+    # EVE-21 images. A member photo lives 30 days by explicit decision, not
+    # forever by default; an Immich copy is a cache of something Immich
+    # already keeps, so a day is enough (spec 2.4).
+    image_retention_days: int = 30
+    image_cache_days: int = 1
+    # How many recent human turns get their images re-sent as pixels. Older
+    # ones become "[image <id>: <alt>]" text, so a long thread does not
+    # re-upload every photo on every turn (spec 3.2).
+    image_hydrate_turns: int = 2
+    # Refused with 413 before decoding. The phone's picker output is well
+    # under this; the ceiling exists so a decompression bomb costs nothing.
+    image_max_upload_bytes: int = 15 * 1024 * 1024
+
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
         if not self.database_url:
