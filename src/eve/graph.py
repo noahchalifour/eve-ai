@@ -25,10 +25,14 @@ edits take effect on existing threads instead of being frozen into history.
 
 from __future__ import annotations
 
+import logging
+
+import openai
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
+from opentelemetry import trace
 
 from eve import context
 from eve.coding.dispatch import (
@@ -37,10 +41,11 @@ from eve.coding.dispatch import (
     send_to_coding_session,
 )
 from eve.computer.dispatch import dispatch_computer_task
-from eve.context import load_context
+from eve.context import load_context, principal_sub
+from eve.images.hydrate import has_references, hydrate
 from eve.memory import extract as memory_extract, recall as memory_recall
 from eve.memory.search import search_memory
-from eve.models import Tier, get_model
+from eve.models import TIER_VISION, Tier, get_model
 from eve.records.tools import record_append, record_query
 from eve.routines.tools import cancel_routine, list_routines, schedule_routine
 from eve.settings import get_settings
@@ -61,6 +66,8 @@ from eve.ui.actions import parse_action, ui_submit
 from eve.ui.persist import persist_ui
 from eve.ui.tools import build_show_surface
 from eve.widgets.tools import save_widget
+
+logger = logging.getLogger(__name__)
 
 _BASE_TOOLS = [
     ask_home,
@@ -243,6 +250,24 @@ def _stripped_for_model(messages: list) -> list:
     return stripped
 
 
+async def _for_model(messages: list, config: RunnableConfig, *, native: bool) -> list:
+    """Everything the VOICE model is shown of the transcript: frames stripped
+    (persist_ui), and image references hydrated to pixels or captions
+    (EVE-21, spec 3.2). The result is sent and discarded, never written back:
+    state keeps only the references, so a checkpoint never holds an image."""
+    stripped = _stripped_for_model(messages)
+    if not has_references(stripped):
+        return stripped
+    return await hydrate(stripped, principal_sub(config), native=native)
+
+
+def _has_pixels(messages: list) -> bool:
+    return any(
+        isinstance(block, dict) and block.get("type") == "image"
+        for m in messages if isinstance(m.content, list) for block in m.content
+    )
+
+
 def _handle_tool_error(error: Exception) -> str:
     """The plan's global constraint - every call to an external system
     degrades to a returned string, never raises - applied at the one place it
@@ -366,8 +391,23 @@ def build_graph(
         prompt = context.build_system_prompt(
             context.load_persona(), state["member"], state.get("memory")
         )
-        messages = [_persona_message(prompt), *_stripped_for_model(state["messages"])]
-        return {"messages": [await bound_model.ainvoke(messages, config)]}
+        persona = _persona_message(prompt)
+        messages = [persona, *await _for_model(
+            state["messages"], config, native=TIER_VISION[Tier.VOICE])]
+        try:
+            reply = await bound_model.ainvoke(messages, config)
+        except openai.BadRequestError:
+            # A LiteLLM fallback hop without vision, or a proxy refusing
+            # `input_image`, answers 400. Once, with captions instead of
+            # pixels; anything else, and any second failure, propagates as it
+            # always has (spec 5).
+            if not _has_pixels(messages):
+                raise
+            logger.warning("VOICE rejected image input; retrying with captions")
+            trace.get_current_span().set_attribute("eve.images.caption_fallback", True)
+            messages = [persona, *await _for_model(state["messages"], config, native=False)]
+            reply = await bound_model.ainvoke(messages, config)
+        return {"messages": [reply]}
 
     async def tools_node(state: EveState, config: RunnableConfig) -> dict:
         dynamic = [materialize(spec) for spec in _live_specs(state)]
