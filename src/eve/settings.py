@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     # Deployment
     env: str = "development"  # "development" | "production"
+    # How widgets render wall-clock times ("Mon 3:00 PM"). IANA name.
+    household_timezone: str = "UTC"
 
     # Authentication (see docs/adr and spec section 8)
     auth_mode: str = "dev"  # "dev" | "oidc"
