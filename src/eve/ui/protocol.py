@@ -62,14 +62,22 @@ _IMAGE_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 # to Eve as a turn. A provider cannot invent an action.
 ACTION_IDS = frozenset({"surface.submit"})
 
-# The one extra action id a WIDGET snapshot may carry: the inline range
-# control's `widget.setRange` (`eve.widgets.resolve._range_control`).
-# `assistant-ui/1.0` chat surfaces never accept it - the widget host
-# intercepts it before the generic renderer and maps it onto a resource
-# action. Gated behind `validate_operation(..., widget=True)`, so
-# `ACTION_IDS` stays the chat allowlist and a chat surface cannot express a
-# widget filter.
-_WIDGET_ACTION_IDS = frozenset({"widget.setRange"})
+# Widget snapshots may name any NAMESPACED action (`home.toggle`,
+# `widget.setRange`, `filters.replace`...). Syntax only: which actions exist
+# is the widget action registry's call (`eve.widgets.actions`), enforced by
+# the resource route, so a new action needs no protocol change. Chat surfaces
+# keep `ACTION_IDS` exactly, so a chat surface can never express one.
+#
+# Each dot-separated segment starts with a lowercase letter (so `Home.Toggle`
+# still fails) but may mix case after that - `widget.setRange`
+# (`eve.widgets.resolve._range_control`) is an existing production id and
+# must keep validating.
+_WIDGET_ACTION_ID = re.compile(r"^[a-z][a-zA-Z0-9_]*(?:\.[a-z][a-zA-Z0-9_]*)+$")
+
+# Widget mode lets a whole card be the tap target.
+_WIDGET_EXTRA_PROPERTIES: dict[str, frozenset[str]] = {
+    "card": frozenset({"actionId", "actionValue"}),
+}
 
 MAX_SURFACES_PER_TURN = 8
 MAX_COMPONENTS = 64
@@ -233,11 +241,11 @@ def validate_operation(operation: object, *, widget: bool = False) -> str | None
     """`None` when `operation` is a legal create/patch/delete, otherwise the
     same structural diagnostic code the client would have logged.
 
-    `widget=True` is the widget-snapshot mode: it additionally accepts the
-    inline range control's `widget.setRange` action id (see
-    `_WIDGET_ACTION_IDS`). A chat surface can never carry that id, which is
-    the point - a widget filter is a resource action, not a chat turn, and
-    the two must not share a channel.
+    `widget=True` is the widget-snapshot mode: it additionally accepts any
+    NAMESPACED action id (see `_WIDGET_ACTION_ID`) and lets a `card` carry an
+    `actionId`/`actionValue` of its own. A chat surface can never express
+    either, which is the point - a widget action is a resource action, not a
+    chat turn, and the two must not share a channel.
     """
     if not isinstance(operation, dict):
         return "malformed-frame"
@@ -388,6 +396,16 @@ def _validate_components(
         )
         if error:
             return error
+        if (
+            widget
+            and component["type"] == "card"
+            and "actionId" in (component.get("properties") or {})
+            and _has_interactive_descendant(component)
+        ):
+            # Two tap targets stacked on one spot: the inner one steals the
+            # tap on some platforms and not others, and a screen reader
+            # announces one control where there are two.
+            return "action-schema"
         children = component.get("children", [])
         if not isinstance(children, list):
             return "component-type"
@@ -404,12 +422,27 @@ def _validate_components(
     return None
 
 
+def _has_interactive_descendant(component: dict) -> bool:
+    stack = list(component.get("children") or [])
+    while stack:
+        child = stack.pop()
+        if not isinstance(child, dict):
+            continue
+        properties = child.get("properties") or {}
+        if isinstance(properties, dict) and ("actionId" in properties or "setState" in properties):
+            return True
+        stack.extend(child.get("children") or [])
+    return False
+
+
 def _validate_properties(
     component_type: str, properties: object, *, widget: bool = False
 ) -> str | None:
     if not isinstance(properties, dict):
         return "component-schema"
     allowed = _ALLOWED_PROPERTIES.get(component_type, frozenset())
+    if widget:
+        allowed = allowed | _WIDGET_EXTRA_PROPERTIES.get(component_type, frozenset())
     for key, value in properties.items():
         if key not in allowed:
             return "component-schema"
@@ -460,9 +493,7 @@ def _validate_property(key: str, value: object, *, widget: bool = False) -> str 
     if key == "actionId":
         if value in ACTION_IDS:
             return None
-        # `widget.setRange` is legal only for widget snapshots; a chat
-        # surface cannot express it (see `_WIDGET_ACTION_IDS`).
-        if widget and value in _WIDGET_ACTION_IDS:
+        if widget and isinstance(value, str) and _WIDGET_ACTION_ID.match(value):
             return None
         return "action-schema"
     if key == "actionValue":

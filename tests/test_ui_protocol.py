@@ -496,7 +496,9 @@ def test_the_widget_range_action_id_is_legal_only_in_widget_mode():
     """Widget snapshots carry the inline range control, whose `actionId` is
     `widget.setRange`. Chat validation must reject that id - a widget filter
     is a resource action, not a chat turn - while the widget-scoped mode
-    accepts exactly it and nothing else."""
+    accepts it as one namespaced id among others: the validator checks
+    syntax only, and which namespaced actions actually exist is the widget
+    action registry's call, not this module's."""
     components = [{
         "id": "r", "type": "segmentedSelection",
         "properties": {"options": ["7", "30", "90"], "selected": "30",
@@ -507,12 +509,12 @@ def test_the_widget_range_action_id_is_legal_only_in_widget_mode():
         protocol.validate_operation(_surface(components=components), widget=True)
         is None
     )
-    evil = [{
+    unnamespaced = [{
         "id": "r", "type": "segmentedSelection",
-        "properties": {"options": ["7"], "selected": "7", "actionId": "widget.explode"},
+        "properties": {"options": ["7"], "selected": "7", "actionId": "explode"},
     }]
     assert (
-        protocol.validate_operation(_surface(components=evil), widget=True)
+        protocol.validate_operation(_surface(components=unnamespaced), widget=True)
         == "action-schema"
     )
 
