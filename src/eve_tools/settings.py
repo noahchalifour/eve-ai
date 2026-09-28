@@ -20,6 +20,12 @@ class ToolsSettings(BaseSettings):
     api_key: str = ""
     home_assistant_url: str = ""
     home_assistant_token: str = ""
+    # The household's location for `home.weather` (Open-Meteo, no key needed).
+    # Unset means the tool answers an error, so the stylist says it cannot see
+    # the weather instead of inventing one.
+    weather_latitude: float | None = None
+    weather_longitude: float | None = None
+    weather_units: str = "metric"  # or "imperial"
     gmail_credentials_json: str = ""
     caldav_credentials_json: str = ""
     # A Monarch session token, which is all the client actually needs -
