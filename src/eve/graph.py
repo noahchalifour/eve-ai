@@ -58,6 +58,7 @@ from eve.specialists.home import ask_home
 from eve.specialists.mail import ask_mail
 from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
+from eve.dashboards import setup as dashboard_setup
 from eve.suggest import openers as openers_node, openers_requested, suggest as suggest_node
 from eve.title import title as title_node
 from eve.tools_authoring.propose import propose_tool
@@ -326,6 +327,11 @@ def _route_after_context(state: EveState, config: RunnableConfig) -> str:
     Branching after `load_context` rather than at START is deliberate -
     `load_context` is pure local computation (ADR 0002).
     """
+    # A dashboard build is the whole turn and never reaches the VOICE model,
+    # the same guarantee the openers route makes. It needs no memory, so it
+    # skips `recall` too (`eve.dashboards.setup`).
+    if dashboard_setup.requested(config) is not None:
+        return "dashboard_setup"
     if openers_requested(config):
         return "recall"
     messages = state["messages"]
@@ -358,6 +364,7 @@ def build_graph(
     suggest_fn=suggest_node,
     openers_fn=openers_node,
     title_fn=title_node,
+    dashboard_setup_fn=None,
 ) -> StateGraph:
     async def eve(state: EveState, config: RunnableConfig) -> dict:
         rounds = _tool_rounds_this_turn(state["messages"])
@@ -440,12 +447,17 @@ def build_graph(
     builder.add_node("title", title_fn)
     builder.add_node("openers", openers_fn)
     builder.add_node("ui_submit", ui_submit)
+    builder.add_node(
+        "dashboard_setup",
+        dashboard_setup_fn or dashboard_setup.make_node(model_factory),
+    )
     builder.add_edge(START, "load_context")
     builder.add_conditional_edges(
         "load_context",
         _route_after_context,
-        {"ui_submit": "ui_submit", "recall": "recall"},
+        {"ui_submit": "ui_submit", "recall": "recall", "dashboard_setup": "dashboard_setup"},
     )
+    builder.add_edge("dashboard_setup", END)
     builder.add_edge("ui_submit", "recall")
     # `openers` ends the turn on its own: no VOICE call, no answer, nothing
     # appended to the thread. It goes straight to END rather than through

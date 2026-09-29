@@ -64,22 +64,19 @@ def _types(components: object) -> set[str]:
     return found
 
 
-@tool(description=_describe())
-async def save_widget(
+def prepare(
+    member: dict,
     title: str,
-    state: Annotated[EveState, InjectedState],
-    config: RunnableConfig,
     preset: str | None = None,
     options: dict | None = None,
     sources: dict | None = None,
     template: list | None = None,
     filters: dict | None = None,
-) -> str:
-    member = (config.get("configurable") or {}).get("member") or {}
-    member_sub = member["sub"]
-
-    if turn_is_ambient(state.get("messages") or []):
-        return "A widget cannot be created from an ambient turn."
+) -> tuple[str, dict, dict] | str:
+    """`(kind, recipe, filters)` for a widget this member may save, or the
+    message a model can act on. Every guard a saved widget passes lives here,
+    so the dashboard builder (`eve.dashboards.setup`) and `save_widget` cannot
+    drift on what a legal widget is."""
     if len(title) > recipe_rules.MAX_NAME:
         return f"The widget title is too long: {len(title)} characters, the limit is {recipe_rules.MAX_NAME}."
     if (preset is None) == (template is None):
@@ -111,6 +108,29 @@ async def save_widget(
         denial = permission_denial(member.get("permissions", []), required)
         if denial:
             return denial
+    return kind, recipe, chosen_filters
+
+
+@tool(description=_describe())
+async def save_widget(
+    title: str,
+    state: Annotated[EveState, InjectedState],
+    config: RunnableConfig,
+    preset: str | None = None,
+    options: dict | None = None,
+    sources: dict | None = None,
+    template: list | None = None,
+    filters: dict | None = None,
+) -> str:
+    member = (config.get("configurable") or {}).get("member") or {}
+    member_sub = member["sub"]
+
+    if turn_is_ambient(state.get("messages") or []):
+        return "A widget cannot be created from an ambient turn."
+    prepared = prepare(member, title, preset, options, sources, template, filters)
+    if isinstance(prepared, str):
+        return prepared
+    kind, recipe, chosen_filters = prepared
 
     try:
         created = await store.create(member_sub, kind, title, recipe, chosen_filters)

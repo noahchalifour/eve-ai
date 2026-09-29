@@ -43,6 +43,11 @@ collection-addressed store rather than a table per domain, and a new tracked
 domain costs a skill paragraph rather than a schema. See
 [ADR 0019](docs/adr/0019-one-generic-record-store.md).
 
+**Dashboards.** Each device can hold one dashboard: the member says what it
+is for, and Eve lays out a grid of library widgets for it, reusing saved
+widgets and saving any missing ones to the library. See "Dashboards" in
+[`docs/architecture.md`](docs/architecture.md).
+
 ### Where the program ends
 
 Four boundaries are permanent, not phases yet to come:
