@@ -1,104 +1,67 @@
-"""Recipe plus filters to a rendered snapshot, with no model in the loop.
+# src/eve/widgets/resolve.py
+"""Recipe to rendered snapshot, with no model in the loop.
 
-This is the module that makes "refresh without spending a model call" true.
-It reads only through the two injected readers, which is what lets every
-partial-failure branch be a unit test rather than a live-service test.
-
-The emitted `components` tree uses only `assistant-ui/1.0` catalog types, so
-the client validates and renders it with the same code path a chat surface
-takes. `data.points` is the chart's bound series.
+Reads every source concurrently through the source registry, renders the
+template against the results, and publishes what the client needs to behave
+well without knowing anything about Eve: when to refresh, and which actions
+on which targets need a confirmation.
 """
-
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from eve.records import store as record_store
-from eve.tools_client import invoke
+from eve.ui import protocol
 from eve.widgets import recipe as recipe_rules
+from eve.widgets import template as template_rules
+from eve.widgets.actions import REGISTRY as ACTIONS
+from eve.widgets.sources.base import ReadContext
+from eve.widgets.sources.series import DEFAULT_DAYS
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DAYS = 30
-MAX_POINTS = 180
+_BROKEN = [{"id": "broken", "type": "text", "properties": {"text": "This widget couldn't be displayed."}, "children": []}]
 
 
-async def _default_read_records(
-    member_sub: str, collection: str, since=None, until=None, limit=500
-):
-    return await record_store.query(
-        member_sub, collection, since=since, until=until, limit=limit
-    )
-
-
-async def _default_read_health(member_sub: str, metric: str, days: int):
-    result = await invoke(
-        f"health.get_{metric}", {"member_sub": member_sub, "days": days}
-    )
-    if isinstance(result, list):
-        return result
-    if isinstance(result, str) and not result.startswith("error:"):
-        try:
-            parsed = json.loads(result)
-            if isinstance(parsed, list):
-                return parsed
-        except ValueError:
-            pass
-    # A degraded call (`error: ...`), an unparseable body, or a non-list
-    # value is a FAILED source, not "no data": raising here is what the
-    # snapshot loop's per-source guard catches and labels `unavailable`.
-    # `snapshot()` itself still never raises; the upstream message reaches
-    # only the logger, never the client.
-    raise RuntimeError(f"health.get_{metric} returned no usable list")
-
-
-async def snapshot(
-    resource: dict,
-    member_sub: str,
-    *,
-    read_records=None,
-    read_health=None,
-) -> dict:
-    """The full resource-level snapshot the client renders.
-
-    Never raises. A source that fails contributes nothing and is reported in
-    `sources.errors`, because a widget showing three of four series is more
-    useful than one showing an error, and the client labels the gap.
-    """
-    read_records = read_records or _default_read_records
-    read_health = read_health or _default_read_health
-
-    spec = resource.get("recipe") or {}
+async def snapshot(resource: dict, member_sub: str) -> dict:
+    """Never raises: a broken source is `partial`, a broken template is the
+    `_BROKEN` view, and both still carry a valid revision the client can act on."""
+    spec = recipe_rules.upgrade(resource.get("recipe") or {})
     filters = resource.get("filters") or {}
-    days = filters.get("days", DEFAULT_DAYS)
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    metric = spec.get("metric") or {"op": "count"}
+    parsed = recipe_rules.parse_sources(spec)
+    if isinstance(parsed, str):
+        logger.warning("widget %s has an invalid recipe: %s", resource.get("id"), parsed)
+        parsed = {}
 
-    points: list[dict] = []
-    errors: list[dict] = []
+    ctx = ReadContext(member_sub=member_sub, filters=filters)
 
-    for source in spec.get("sources", []):
-        kind = source.get("type")
+    async def read(alias, source, params):
         try:
-            if kind == "records":
-                rows = await read_records(
-                    member_sub, source["collection"], since=since
-                )
-                points.extend(_points_from_records(rows, metric))
-            elif kind == "health":
-                rows = await read_health(member_sub, source["metric"], days)
-                points.extend(_points_from_health(rows, metric))
+            return alias, await source.read(ctx, params), None
         except Exception:
-            # Structural diagnostics only. The upstream message can carry a
-            # DSN, a token, or a member's data, and this snapshot is returned
-            # over HTTP to a client.
-            logger.warning("widget source %s failed", kind, exc_info=True)
-            errors.append({"source": kind, "reason": "unavailable"})
+            # Structural diagnostics only: upstream messages can carry a
+            # token, a DSN or member data, and this goes over HTTP.
+            logger.warning("widget source %s (%s) failed", alias, source.name, exc_info=True)
+            return alias, {}, {"source": alias, "reason": "unavailable"}
 
-    points.sort(key=lambda point: point["label"])
-    points = points[-MAX_POINTS:]
+    results = await asyncio.gather(*(read(a, s, p) for a, (s, p) in parsed.items()))
+    data: dict = {alias: value for alias, value, _ in results}
+    errors = [error for _, _, error in results if error]
+    data[template_rules.WIDGET_ALIAS] = {
+        "title": resource.get("title", ""),
+        "days": str(filters.get("days", DEFAULT_DAYS)),
+        "empty_points": [],
+    }
+
+    components, _problems = template_rules.render(spec.get("template") or [], data)
+    candidate = {"protocol": protocol.PROTOCOL, "op": "create", "surface": {
+        "surfaceId": f"widget:{resource['id']}", "catalogId": "column", "catalogVersion": protocol.CATALOG_VERSION,
+        "components": components, "data": data, "localState": {}}}
+    error = protocol.validate_operation(candidate, widget=True)
+    if error:
+        logger.warning("widget %s rendered an invalid surface: %s", resource.get("id"), error)
+        components, data = _BROKEN, {template_rules.WIDGET_ALIAS: data[template_rules.WIDGET_ALIAS]}
 
     return {
         "resourceId": resource["id"],
@@ -106,115 +69,22 @@ async def snapshot(
         "revision": resource["revision"],
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "filters": filters,
-        "view": {
-            "components": _components(resource, points, errors),
-            "data": {"points": points, "title": resource.get("title", "")},
-        },
+        "refreshAfterSeconds": recipe_rules.ttl_seconds(spec),
+        "actionRisk": _risk_overrides(spec),
+        "view": {"components": components, "data": data},
         "sources": {"partial": bool(errors), "errors": errors},
     }
 
 
-def _points_from_records(rows: list[dict], metric: dict) -> list[dict]:
-    """Bucket by local day, then apply the metric.
-
-    A value that cannot be read as a number is SKIPPED, never coerced to
-    zero: a missing measurement and a measured zero are different facts, and
-    a chart that conflates them is quietly wrong.
-    """
-    buckets: dict[str, list[float]] = {}
-    for row in rows:
-        occurred = row.get("occurred_at")
-        label = occurred.date().isoformat() if hasattr(occurred, "date") else str(occurred)
-        if metric["op"] == "count":
-            buckets.setdefault(label, []).append(1.0)
-            continue
-        raw = (row.get("payload") or {}).get(metric.get("field"))
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            continue
-        buckets.setdefault(label, []).append(float(raw))
-
-    return [
-        {"label": label, "value": _apply(metric["op"], values), "source": "records"}
-        for label, values in buckets.items()
-        if values
-    ]
-
-
-def _points_from_health(rows: list[dict], metric: dict) -> list[dict]:
-    field = metric.get("field")
-    points = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        label = str(row.get("date", ""))
-        raw = row.get(field) if field else 1
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            continue
-        points.append({"label": label, "value": float(raw), "source": "health"})
-    return points
-
-
-def _apply(op: str, values: list[float]) -> float:
-    if op == "count":
-        return float(len(values))
-    if op == "sum":
-        return float(sum(values))
-    if op == "avg":
-        return float(sum(values) / len(values))
-    return float(max(values))
-
-
-def _components(resource: dict, points: list[dict], errors: list[dict]) -> list[dict]:
-    """The rendered tree. Catalog types only.
-
-    An empty series renders a sentence rather than a blank chart: a chart with
-    no bars looks broken, and the most likely cause is a collection name that
-    never matched anything, which the member can act on.
-    """
-    children: list[dict] = [_range_control(resource)]
-    if points:
-        children.append({"id": "chart", "type": "chart", "properties": {
-            "points": "$data.points",
-        }})
-    else:
-        children.append({"id": "empty", "type": "text", "properties": {
-            "text": "Nothing recorded yet for this widget.",
-        }})
-    if errors:
-        children.append({"id": "partial", "type": "badge", "properties": {
-            "label": "Some data unavailable",
-        }})
-
-    return [{
-        "id": "root",
-        "type": "card",
-        "properties": {"title": resource.get("title", "")},
-        "children": children,
-    }]
-
-
-def _range_control(resource: dict) -> dict:
-    """The inline filter, rendered as part of the snapshot.
-
-    It is a `segmentedSelection` whose `actionId` is `widget.setRange`, an id
-    the CHAT protocol does not allow - `assistant-ui/1.0` allowlists only
-    `surface.submit`. That is deliberate and it is why the widget host
-    intercepts this id before the generic renderer ever dispatches it: a
-    widget filter is a resource action, not a chat turn, and the two must not
-    share a channel.
-
-    The selected option comes from the resource's own filters, so the control
-    always shows the state the server actually holds rather than a local guess
-    that can drift from it.
-    """
-    filters = resource.get("filters") or {}
-    selected = str(filters.get("days", DEFAULT_DAYS))
-    return {
-        "id": "range",
-        "type": "segmentedSelection",
-        "properties": {
-            "options": ["7", "30", "90"],
-            "selected": selected,
-            "actionId": "widget.setRange",
-        },
-    }
+def _risk_overrides(spec: dict) -> dict[str, str]:
+    """`<action>:<target>` -> risk, only where it differs from the action's
+    advertised default, so the common case costs nothing on the wire."""
+    overrides: dict[str, str] = {}
+    for target in sorted(recipe_rules.declared_targets(spec)):
+        for action in ACTIONS.values():
+            if not action.targeted:
+                continue
+            risk = action.risk_for(target)
+            if risk is not None and risk != action.default_risk:
+                overrides[f"{action.name}:{target}"] = risk
+    return overrides

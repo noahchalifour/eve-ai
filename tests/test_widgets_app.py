@@ -236,3 +236,93 @@ def test_a_body_supplied_member_is_ignored(client, monkeypatch):
     )
 
     assert seen["member_sub"] == "sub-noah"
+
+
+ENTITY_RESOURCE = {
+    "id": "res-2", "kind": "entity", "title": "Kitchen", "revision": 2, "filters": {},
+    "recipe": {"version": 2, "sources": {"entity": {"type": "home.entity", "entities": ["light.kitchen"]}},
+               "template": [{"id": "root", "type": "card", "properties": {"actionId": "home.toggle",
+                             "actionValue": "light.kitchen"}, "children": []}]},
+}
+
+
+@pytest.fixture
+def home_client(monkeypatch):
+    from eve.widgets import app as widgets_app
+
+    widgets_app.app.dependency_overrides[widgets_app.require_auth] = lambda: None
+    widgets_app.app.dependency_overrides[widgets_app.current_member] = (
+        lambda: {"sub": "sub-noah", "permissions": ["home.control"]}
+    )
+
+    async def fake_get(member_sub, resource_id):
+        return ENTITY_RESOURCE if resource_id == "res-2" else None
+
+    async def fake_snapshot(resource, member_sub):
+        return {"resourceId": resource["id"], "revision": resource["revision"]}
+
+    monkeypatch.setattr(widgets_app.store, "get", fake_get)
+    monkeypatch.setattr(widgets_app.resolve, "snapshot", fake_snapshot)
+    yield TestClient(widgets_app.app)
+    widgets_app.app.dependency_overrides.clear()
+
+
+def _post(client, type, target, revision=2):
+    return client.post("/provider-resources/v1/resources/res-2/actions",
+                       json={"type": type, "input": {"target": target}, "expectedRevision": revision})
+
+
+def test_capabilities_advertise_actions_with_risk_and_label(client):
+    body = client.get("/provider-resources/v1/capabilities").json()
+    toggle = next(a for a in body["actions"] if a["type"] == "home.toggle")
+    assert toggle == {"type": "home.toggle", "risk": "safe", "label": "Toggle"}
+    assert "weather" in body["sourceTypes"] and "entity" in body["kinds"]
+
+
+def test_a_toggle_runs_and_returns_the_fresh_snapshot(home_client, monkeypatch):
+    from dataclasses import replace
+
+    from eve.widgets.actions import REGISTRY
+
+    ran = []
+
+    async def fake_run(ctx):
+        ran.append(ctx.target)
+
+    monkeypatch.setitem(REGISTRY, "home.toggle", replace(REGISTRY["home.toggle"], run=fake_run))
+
+    response = _post(home_client, "home.toggle", "light.kitchen")
+
+    assert response.status_code == 200
+    assert ran == ["light.kitchen"]
+
+
+def test_a_target_the_widget_never_declared_is_400(home_client):
+    """A tampered client cannot turn a light widget into a door opener."""
+    assert _post(home_client, "home.toggle", "lock.front_door").status_code == 400
+
+
+def test_an_unknown_action_is_400(home_client):
+    assert _post(home_client, "home.explode", "light.kitchen").status_code == 400
+
+
+def test_an_action_needs_its_permission(home_client):
+    from eve.widgets import app as widgets_app
+
+    widgets_app.app.dependency_overrides[widgets_app.current_member] = lambda: {"sub": "sub-noah", "permissions": []}
+    assert _post(home_client, "home.toggle", "light.kitchen").status_code == 403
+
+
+def test_an_upstream_failure_is_502(home_client, monkeypatch):
+    from eve.widgets.actions import REGISTRY
+    from eve.widgets.actions.base import ActionFailed
+
+    from dataclasses import replace
+
+    async def boom(ctx):
+        raise ActionFailed("ha down")
+
+    monkeypatch.setitem(REGISTRY, "home.toggle", replace(REGISTRY["home.toggle"], run=boom))
+    response = _post(home_client, "home.toggle", "light.kitchen")
+    assert response.status_code == 502
+    assert "ha down" not in response.text
