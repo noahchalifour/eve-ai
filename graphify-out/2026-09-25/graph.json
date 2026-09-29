@@ -37638,7 +37638,7 @@
       "source_file": "pyproject.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "0.15.0"
+      "version": "0.10.1"
     },
     {
       "id": "src_eve_computer_init_py_src_eve_computer_init_4c0a4a",
@@ -142334,5 +142334,5 @@
       "source_file": "docs/superpowers/plans/2026-08-21-eve-specialists.md"
     }
   ],
-  "built_at_commit": "4902115b2209c927c4b3b64694937da9492e3f2e"
+  "built_at_commit": "04e7d2688dd42f35bf7e91f33bdef06636e47ecd"
 }

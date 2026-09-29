@@ -48,7 +48,7 @@ async def test_an_existing_library_widget_is_reused_not_copied(library):
 
     assert [c["resourceId"] for c in chosen] == ["w-weather"]
     assert library == []
-    assert chosen[0]["default"] == "4x2"
+    assert chosen[0]["default"] == "4x4"
 
 
 async def test_a_new_widget_lands_in_the_library(library):
@@ -141,7 +141,7 @@ async def test_the_node_builds_and_saves_the_dashboard(library, frames, monkeypa
     await node({"member": MEMBER}, _config(REQUEST))
 
     assert saved["device_id"] == "device-12345678" and saved["columns"] == 4
-    assert saved["layout"] == [{"resourceId": "w-weather", "sizes": ["4x2", "4x4"], "x": 0, "y": 0, "w": 4, "h": 2}]
+    assert saved["layout"] == [{"resourceId": "w-weather", "sizes": ["4x2", "4x4"], "x": 0, "y": 0, "w": 4, "h": 4}]
     assert frames[0] == {"phase": "Choosing widgets"}
     assert frames[-1] == {"done": {"revision": 1, "tiles": 1}}
 
