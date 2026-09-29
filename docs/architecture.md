@@ -187,11 +187,16 @@ src/eve/
     store.py        # every eve_record SQL statement; one module owns the table
     tools.py        # record_append / record_query: the only writers and readers
   widgets/
-    recipe.py       # the closed recipe vocabulary and its validator (ADR 0019)
+    sources/        # the audited readers: base.py (registry), series, health, weather, home (entity, media), calendar
+    actions/        # the audited writes: base.py (registry, risk, errors), filters, home
+    recipe.py       # v2 recipes {version, sources, template}; v1 upgrade; permissions/targets/ttl from sources
+    template.py     # template validation (bindings, repeat, action targets) and rendering; no I/O
+    presets.py      # built-in templates: weather, entity, glance, media, chart
+    icons.py        # icon names a widget may emit (mirrors the client's glyph map)
+    resolve.py      # recipe -> snapshot, concurrently, never raises; refreshAfterSeconds + actionRisk
     store.py        # every eve_widget_resource SQL statement
-    resolve.py      # execute a validated recipe; the snapshot route, no model call
-    tools.py        # save_widget: the one widget-authoring tool in the eve graph
-    app.py          # the mounted resource API: per-route auth via require_auth
+    tools.py        # save_widget: presets or custom templates; description generated from the registries
+    app.py          # /provider-resources/v1: capabilities (generated), list, snapshot, actions, delete
   routines/
     cadence.py      # the closed cadence vocabulary and its validator; imports nothing from eve
     store.py        # every eve_routine SQL statement; claim_due is the one household-wide query
@@ -242,15 +247,12 @@ by accident. `tests/test_tools_integration.py::test_eve_sandbox_imports_nothing_
 asserts this the same way `eve.eval`'s one-way dependency is asserted, by
 import graph rather than by convention.
 
-`records/` and `widgets/` are the newest leaves of the same acyclic graph:
-`records.store` and `widgets.store` depend only on `eve.memory.db`, one module
-owning each table, and `widgets.recipe` imports nothing from `eve` at all,
-which is what makes its vocabulary closed. On top of those, `widgets.resolve`
-sits on `records.store`, `widgets.recipe`, and `eve.tools_client`;
-`widgets.tools` and `widgets.app` sit on `widgets.recipe` and `widgets.store`
-and gate on `eve.specialists.permissions`. `graph` binds their tools
-(`record_append`, `record_query`, `save_widget`) alongside the specialists and
-`search_skills`.
+`widgets.sources.*` and `widgets.actions.*` sit on `eve.tools_client` (and
+`records.store` for `series`); `widgets.template` sits on `eve.ui.protocol`
+only; `widgets.recipe` on sources and template; `widgets.resolve` on recipe,
+template and the action registry; `widgets.tools` and `widgets.app` on
+everything above plus `widgets.store`. Adding a source or action is a new
+module plus one import in its package `__init__`; nothing else changes.
 
 Within `eve_ambient/`, `sources/` and `gates` depend on `types`; `ntfy`
 depends only on `eve`'s own modules (`eve.settings`) and not on `types` at

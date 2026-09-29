@@ -1,245 +1,93 @@
-"""The resolver is what makes a refresh cost no model call. It is pure over
-injected readers so every partial-failure branch is reachable in a unit test."""
+"""A refresh is sources + template, no model. Pure over an injected registry,
+so every partial-failure branch is a unit test."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import pytest
+from pydantic import BaseModel, ConfigDict
 
-RESOURCE = {
-    "id": "res-1",
-    "kind": "chart",
-    "title": "Alpha",
-    "recipe": {
-        "sources": [{"type": "records", "collection": "alpha.thing"}],
-        "metric": {"op": "count"},
-    },
-    "filters": {"days": 30},
-    "revision": 3,
-}
+from eve.ui import protocol
 
 
-def _records(count: int):
-    now = datetime.now(timezone.utc)
-
-    async def read(member_sub, collection, since=None, until=None, limit=500):
-        return [
-            {"occurred_at": now - timedelta(days=i), "payload": {"weight": 100 + i}}
-            for i in range(count)
-        ]
-
-    return read
+class P(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-async def _no_health(member_sub, metric, days):
-    raise AssertionError("health must not be read for a records-only recipe")
+def _source(name, read, ttl=60, targets=frozenset()):
+    from eve.widgets.sources.base import SourceType
+
+    return SourceType(name=name, params=P, fields=frozenset({"v", "items"}), read=read, ttl_seconds=ttl,
+                      item_fields={"items": frozenset()}, targets=lambda p: targets)
 
 
-async def test_a_records_recipe_produces_points(monkeypatch):
+async def good(ctx, params):
+    return {"v": "hello", "items": [{"n": "a"}]}
+
+
+async def bad(ctx, params):
+    raise RuntimeError("upstream down, token=secret")
+
+
+def _resource(sources, template):
+    return {"id": "res-1", "kind": "custom", "title": "T", "revision": 3, "filters": {},
+            "recipe": {"version": 2, "sources": sources, "template": template}}
+
+
+TEMPLATE = [{"id": "root", "type": "card", "properties": {}, "children": [
+    {"id": "t", "type": "text", "properties": {"text": "$data.a.v"}, "children": []}]}]
+
+
+@pytest.fixture
+def registry(monkeypatch):
+    from eve.widgets import sources
+
+    fake = {"good": _source("good", good, ttl=30, targets=frozenset({"light.kitchen"})), "bad": _source("bad", bad, ttl=10)}
+    monkeypatch.setattr(sources.base, "REGISTRY", fake)
+    return fake
+
+
+async def test_snapshot_fills_data_and_is_a_valid_widget_surface(registry):
     from eve.widgets import resolve
 
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=_records(3), read_health=_no_health
-    )
+    snap = await resolve.snapshot(_resource({"a": {"type": "good"}}, TEMPLATE), "sub-noah")
 
-    assert snapshot["resourceId"] == "res-1"
-    assert snapshot["revision"] == 3
-    assert snapshot["sources"]["partial"] is False
-    assert len(snapshot["view"]["data"]["points"]) == 3
+    assert snap["view"]["data"]["a"]["v"] == "hello"
+    assert snap["view"]["data"]["widget"]["title"] == "T"
+    assert snap["refreshAfterSeconds"] == 30
+    op = {"protocol": protocol.PROTOCOL, "op": "create", "surface": {"surfaceId": "w", "catalogId": "column",
+          "catalogVersion": "1", "components": snap["view"]["components"], "data": snap["view"]["data"], "localState": {}}}
+    assert protocol.validate_operation(op, widget=True) is None
 
 
-async def test_the_snapshot_view_is_a_valid_surface_tree(monkeypatch):
-    """The client validates the whole tree before swapping it in, so an
-    invalid tree here is an invisible widget."""
-    from eve.ui import protocol
+async def test_a_failed_source_is_partial_and_never_leaks_its_message(registry):
     from eve.widgets import resolve
 
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=_records(2), read_health=_no_health
-    )
+    snap = await resolve.snapshot(_resource({"a": {"type": "good"}, "b": {"type": "bad"}}, TEMPLATE), "s")
 
-    operation = {
-        "protocol": protocol.PROTOCOL,
-        "op": "create",
-        "surface": {
-            "surfaceId": "sf-1",
-            "catalogId": "column",
-            "catalogVersion": protocol.CATALOG_VERSION,
-            "components": snapshot["view"]["components"],
-            "data": snapshot["view"]["data"],
-            "localState": {},
-        },
-    }
-    # This tree is a WIDGET snapshot, so it validates in the widget-scoped
-    # mode, which additionally allows the range control's `widget.setRange`
-    # action id - an id the chat protocol deliberately rejects.
-    assert protocol.validate_operation(operation, widget=True) is None
+    assert snap["sources"] == {"partial": True, "errors": [{"source": "b", "reason": "unavailable"}]}
+    assert "secret" not in str(snap)
+    assert snap["refreshAfterSeconds"] == 10
 
 
-async def test_an_empty_collection_says_so_rather_than_charting_nothing():
+async def test_risk_overrides_are_published_per_target(registry, monkeypatch):
     from eve.widgets import resolve
+    from eve.widgets.actions import REGISTRY
 
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=_records(0), read_health=_no_health
-    )
-
-    rendered = str(snapshot["view"]["components"])
-    assert "Nothing recorded" in rendered
-    assert snapshot["view"]["data"]["points"] == []
+    snap = await resolve.snapshot(_resource({"a": {"type": "good"}}, TEMPLATE), "s")
+    # light.kitchen is safe for home.toggle == its default, so no override;
+    # overrides appear only where risk differs from the action's default.
+    assert "home.toggle:light.kitchen" not in snap["actionRisk"]
 
 
-async def test_a_failing_source_is_partial_not_fatal():
+async def test_a_v1_recipe_still_renders_as_a_chart(monkeypatch):
     from eve.widgets import resolve
+    from eve.widgets.sources import series
 
-    async def boom(*args, **kwargs):
-        raise RuntimeError("upstream exploded")
-
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=boom, read_health=_no_health
-    )
-
-    assert snapshot["sources"]["partial"] is True
-    assert snapshot["sources"]["errors"] == [{"source": "records", "reason": "unavailable"}]
-
-
-async def test_a_failing_source_never_leaks_the_upstream_message():
-    """Public errors are sanitized; the raw string could carry anything."""
-    from eve.widgets import resolve
-
-    async def boom(*args, **kwargs):
-        raise RuntimeError("psql://user:hunter2@db/eve exploded")
-
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=boom, read_health=_no_health
-    )
-
-    assert "hunter2" not in str(snapshot)
-
-
-async def test_the_reader_is_called_with_the_authenticated_member():
-    from eve.widgets import resolve
-
-    seen = {}
-
-    async def read(member_sub, collection, since=None, until=None, limit=500):
-        seen["member_sub"] = member_sub
-        seen["collection"] = collection
+    async def rows(member_sub, collection, since=None, until=None, limit=500):
         return []
 
-    await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=read, read_health=_no_health
-    )
-
-    assert seen == {"member_sub": "sub-noah", "collection": "alpha.thing"}
-
-
-async def test_a_sum_metric_sums_the_named_field():
-    from eve.widgets import resolve
-
-    resource = {**RESOURCE, "recipe": {
-        **RESOURCE["recipe"], "metric": {"op": "sum", "field": "weight"},
-    }}
-
-    snapshot = await resolve.snapshot(
-        resource, "sub-noah", read_records=_records(2), read_health=_no_health
-    )
-
-    # 100 + 101, bucketed by day then summed.
-    assert sum(p["value"] for p in snapshot["view"]["data"]["points"]) == 201
-
-
-async def test_a_missing_numeric_field_is_skipped_not_zeroed():
-    """An unsupported value is null, never zero (spec)."""
-    from eve.widgets import resolve
-
-    async def read(member_sub, collection, since=None, until=None, limit=500):
-        return [{"occurred_at": datetime.now(timezone.utc), "payload": {"other": 1}}]
-
-    resource = {**RESOURCE, "recipe": {
-        **RESOURCE["recipe"], "metric": {"op": "sum", "field": "weight"},
-    }}
-
-    snapshot = await resolve.snapshot(
-        resource, "sub-noah", read_records=read, read_health=_no_health
-    )
-
-    assert snapshot["view"]["data"]["points"] == []
-
-
-async def test_a_health_recipe_reads_health():
-    from eve.widgets import resolve
-
-    resource = {**RESOURCE, "recipe": {
-        "sources": [{"type": "health", "metric": "activity"}],
-        "metric": {"op": "sum", "field": "active_calories"},
-    }}
-
-    async def read_health(member_sub, metric, days):
-        assert member_sub == "sub-noah"
-        assert metric == "activity"
-        return [{"date": "2026-09-01", "active_calories": 500}]
-
-    snapshot = await resolve.snapshot(
-        resource, "sub-noah", read_records=_records(0), read_health=read_health
-    )
-
-    assert snapshot["view"]["data"]["points"] == [
-        {"label": "2026-09-01", "value": 500, "source": "health"}
-    ]
-
-
-async def test_filters_narrow_the_window():
-    from eve.widgets import resolve
-
-    seen = {}
-
-    async def read(member_sub, collection, since=None, until=None, limit=500):
-        seen["since"] = since
-        return []
-
-    resource = {**RESOURCE, "filters": {"days": 7}}
-    await resolve.snapshot(
-        resource, "sub-noah", read_records=read, read_health=_no_health
-    )
-
-    age = datetime.now(timezone.utc) - seen["since"]
-    assert 6 <= age.days <= 7
-
-
-async def test_the_snapshot_carries_an_inline_range_control():
-    """The spec's inline filters: the control ships IN the snapshot, so a
-    widget the model authored once stays adjustable without re-authoring."""
-    from eve.widgets import resolve
-
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=_records(1), read_health=_no_health
-    )
-
-    root = snapshot["view"]["components"][0]
-    control = next(c for c in root["children"] if c["type"] == "segmentedSelection")
-    assert control["properties"]["actionId"] == "widget.setRange"
-
-
-async def test_the_range_control_shows_the_persisted_selection():
-    """It reflects server state, not a local guess that can drift from it."""
-    from eve.widgets import resolve
-
-    resource = {**RESOURCE, "filters": {"days": 7}}
-    snapshot = await resolve.snapshot(
-        resource, "sub-noah", read_records=_records(1), read_health=_no_health
-    )
-
-    root = snapshot["view"]["components"][0]
-    control = next(c for c in root["children"] if c["type"] == "segmentedSelection")
-    assert control["properties"]["selected"] == "7"
-
-
-async def test_an_empty_snapshot_still_carries_the_control():
-    """Otherwise a widget whose collection is empty can never be widened to a
-    range that would have found something."""
-    from eve.widgets import resolve
-
-    snapshot = await resolve.snapshot(
-        RESOURCE, "sub-noah", read_records=_records(0), read_health=_no_health
-    )
-
-    root = snapshot["view"]["components"][0]
-    assert any(c["type"] == "segmentedSelection" for c in root["children"])
+    monkeypatch.setattr(series.record_store, "query", rows)
+    resource = {"id": "r", "kind": "chart", "title": "Old", "revision": 1, "filters": {"days": 7},
+                "recipe": {"sources": [{"type": "records", "collection": "alpha"}], "metric": {"op": "count"}}}
+    snap = await resolve.snapshot(resource, "s")
+    assert snap["view"]["data"]["widget"]["days"] == "7"
+    assert any(c["type"] == "segmentedSelection" for c in snap["view"]["components"][0]["children"])

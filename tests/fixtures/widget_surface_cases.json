@@ -1,0 +1,21 @@
+[
+  {"name": "tappable card", "valid": true, "components": [
+    {"id": "root", "type": "card", "properties": {"title": "Kitchen", "actionId": "home.toggle", "actionValue": "light.kitchen"}, "children": [
+      {"id": "t", "type": "text", "properties": {"text": "$data.kitchen.primary.state_label"}, "children": []}]}]},
+  {"name": "namespaced button action", "valid": true, "components": [
+    {"id": "b", "type": "button", "properties": {"label": "Next", "actionId": "home.media.next", "actionValue": "media_player.lr"}, "children": []}]},
+  {"name": "range control", "valid": true, "components": [
+    {"id": "r", "type": "segmentedSelection", "properties": {"options": ["7", "30"], "selected": "30", "actionId": "widget.setRange"}, "children": []}]},
+  {"name": "action id without a namespace", "valid": false, "components": [
+    {"id": "b", "type": "button", "properties": {"label": "Go", "actionId": "toggle"}, "children": []}]},
+  {"name": "action id with uppercase", "valid": false, "components": [
+    {"id": "b", "type": "button", "properties": {"label": "Go", "actionId": "Home.Toggle"}, "children": []}]},
+  {"name": "tappable card containing a button", "valid": false, "components": [
+    {"id": "root", "type": "card", "properties": {"actionId": "home.toggle", "actionValue": "light.kitchen"}, "children": [
+      {"id": "b", "type": "button", "properties": {"label": "Off", "actionId": "home.toggle", "actionValue": "light.kitchen"}, "children": []}]}]},
+  {"name": "tappable card containing a setState button", "valid": false, "components": [
+    {"id": "root", "type": "card", "properties": {"actionId": "home.toggle"}, "children": [
+      {"id": "b", "type": "button", "properties": {"label": "x", "setState": {"a": 1}}, "children": []}]}]},
+  {"name": "card action value must be scalar", "valid": false, "components": [
+    {"id": "root", "type": "card", "properties": {"actionId": "home.toggle", "actionValue": {"entity": "x"}}, "children": []}]}
+]

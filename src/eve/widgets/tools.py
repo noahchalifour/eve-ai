@@ -1,12 +1,7 @@
-"""The one way a widget is created.
-
-Everything the model supplies is checked here, and everything it must NOT
-supply - the owner, the credentials, the endpoints - is injected or absent by
-construction. A recipe that passes this gate runs on every later refresh with
-no model and no human in the loop, which is why the checks are in this order:
-kind, then recipe shape, then permissions, then storage.
-"""
-
+# src/eve/widgets/tools.py
+"""The one way a widget is created. Everything the model supplies is checked
+here; everything it must NOT supply (owner, credentials, endpoints) is
+injected or absent by construction."""
 from __future__ import annotations
 
 import logging
@@ -18,64 +13,70 @@ from langgraph.prebuilt import InjectedState
 
 from eve.specialists.permissions import permission_denial
 from eve.state import EveState, turn_is_ambient
+from eve.widgets import actions, presets, store
 from eve.widgets import recipe as recipe_rules
-from eve.widgets import store
+from eve.widgets import sources as source_registry
 
 logger = logging.getLogger(__name__)
 
-_DESCRIPTION = """Save a reusable widget the member can open later from Widgets.
 
-The widget refreshes its own data every time it is opened, without asking you
-again, so the `recipe` must say WHERE the data comes from rather than
-containing the data itself.
+def _describe() -> str:
+    """Generated from the registries, so a new source/preset/action is
+    documented to the model the moment it is registered."""
+    preset_lines = "\n".join(f"- {p.name}: {p.description}" for p in presets.PRESETS.values())
+    source_lines = "\n".join(f"- {s.name}: {s.description}" for s in source_registry.REGISTRY.values())
+    action_lines = "\n".join(
+        f"- {a.name} ({a.label})" for a in actions.REGISTRY.values() if a.targeted
+    )
+    return f"""Save a live widget the member can open from Widgets. It refreshes itself with no model call.
 
-`recipe` is {"sources": [...], "metric": {...}}. A source is either
-{"type": "records", "collection": "<a collection you have recorded into>"} or
-{"type": "health", "metric": "recovery"|"sleep"|"activity"}. A metric is
-{"op": "count"} or {"op": "sum"|"avg"|"max", "field": "<payload field>"}.
+Prefer a preset: pass `preset` and its `options`.
+{preset_lines}
 
-Save a widget when the member wants to keep looking at something. Answer in
-prose for a one-off question."""
+For anything else pass `sources` ({{alias: {{type, ...params}}}}, at most 4) and a `template` (a component tree;
+see the build-a-widget skill). Bind data as $data.<alias>.<field>; repeat a list with
+{{"type": "list", "properties": {{"repeat": "$data.<alias>.<list>", "limit": n, "empty": "..."}}}} and $item.<key>.
+Source types:
+{source_lines}
+
+Actions (actionId + actionValue = a target one of the widget's sources declares):
+{action_lines}
+
+Answer in prose for a one-off question; save a widget when the member wants to keep looking at something."""
 
 
-@tool(description=_DESCRIPTION)
+@tool(description=_describe())
 async def save_widget(
     title: str,
-    kind: str,
-    recipe: dict,
     state: Annotated[EveState, InjectedState],
     config: RunnableConfig,
+    preset: str | None = None,
+    options: dict | None = None,
+    sources: dict | None = None,
+    template: list | None = None,
     filters: dict | None = None,
 ) -> str:
-    configurable = config.get("configurable") or {}
-    member = configurable.get("member") or {}
+    member = (config.get("configurable") or {}).get("member") or {}
     member_sub = member["sub"]
 
-    # An ambient turn is composed from a webhook payload, not spoken by the
-    # member, and the ambient credential can impersonate anyone. It cannot
-    # create a durable resource in someone's account. Keyed off the marker
-    # `compose_prompt` really emits, via the one shared predicate: nothing
-    # sets `configurable["is_ambient"]`, so checking that was inert (EVE-30).
     if turn_is_ambient(state.get("messages") or []):
         return "A widget cannot be created from an ambient turn."
-
-    if kind not in recipe_rules.KINDS:
-        legal = ", ".join(sorted(recipe_rules.KINDS))
-        return f"Unknown widget kind {kind!r}. Legal kinds: {legal}."
-
     if len(title) > recipe_rules.MAX_NAME:
-        return (
-            f"The widget title is too long: {len(title)} characters, "
-            f"the limit is {recipe_rules.MAX_NAME}."
-        )
+        return f"The widget title is too long: {len(title)} characters, the limit is {recipe_rules.MAX_NAME}."
+    if (preset is None) == (template is None):
+        return "Pass either a preset (with options) or sources plus a template, not both and not neither."
 
-    error = recipe_rules.validate(recipe)
+    if preset is not None:
+        built = presets.build(preset, options)
+        if isinstance(built, str):
+            return f"The widget was rejected: {built}"
+        recipe, kind = built, preset
+    else:
+        recipe, kind = {"version": recipe_rules.RECIPE_VERSION, "sources": sources or {}, "template": template}, "custom"
+
+    error = recipe_rules.validate(recipe, action_accepts=actions.accepts)
     if error is not None:
-        return (
-            f"The widget recipe was rejected: {error}. "
-            "A source is {\"type\": \"records\", \"collection\": ...} or "
-            "{\"type\": \"health\", \"metric\": ...}; nothing else is legal."
-        )
+        return f"The widget was rejected: {error}"
 
     chosen_filters = filters or {}
     filter_error = recipe_rules.validate_filters(chosen_filters)
@@ -88,14 +89,8 @@ async def save_widget(
             return denial
 
     try:
-        created = await store.create(
-            member_sub, kind, title, recipe, chosen_filters
-        )
+        created = await store.create(member_sub, kind, title, recipe, chosen_filters)
     except Exception as exc:
         logger.warning("save_widget failed", exc_info=True)
         return f"error: {exc.__class__.__name__}"
-
-    return (
-        f"Saved the widget {title!r} (id {created['id']}). "
-        "It appears under Widgets and refreshes itself when opened."
-    )
+    return f"Saved the widget {title!r} (id {created['id']}). It appears under Widgets and stays up to date on its own."

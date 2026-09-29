@@ -35,7 +35,11 @@ from pydantic import BaseModel
 from aegra_api.core.auth_deps import require_auth
 
 from eve.specialists.permissions import permission_denial
+from eve.widgets import actions as action_registry
+from eve.widgets import presets
 from eve.widgets import recipe as recipe_rules, resolve, store
+from eve.widgets import sources as source_registry
+from eve.widgets.actions.base import ActionConflict, ActionContext, ActionFailed, ActionRejected
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +49,10 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 PREFIX = "/provider-resources/v1"
 PROTOCOL = "provider-resource/1.0"
 
-# Risk classes, per the spec. `safe` executes on tap; a `confirm` action needs
-# the client's confirmation sheet first. Nothing outside this map is legal, so
-# an action cannot be invented by an authored recipe.
-ACTION_RISK = {"filters.replace": "safe"}
+MIN_REFRESH_SECONDS = 5
 
 # The surface-level action id the inline range control carries
-# (`eve.widgets.resolve._range_control`). The client maps it onto a
+# (`eve.widgets.presets._chart`). The client maps it onto a
 # `filters.replace` action rather than sending it verbatim, so the route's
 # vocabulary stays one entry long; this constant exists so the two modules
 # cannot drift on the spelling.
@@ -107,17 +108,17 @@ async def _load(member: dict, resource_id: str) -> dict:
 
 @router.get(f"{PREFIX}/capabilities")
 async def capabilities(member: dict = Depends(current_member)) -> dict:
-    """What this deployment supports. A client that 404s here concludes the
-    provider has no widget support at all; a transport failure means
-    temporarily unavailable, which is a different thing entirely."""
+    """Generated from the registries: registering a source, action or preset
+    is the whole job of advertising it."""
     return {
         "protocol": PROTOCOL,
-        "kinds": sorted(recipe_rules.KINDS),
-        "sourceTypes": sorted(recipe_rules.SOURCE_TYPES),
+        "kinds": sorted([*presets.PRESETS, "custom"]),
+        "sourceTypes": sorted(source_registry.REGISTRY),
         "actions": [
-            {"type": name, "risk": risk} for name, risk in sorted(ACTION_RISK.items())
+            {"type": a.name, "risk": a.default_risk, "label": a.label}
+            for a in sorted(action_registry.REGISTRY.values(), key=lambda a: a.name)
         ],
-        "limits": {"maxDays": recipe_rules.MAX_DAYS},
+        "limits": {"maxDays": recipe_rules.MAX_DAYS, "minRefreshSeconds": MIN_REFRESH_SECONDS},
     }
 
 
@@ -153,27 +154,37 @@ async def run_action(
     member: dict = Depends(current_member),
 ) -> dict:
     resource = await _load(member, resource_id)
-
-    if body.type not in ACTION_RISK:
+    action = action_registry.REGISTRY.get(body.type)
+    if action is None:
         raise HTTPException(status_code=400, detail="unknown action")
 
     _require_permissions(member, resource)
+    if action.permission and permission_denial(member["permissions"], action.permission):
+        raise HTTPException(status_code=403, detail="forbidden")
 
-    error = recipe_rules.validate_filters(body.input)
-    if error is not None:
-        raise HTTPException(status_code=400, detail=f"invalid filters: {error}")
+    target = None
+    if action.targeted:
+        target = body.input.get("target")
+        # The security boundary: only targets THIS widget's sources declared.
+        if not isinstance(target, str) or target not in recipe_rules.declared_targets(resource["recipe"]):
+            raise HTTPException(status_code=400, detail="unknown target")
+        if action.risk_for(target) is None:
+            raise HTTPException(status_code=400, detail="action cannot act on that target")
 
-    updated = await store.update_filters(
-        member["sub"], resource_id, body.input, body.expectedRevision
-    )
-    if updated is None:
-        # Somebody else moved first. Answer with the current snapshot so the
-        # client can show fresh data instead of an error it cannot act on.
+    ctx = ActionContext(member=member, resource=resource, target=target, input=body.input,
+                        expected_revision=body.expectedRevision)
+    try:
+        updated = await action.run(ctx)
+    except ActionConflict:
         current = await _load(member, resource_id)
-        fresh = await resolve.snapshot(current, member["sub"])
-        raise HTTPException(status_code=409, detail=fresh)
+        raise HTTPException(status_code=409, detail=await resolve.snapshot(current, member["sub"]))
+    except ActionRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ActionFailed:
+        logger.warning("widget action %s failed on %s", action.name, resource_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="the device did not respond")
 
-    return await resolve.snapshot(updated, member["sub"])
+    return await resolve.snapshot(updated or resource, member["sub"])
 
 
 @router.delete(f"{PREFIX}/resources/{{resource_id}}", status_code=204)

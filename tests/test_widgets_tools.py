@@ -8,20 +8,11 @@ exactly how the old `configurable["is_ambient"]` check survived (EVE-30).
 """
 from __future__ import annotations
 
+import pytest
 from langchain_core.messages import HumanMessage
 
-CONFIG = {
-    "configurable": {
-        "member": {"sub": "sub-noah", "permissions": ["health"]},
-    }
-}
+CONFIG = {"configurable": {"member": {"sub": "sub-noah", "permissions": ["home.control"]}}}
 NO_PERMS = {"configurable": {"member": {"sub": "sub-noah", "permissions": []}}}
-
-RECIPE = {
-    "sources": [{"type": "records", "collection": "alpha.thing"}],
-    "metric": {"op": "count"},
-}
-
 
 
 # InjectedState validates the full EveState shape strictly when a tool is
@@ -34,7 +25,7 @@ def _full_state(messages):
             "name": "Noah",
             "role": "adult",
             "timezone": "America/Toronto",
-            "permissions": ["health"],
+            "permissions": ["home.control"],
             "local_time": "2026-08-27 08:00 EDT",
         },
         "system_prompt": "",
@@ -44,155 +35,94 @@ def _full_state(messages):
     }
 
 
-TYPED = _full_state([HumanMessage(content="Chart how many things I logged.")])
-
-
-def _call(tool, args, config=CONFIG, state=TYPED):
-    return tool.ainvoke(
-        {
-            "type": "tool_call",
-            "name": tool.name,
-            "args": {**args, "state": state},
-            "id": "t1",
-        },
-        config=config,
-    )
-
-
-async def test_saving_a_widget_stores_it_for_the_authenticated_member(monkeypatch):
+@pytest.fixture
+def stored(monkeypatch):
     from eve.widgets import tools
 
-    seen = {}
+    saved = {}
 
     async def fake_create(member_sub, kind, title, recipe, filters):
-        seen.update(member_sub=member_sub, kind=kind, title=title, recipe=recipe)
-        return {"id": "res-1", "revision": 1}
+        saved.update(kind=kind, title=title, recipe=recipe)
+        return {"id": "res-9"}
 
     monkeypatch.setattr(tools.store, "create", fake_create)
-
-    result = await _call(
-        tools.save_widget,
-        {"title": "Alpha", "kind": "chart", "recipe": RECIPE},
-    )
-
-    assert seen["member_sub"] == "sub-noah"
-    assert seen["kind"] == "chart"
-    assert "res-1" in result.content
+    return saved
 
 
-async def test_an_invalid_recipe_is_refused_with_a_diagnostic(monkeypatch):
-    from eve.widgets import tools
-
-    async def unreachable(*args, **kwargs):
-        raise AssertionError("must not store an invalid recipe")
-
-    monkeypatch.setattr(tools.store, "create", unreachable)
-
-    result = await _call(
-        tools.save_widget,
-        {
-            "title": "Bad",
-            "kind": "chart",
-            "recipe": {"sources": [{"type": "http", "url": "https://x"}]},
-        },
-    )
-
-    assert "source-type" in result.content
+# `turn_is_ambient` fails CLOSED when a state carries no HumanMessage at all
+# (EVE-30 hardening), so every non-ambient test below needs a real, non-marked
+# human message rather than the brief's illustrative `_full_state([])` - an
+# empty message list is indistinguishable from "nothing attributable to a
+# member" and would trip the ambient guard before reaching the check under
+# test.
+SAID = _full_state([HumanMessage(content="Save it.")])
 
 
-async def test_an_unknown_kind_is_refused(monkeypatch):
-    from eve.widgets import tools
+async def test_a_preset_widget_is_saved_with_its_kind(stored):
+    from eve.widgets.tools import save_widget
 
-    async def unreachable(*args, **kwargs):
-        raise AssertionError("must not store an unknown kind")
-
-    monkeypatch.setattr(tools.store, "create", unreachable)
-
-    result = await _call(
-        tools.save_widget, {"title": "X", "kind": "dashboard", "recipe": RECIPE}
-    )
-
-    assert "kind" in result.content.lower()
+    out = await save_widget.ainvoke({"title": "Kitchen", "preset": "entity", "options": {"entity": "light.kitchen"},
+                                     "state": SAID}, config=CONFIG)
+    assert "Saved" in out and stored["kind"] == "entity"
 
 
-async def test_an_overlong_title_is_refused(monkeypatch):
-    from eve.widgets import recipe as recipe_rules
-    from eve.widgets import tools
+async def test_a_custom_template_is_saved(stored):
+    from eve.widgets.tools import save_widget
 
-    async def unreachable(*args, **kwargs):
-        raise AssertionError("must not store an overlong title")
-
-    monkeypatch.setattr(tools.store, "create", unreachable)
-
-    result = await _call(
-        tools.save_widget,
-        {
-            "title": "T" * (recipe_rules.MAX_NAME + 1),
-            "kind": "chart",
-            "recipe": RECIPE,
-        },
-    )
-
-    assert "title" in result.content.lower()
+    out = await save_widget.ainvoke({
+        "title": "Today",
+        "sources": {"cal": {"type": "calendar", "limit": 3}},
+        "template": [{"id": "l", "type": "list", "properties": {"repeat": "$data.cal.items", "limit": 3,
+                      "empty": "Nothing today"}, "children": [
+                      {"id": "e", "type": "text", "properties": {"text": "$item.summary"}, "children": []}]}],
+        "state": SAID,
+    }, config=CONFIG)
+    assert "Saved" in out and stored["kind"] == "custom"
 
 
-async def test_a_health_recipe_requires_the_health_permission(monkeypatch):
-    from eve.widgets import tools
+async def test_a_bad_template_explains_itself(stored):
+    from eve.widgets.tools import save_widget
 
-    async def unreachable(*args, **kwargs):
-        raise AssertionError("must not store without permission")
-
-    monkeypatch.setattr(tools.store, "create", unreachable)
-
-    result = await _call(
-        tools.save_widget,
-        {
-            "title": "H",
-            "kind": "chart",
-            "recipe": {
-                "sources": [{"type": "health", "metric": "activity"}],
-                "metric": {"op": "count"},
-            },
-        },
-        config=NO_PERMS,
-    )
-
-    assert "permission" in result.content.lower()
+    out = await save_widget.ainvoke({"title": "X", "sources": {"cal": {"type": "calendar"}},
+                                     "template": [{"id": "t", "type": "text", "properties": {"text": "$data.nope.x"},
+                                                   "children": []}], "state": SAID}, config=CONFIG)
+    assert "nope" in out and not stored
 
 
-async def test_a_records_only_recipe_needs_no_extra_permission(monkeypatch):
-    """Reading your own records is the least privileged thing there is."""
-    from eve.widgets import tools
+async def test_preset_and_template_together_is_rejected(stored):
+    from eve.widgets.tools import save_widget
 
-    async def fake_create(member_sub, kind, title, recipe, filters):
-        return {"id": "res-2", "revision": 1}
-
-    monkeypatch.setattr(tools.store, "create", fake_create)
-
-    result = await _call(
-        tools.save_widget,
-        {"title": "Alpha", "kind": "chart", "recipe": RECIPE},
-        config=NO_PERMS,
-    )
-
-    assert "res-2" in result.content
+    out = await save_widget.ainvoke({"title": "X", "preset": "weather", "template": [], "state": SAID},
+                                    config=CONFIG)
+    assert "either" in out.lower()
 
 
-async def test_an_ambient_turn_cannot_save_a_widget(monkeypatch):
+async def test_permissions_come_from_the_sources(stored):
+    from eve.widgets.tools import save_widget
+
+    out = await save_widget.ainvoke({"title": "K", "preset": "entity", "options": {"entity": "light.kitchen"},
+                                     "state": SAID}, config=NO_PERMS)
+    assert "Permission denied" in out
+
+
+def test_the_description_lists_every_source_and_preset():
+    from eve.widgets import presets, sources
+    from eve.widgets.tools import save_widget
+
+    for name in [*sources.REGISTRY, *presets.PRESETS]:
+        assert name in save_widget.description
+
+
+async def test_an_ambient_turn_cannot_save_a_widget(stored):
     """The ambient token can impersonate any member (spec risk). The turn is
     marked ambient only by the message the ambient pipeline composes - the
     config carries nothing, exactly as `eve_ambient.notify.deliver` sends it."""
     from datetime import UTC, datetime
 
     from eve.family import Member
-    from eve.widgets import tools
+    from eve.widgets.tools import save_widget
     from eve_ambient.notify import compose_prompt
     from eve_ambient.types import FilterVerdict, Signal
-
-    async def unreachable(*args, **kwargs):
-        raise AssertionError("ambient turns must not author widgets")
-
-    monkeypatch.setattr(tools.store, "create", unreachable)
 
     signal = Signal(
         source="homeassistant",
@@ -208,51 +138,9 @@ async def test_an_ambient_turn_cannot_save_a_widget(monkeypatch):
     )
     prompt = compose_prompt(signal, member, FilterVerdict(notify=True, why="w"))
 
-    result = await _call(
-        tools.save_widget,
-        {"title": "X", "kind": "chart", "recipe": RECIPE},
-        state=_full_state([HumanMessage(content=prompt)]),
-    )
+    out = await save_widget.ainvoke({
+        "title": "X", "preset": "weather",
+        "state": _full_state([HumanMessage(content=prompt)]),
+    }, config=CONFIG)
 
-    assert "cannot" in result.content.lower()
-
-
-async def test_a_member_turn_after_an_ambient_one_may_save_a_widget(monkeypatch):
-    """Only the LAST human message decides: an ambient notice earlier in the
-    thread does not lock the member out of their own request."""
-    from eve.state import ambient_marker
-    from eve.widgets import tools
-
-    async def fake_create(member_sub, kind, title, recipe, filters):
-        return {"id": "res-3", "revision": 1}
-
-    monkeypatch.setattr(tools.store, "create", fake_create)
-
-    result = await _call(
-        tools.save_widget,
-        {"title": "Alpha", "kind": "chart", "recipe": RECIPE},
-        state=_full_state(
-            [
-                HumanMessage(content=ambient_marker("Noah") + "\nA package arrived."),
-                HumanMessage(content="Keep a chart of my things."),
-            ]
-        ),
-    )
-
-    assert "res-3" in result.content
-
-
-async def test_storage_failure_degrades_to_a_string(monkeypatch):
-    from eve.widgets import tools
-
-    async def boom(*args, **kwargs):
-        raise RuntimeError("postgres is down")
-
-    monkeypatch.setattr(tools.store, "create", boom)
-
-    result = await _call(
-        tools.save_widget, {"title": "A", "kind": "chart", "recipe": RECIPE}
-    )
-
-    assert "error" in result.content.lower()
-    assert "postgres" not in result.content
+    assert "cannot" in out.lower() and not stored

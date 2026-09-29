@@ -1,141 +1,98 @@
+# src/eve/widgets/recipe.py
 """What a saved widget is allowed to say.
 
-A recipe is authored once, by a model, and then executed on every refresh
-with no model in the loop and no human reading it. That makes this module the
-security boundary for the whole feature: anything it accepts runs
-indefinitely.
+A recipe is authored once, by a model, and executed on every refresh with no
+model in the loop and no human reading it, so this module is still the
+security boundary. v2 recipes are `{version, sources, template}`:
 
-So the vocabulary is closed and small. A source names a KIND of read
-(`records`, `health`), never a URL, a tool name, a SQL fragment, or a
-member. Identity is supplied by the authenticated route at execution time,
-which is why a recipe that tries to name a member is rejected outright rather
-than having the field ignored.
+- `sources` maps an alias to a registered source type and its declared params
+  (`eve.widgets.sources`). A source never names a URL, token, tool or member.
+- `template` is a component tree (`eve.widgets.template`) whose actions may
+  only target what those sources declared.
 
-Pure module: no I/O, no database, no LangGraph.
+v1 recipes (`{sources: [...], metric}`) still exist in the database; they are
+upgraded on read to the `chart` preset, never rewritten in place.
 """
-
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 
-KINDS = frozenset({"chart"})
+from pydantic import BaseModel
 
-# A source type maps to one audited reader in `eve.widgets.resolve`. Adding an
-# external system means adding a reader here and in that module - deliberately
-# a code change with a review, because credentials and normalisation cannot be
-# authored by a model. Adding a new WIDGET costs nothing.
-SOURCE_TYPES = frozenset({"records", "health"})
+from eve.widgets import sources as source_registry
+from eve.widgets import template as template_rules
+from eve.widgets.sources.base import SourceType
+from eve.widgets.sources.series import MAX_DAYS, SOURCE_TYPES as V1_SOURCE_TYPES  # noqa: F401
 
-# Permission required per source type, per the spec: reading the member's own
-# records needs nothing beyond being that member.
-SOURCE_PERMISSIONS: dict[str, str | None] = {
-    "records": None,
-    "health": "health",
-}
-
-HEALTH_METRICS = frozenset({"recovery", "sleep", "activity"})
-METRIC_OPS = frozenset({"count", "sum", "avg", "max"})
-FILTER_KEYS = frozenset({"days", "sources", "field", "groupBy"})
-
+RECIPE_VERSION = 2
 MAX_SOURCES = 4
-MAX_DAYS = 3650
 MAX_NAME = 128
-
-# The protocol's definition ceiling is 48KiB, but a widget recipe is authored
-# once and executed forever, so the total body is bounded far below that:
-# 4KiB of JSON is ample for a handful of sources and one metric. This is a
-# backstop over the per-field bounds, not the primary defense.
-MAX_RECIPE_BYTES = 4_096
+MAX_RECIPE_BYTES = 16_384
+FILTER_KEYS = frozenset({"days", "sources", "field", "groupBy"})
+_ALIAS = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
-def validate(candidate: object) -> str | None:
-    """`None` when `candidate` is a legal recipe, else a diagnostic code."""
+def upgrade(recipe: dict) -> dict:
+    if isinstance(recipe, dict) and recipe.get("version") == RECIPE_VERSION:
+        return recipe
+    from eve.widgets import presets  # presets builds recipes; import late to keep the graph acyclic
+    built = presets.build("chart", recipe if isinstance(recipe, dict) else {})
+    if isinstance(built, str):
+        # A stored v1 recipe that no longer validates renders the error view
+        # rather than raising in a GET.
+        return {"version": RECIPE_VERSION, "sources": {}, "template": []}
+    return built
+
+
+def parse_sources(recipe: dict) -> dict[str, tuple[SourceType, BaseModel]] | str:
+    raw = recipe.get("sources")
+    if not isinstance(raw, dict) or not 1 <= len(raw) <= MAX_SOURCES:
+        return f"sources must be an object with 1-{MAX_SOURCES} entries"
+    parsed: dict[str, tuple[SourceType, BaseModel]] = {}
+    for alias, spec in raw.items():
+        if not _ALIAS.match(alias) or alias == template_rules.WIDGET_ALIAS:
+            return f"source alias {alias!r} must be lowercase letters/digits/underscores and not 'widget'"
+        result = source_registry.parse(spec)
+        if isinstance(result, str):
+            return f"{alias}: {result}"
+        parsed[alias] = result
+    return parsed
+
+
+def validate(candidate: object, *, action_accepts: Callable[[str, str], bool]) -> str | None:
     if not isinstance(candidate, dict):
-        return "recipe"
-
-    if set(candidate) - {"sources", "metric"}:
-        # Catches `exec`, `url`, `token` and every other smuggled key at the
-        # top level, the same way the source and metric interiors already do.
-        return "recipe"
-
-    sources = candidate.get("sources")
-    if not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES:
-        return "sources"
-    for source in sources:
-        error = _validate_source(source)
-        if error:
-            return error
-
-    error = _validate_metric(candidate.get("metric"))
-    if error:
-        return error
-
+        return "recipe must be an object"
+    if set(candidate) != {"version", "sources", "template"} or candidate["version"] != RECIPE_VERSION:
+        return "recipe must be exactly {version: 2, sources, template}"
     if len(json.dumps(candidate).encode()) > MAX_RECIPE_BYTES:
-        return "recipe"
-
-    return None
-
-
-def _validate_source(source: object) -> str | None:
-    if not isinstance(source, dict):
-        return "source-schema"
-    kind = source.get("type")
-    if kind not in SOURCE_TYPES:
-        return "source-type"
-
-    allowed = {"type", "collection"} if kind == "records" else {"type", "metric"}
-    if set(source) - allowed:
-        # Catches `member_sub`, `url`, `token` and every other smuggled key.
-        return "source-schema"
-
-    if kind == "records":
-        collection = source.get("collection")
-        if not isinstance(collection, str) or not 0 < len(collection) <= MAX_NAME:
-            return "source-schema"
-    else:
-        if source.get("metric") not in HEALTH_METRICS:
-            return "source-schema"
-    return None
-
-
-def _validate_metric(metric: object) -> str | None:
-    if not isinstance(metric, dict):
-        return "metric"
-    op = metric.get("op")
-    if op not in METRIC_OPS:
-        return "metric"
-    if set(metric) - {"op", "field"}:
-        return "metric"
-    if op == "count":
-        return None
-    field = metric.get("field")
-    if not isinstance(field, str) or not 0 < len(field) <= MAX_NAME:
-        return "metric"
-    return None
+        return f"recipe is larger than {MAX_RECIPE_BYTES} bytes"
+    parsed = parse_sources(candidate)
+    if isinstance(parsed, str):
+        return parsed
+    return template_rules.validate(candidate["template"], parsed, action_accepts=action_accepts)
 
 
 def validate_filters(candidate: object) -> str | None:
     """Filters are member-supplied on every refresh, so they are bounded
-    independently of the recipe that was authored once."""
+    independently of the recipe that was authored once. (Body unchanged from v1.)"""
     if not isinstance(candidate, dict):
         return "filters"
     if set(candidate) - FILTER_KEYS:
         return "filters"
-
     if "days" in candidate:
         days = candidate["days"]
         if isinstance(days, bool) or not isinstance(days, int):
             return "filters"
         if not 1 <= days <= MAX_DAYS:
             return "filters"
-
     if "sources" in candidate:
         chosen = candidate["sources"]
         if not isinstance(chosen, list):
             return "filters"
-        if any(entry not in SOURCE_TYPES for entry in chosen):
+        if any(entry not in V1_SOURCE_TYPES for entry in chosen):
             return "filters"
-
     for key in ("field", "groupBy"):
         if key in candidate:
             value = candidate[key]
@@ -144,15 +101,25 @@ def validate_filters(candidate: object) -> str | None:
     return None
 
 
-def required_permissions(recipe: dict) -> list[str]:
-    """Permissions this recipe needs, derived from the sources it reads.
+def _parsed_or_empty(recipe: dict) -> dict[str, tuple[SourceType, BaseModel]]:
+    parsed = parse_sources(upgrade(recipe))
+    return {} if isinstance(parsed, str) else parsed
 
-    Per source rather than per widget kind: two charts can need different
-    permissions, and the kind says nothing about what is being read.
-    """
-    needed = {
-        SOURCE_PERMISSIONS.get(source.get("type"))
-        for source in recipe.get("sources", [])
-        if isinstance(source, dict)
-    }
-    return sorted(permission for permission in needed if permission)
+
+def required_permissions(recipe: dict) -> list[str]:
+    needed: set[str] = set()
+    for source, params in _parsed_or_empty(recipe).values():
+        needed |= source.permissions(params)
+    return sorted(needed)
+
+
+def declared_targets(recipe: dict) -> frozenset[str]:
+    targets: set[str] = set()
+    for source, params in _parsed_or_empty(recipe).values():
+        targets |= source.targets(params)
+    return frozenset(targets)
+
+
+def ttl_seconds(recipe: dict) -> int:
+    parsed = _parsed_or_empty(recipe)
+    return min((source.ttl_seconds for source, _ in parsed.values()), default=300)
