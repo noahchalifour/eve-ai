@@ -22,6 +22,7 @@ SOURCE_TYPES = frozenset({"records", "health"})
 
 MAX_SOURCES = 4
 MAX_NAME = 128
+MAX_DAYS = 3650
 
 # The protocol's definition ceiling is 48KiB, but a widget recipe is authored
 # once and executed forever, so the total body is bounded far below that:
