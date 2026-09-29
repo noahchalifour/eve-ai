@@ -1,7 +1,7 @@
-# Graph Report - eve-ai  (2026-09-29)
+# Graph Report - eve-ai  (2026-09-18)
 
 ## Corpus Check
-- 515 files · ~626,085 words
+- 352 files · ~421,904 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 14 file(s) not represented in the graph (top: (none) 5, .example 1, .eve-ambient 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4902115b`
+- Built from commit: `04e7d268`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -1036,7 +1036,7 @@ Cohesion: 0.67
 Nodes (3): integration, THE assumption test. §6.3 claims the AST check is not what holds the line; this…, test_source_bypassing_the_ast_checker_still_cannot_reach_the_network()
 
 ## Knowledge Gaps
-- **38 isolated node(s):** `eve`, `ItemResult`, `ToolProposal`, `models`, `npm` (+33 more)
+- **38 isolated node(s):** `images-published.sh script`, `Why this exists`, `Rules the client enforces`, `Ordering does not matter`, `Writing the labels` (+33 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1734 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **58 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -1044,16 +1044,16 @@ Nodes (3): integration, THE assumption test. §6.3 claims the AST check is not w
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `get_settings()` connect `get_settings` to `Memory`, `Tier`, `graph.py`, `permission_denial`, `extract.py`, `SourcePollError`, `Computer Settings Configuration`, `suggest.py`, `get_pool`, `test_coding_supervisor.py`, `Database Migrations`, `tools_client.py`, `filter.py`, `eve_ambient/app.py`, `asyncio`, `Tool Loop Budget`, `invoke`, `test_specialists_base.py`, `eve/settings.py`, `EveState`, `conftest.py`, `httpx`, `title.py`, `poller.py`, `auth.py`, `Suggestion Node Tests`, `embed.py`, `Recall Token Budgets`?**
-  _High betweenness centrality (0.079) - this node is a cross-community bridge._
-- **Why does `invoke()` connect `invoke` to `Tier`, `catalog.py`, `graph.py`, `get_budgets`, `Health Metric Tools`, `SourcePollError`, `send_email`, `get_settings`, `call_service`, `stylist.py`, `tools_client.py`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
-- **Why does `get_pool()` connect `get_pool` to `Memory`, `auth.py`, `test_tools_propose.py`, `catalog.py`, `eve_ambient/app.py`, `graph.py`, `asyncio`, `title.py`, `extract.py`, `get_settings`, `embed.py`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+  _High betweenness centrality (0.057) - this node is a cross-community bridge._
+- **Why does `Tier` connect `Tier` to `filter.py`, `FilterVerdict`, `test_wardrobe_catalog.py`, `graph.py`, `test_specialists_base.py`, `title.py`, `extract.py`, `suggest.py`, `test_eval_scorers.py`, `get_settings`, `Reflex Tier Streaming`, `stylist.py`, `logging`, `Decision`, `tools_client.py`?**
+  _High betweenness centrality (0.020) - this node is a cross-community bridge._
 - **Are the 4 inferred relationships involving `get_settings()` (e.g. with `conftest.py` and `test_the_tool_loop_is_bounded_when_the_model_never_answers()`) actually correct?**
   _`get_settings()` has 4 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 36 inferred relationships involving `Signal` (e.g. with `_handle_in_background()` and `poll_once()`) actually correct?**
   _`Signal` has 36 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 49 inferred relationships involving `Family` (e.g. with `oidc()` and `test_a_dev_token_is_still_accepted_alongside_the_pat_path()`) actually correct?**
   _`Family` has 49 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `eve`, `ItemResult`, `ToolProposal` to the rest of the system?**
+- **What connects `images-published.sh script`, `Why this exists`, `Rules the client enforces` to the rest of the system?**
   _38 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `Memory` be split into smaller, more focused modules?**
+  _Cohesion score 0.08562367864693446 - nodes in this community are weakly interconnected._

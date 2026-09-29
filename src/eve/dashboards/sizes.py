@@ -11,9 +11,11 @@ from __future__ import annotations
 # places; the member can resize within the allowed list.
 KIND_SIZES: dict[str, tuple[tuple[str, ...], str]] = {
     "entity": (("2x2", "4x2"), "2x2"),
-    "weather": (("4x2", "4x4"), "4x2"),
+    # A forecast list and a player's control rows need the height: at Wide
+    # they clip on a phone (seen on device), so they start Large.
+    "weather": (("4x2", "4x4"), "4x4"),
     "glance": (("4x2", "4x4", "2x4"), "4x2"),
-    "media": (("4x2", "4x4"), "4x2"),
+    "media": (("4x2", "4x4"), "4x4"),
     "chart": (("4x2", "4x4"), "4x2"),
 }
 _CUSTOM = (("2x2", "4x2", "2x4", "4x4"), "4x2")
