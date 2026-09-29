@@ -144,3 +144,37 @@ async def test_an_ambient_turn_cannot_save_a_widget(stored):
     }, config=CONFIG)
 
     assert "cannot" in out.lower() and not stored
+
+
+def test_the_description_teaches_the_component_structure():
+    """ENG-269 live verification: the model authored a custom template with no
+    `id`s and an invented `subtitle` property, twice, because the description
+    never said either rule. `show_surface` solved the same thing (OPENA-17) by
+    putting the structure and the legal properties in front of the model."""
+    from eve.ui import protocol
+    from eve.widgets.tools import save_widget
+
+    assert '"id"' in save_widget.description
+    for kind in ("card", "text", "list", "row", "badge", "icon", "button"):
+        line = next(line for line in save_widget.description.splitlines() if line.startswith(f"{kind}:"))
+        for prop in protocol._ALLOWED_PROPERTIES[kind]:
+            assert prop in line, (kind, prop)
+
+
+async def test_a_template_missing_ids_says_what_to_fix(stored):
+    """The validator reports a missing `id` as the bare code `string`; the
+    model cannot act on that. The rejection must name the structure and the
+    legal properties for the types it used, so one retry is enough."""
+    from eve.widgets.tools import save_widget
+
+    out = await save_widget.ainvoke({
+        "title": "Next up",
+        "sources": {"cal": {"type": "calendar"}},
+        "template": [{"type": "card", "properties": {"title": "Next up", "subtitle": "x"}, "children": [
+            {"type": "text", "properties": {"text": "$data.cal.count"}}]}],
+        "state": SAID,
+    }, config=CONFIG)
+
+    assert not stored
+    assert '"id"' in out
+    assert "card: title" in out and "text: text" in out

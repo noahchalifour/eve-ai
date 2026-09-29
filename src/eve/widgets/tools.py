@@ -13,6 +13,8 @@ from langgraph.prebuilt import InjectedState
 
 from eve.specialists.permissions import permission_denial
 from eve.state import EveState, turn_is_ambient
+from eve.ui import protocol
+from eve.ui.tools import schema_hint
 from eve.widgets import actions, presets, store
 from eve.widgets import recipe as recipe_rules
 from eve.widgets import sources as source_registry
@@ -28,6 +30,10 @@ def _describe() -> str:
     action_lines = "\n".join(
         f"- {a.name} ({a.label})" for a in actions.REGISTRY.values() if a.targeted
     )
+    # The same structure line and property table show_surface gives the model
+    # (OPENA-17): without it a model authored templates with no `id`s and
+    # invented properties (`subtitle`), and got back only the code `string`.
+    structure = schema_hint(set(protocol.CATALOG_IDS) - {"image"})
     return f"""Save a live widget the member can open from Widgets. It refreshes itself with no model call.
 
 Prefer a preset: pass `preset` and its `options`.
@@ -36,6 +42,7 @@ Prefer a preset: pass `preset` and its `options`.
 For anything else pass `sources` ({{alias: {{type, ...params}}}}, at most 4) and a `template` (a component tree;
 see the build-a-widget skill). Bind data as $data.<alias>.<field>; repeat a list with
 {{"type": "list", "properties": {{"repeat": "$data.<alias>.<list>", "limit": n, "empty": "..."}}}} and $item.<key>.
+{structure}
 Source types:
 {source_lines}
 
@@ -43,6 +50,18 @@ Actions (actionId + actionValue = a target one of the widget's sources declares)
 {action_lines}
 
 Answer in prose for a one-off question; save a widget when the member wants to keep looking at something."""
+
+
+def _types(components: object) -> set[str]:
+    found: set[str] = set()
+    stack = list(components) if isinstance(components, list) else []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if isinstance(node.get("type"), str):
+                found.add(node["type"])
+            stack.extend(node.get("children") or [])
+    return found
 
 
 @tool(description=_describe())
@@ -76,6 +95,11 @@ async def save_widget(
 
     error = recipe_rules.validate(recipe, action_accepts=actions.accepts)
     if error is not None:
+        if kind == "custom" and "catalog validation" in error:
+            # The catalog validator answers with a bare code (`string`,
+            # `component-schema`), which a model cannot act on. Name the
+            # structure and the legal properties for the types it used.
+            return f"The widget was rejected: {error}.\n{schema_hint(_types(template))}\nFix the template and try again."
         return f"The widget was rejected: {error}"
 
     chosen_filters = filters or {}
