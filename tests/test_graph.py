@@ -1602,3 +1602,75 @@ async def test_a_turn_without_images_never_touches_the_image_store(monkeypatch):
     ).compile()
     result = await app.ainvoke({"messages": [HumanMessage("hello")]}, CONFIG)
     assert result["messages"][-1].content == "Hi Noah."
+
+
+async def test_top_level_tools_see_the_member_the_turn_loaded(monkeypatch):
+    """Aegra's run config carries only `langgraph_auth_user`; `configurable
+    ["member"]` is set for specialists by `build_specialist`, and must be set
+    for top-level tools too. Without it `save_widget`, `record_append`, and
+    the routine tools raised KeyError on every production call - the unit
+    tests hand-built `configurable["member"]`, so only a graph-level run
+    shows it (found in ENG-269's live verification: zero widgets, records or
+    routines had ever been stored)."""
+    from langchain_core.runnables import RunnableConfig
+    from langchain_core.tools import tool
+
+    seen = {}
+
+    @tool
+    async def whoami(config: RunnableConfig) -> str:
+        """Report the member this tool acts for."""
+        member = config["configurable"]["member"]
+        seen.update(member)
+        return member["sub"]
+
+    tool_call = {"name": "whoami", "args": {}, "id": "call-1", "type": "tool_call"}
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    monkeypatch.setattr("eve.graph._BASE_TOOLS", [whoami])
+    fake_model = FakeToolCallingModel(
+        messages=iter([AIMessage(content="", tool_calls=[tool_call]), AIMessage(content="Done.")])
+    )
+
+    app = build_graph(
+        model_factory=lambda _tier: fake_model,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("who am I?")]}, CONFIG)
+
+    assert result["messages"][-2].content == "sub-noah"
+    assert seen["permissions"] == ["spend"]
+
+
+async def test_save_widget_saves_through_the_real_graph(monkeypatch):
+    """The ENG-269 path end to end through the graph's own tools node, with
+    Aegra's config shape: no hand-built `configurable["member"]`."""
+    from eve.widgets import tools as widget_tools
+
+    stored = {}
+
+    async def fake_create(member_sub, kind, title, recipe, filters):
+        stored.update(member_sub=member_sub, kind=kind)
+        return {"id": "res-1"}
+
+    monkeypatch.setattr(widget_tools.store, "create", fake_create)
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+    tool_call = {"name": "save_widget", "args": {"title": "Sky", "preset": "weather", "options": {"days": 3}},
+                 "id": "call-1", "type": "tool_call"}
+    fake_model = FakeToolCallingModel(
+        messages=iter([AIMessage(content="", tool_calls=[tool_call]), AIMessage(content="Saved.")])
+    )
+
+    app = build_graph(
+        model_factory=lambda _tier: fake_model,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+    ).compile()
+    result = await app.ainvoke({"messages": [HumanMessage("save a weather widget")]}, CONFIG)
+
+    assert "Saved the widget" in result["messages"][-2].content, result["messages"][-2].content
+    assert stored == {"member_sub": "sub-noah", "kind": "weather"}

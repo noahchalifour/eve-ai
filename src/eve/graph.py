@@ -417,7 +417,17 @@ def build_graph(
         node = ToolNode(
             [*_static_tools(config), *dynamic], handle_tool_errors=_handle_tool_error
         )
-        return await node.ainvoke(state, config)
+        # Top-level tools read the member from `configurable["member"]`, the
+        # same place `build_specialist` puts it for specialist tools. Aegra's
+        # run config carries only the principal, so without this every
+        # save_widget / record_* / routine call raised KeyError in production.
+        # The member comes from load_context (the authenticated principal),
+        # never from anything the model supplied.
+        tool_config: RunnableConfig = {
+            **config,
+            "configurable": {**(config.get("configurable") or {}), "member": state["member"]},
+        }
+        return await node.ainvoke(state, tool_config)
 
     builder = StateGraph(EveState)
     builder.add_node("load_context", load_context)
