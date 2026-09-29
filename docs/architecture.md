@@ -186,6 +186,12 @@ src/eve/
   records/
     store.py        # every eve_record SQL statement; one module owns the table
     tools.py        # record_append / record_query: the only writers and readers
+  dashboards/
+    layout.py       # the grid: closed size vocabulary, first-fit packing, layout validation; no I/O
+    sizes.py        # allowed and default grid sizes per widget kind
+    store.py        # every eve_dashboard SQL statement, scoped by member_sub
+    setup.py        # the dashboard_setup node: purpose -> library widgets -> laid-out dashboard
+    app.py          # GET/PUT layout/DELETE /provider-resources/v1/dashboards/{deviceId}
   widgets/
     sources/        # the audited readers: base.py (registry), series, health, weather, home (entity, media), calendar
     actions/        # the audited writes: base.py (registry, risk, errors), filters, home
@@ -720,6 +726,44 @@ the fresh snapshot so the client can render current data instead of an error.
 The action routes impose the same closed vocabulary as the recipe does,
 `filters.replace` the one legal entry, so an authored recipe cannot invent an
 action either.
+
+## Dashboards
+
+A dashboard is one grid of **library widgets** per member per device
+(`eve_dashboard`, unique on `(member_sub, device_id)`). The client mints the
+device id; it is a locator, scoped by the member in every query like a
+resource id. The row holds the stated purpose, the grid's column count (4 on
+a phone, 8 on a tablet) and a `layout` of `{resourceId, sizes, x, y, w, h}`
+placements in cells. Tiles are referenced, never owned: there is no foreign
+key, resetting or replacing a dashboard deletes no widget, and a widget
+deleted from the library drops out of the layout when the dashboard is next
+read.
+
+**Building** is a stateless run, not a route, because it spends a model
+call. `config.configurable.dashboard_setup = {deviceId, purpose, columns}`
+routes `load_context` straight to `dashboard_setup` and then END: no VOICE
+call, no recall, nothing appended to a thread (the openers route's
+guarantee). The node runs a MECHANICAL agent whose only tools are
+`list_library_widgets`, `use_widget`, `save_dashboard_widget` and
+`find_home_entities`. It reuses saved widgets that fit the purpose and saves
+anything missing into the library through `eve.widgets.tools.prepare`, the
+same guards `save_widget` applies. Each chosen widget gets its kind's allowed
+sizes and default (`eve.dashboards.sizes`), `layout.pack` places them first
+fit in importance order, and the dashboard is replaced wholesale with its
+revision still counting up. Progress goes out as `custom` frames
+(`{"dashboard_setup": {"phase": ...}}`), and the stream always ends with
+exactly one `done` or `error` frame. A run by the ambient service is refused,
+since the principal carries `ambient: true` and a builder run has no member
+message for `turn_is_ambient` to read.
+
+**Routes** (beside the widget routes, same `require_auth` boundary):
+`GET /dashboards/{deviceId}` answers 404 for "no dashboard yet", which the
+client turns into onboarding. `PUT /dashboards/{deviceId}/layout` validates
+the placements against the *stored* layout: only existing tiles, only their
+allowed sizes, no overlap, and inside the grid. It is revision-guarded, and
+a stale save gets a 409 whose body is the current dashboard.
+`DELETE /dashboards/{deviceId}` resets the dashboard. Capabilities advertise
+`features: ["dashboard"]`.
 
 ## Routines
 

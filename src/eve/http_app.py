@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from eve.dashboards.app import router as dashboards_router
 from eve.images.app import router as images_router
 from eve.routines.app import router as routines_router
 from eve.widgets.app import router as widgets_router
@@ -33,3 +34,4 @@ async def _flatten(request: Request, exc: HTTPException) -> JSONResponse:
 app.include_router(widgets_router)
 app.include_router(routines_router)
 app.include_router(images_router)
+app.include_router(dashboards_router)

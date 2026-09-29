@@ -113,6 +113,10 @@ async def capabilities(member: dict = Depends(current_member)) -> dict:
     return {
         "protocol": PROTOCOL,
         "kinds": sorted([*presets.PRESETS, "custom"]),
+        # Separate from `kinds` (renderable widget families): a client asks
+        # "can this provider host a per-device dashboard?", which is a
+        # capability of the provider, not a widget kind.
+        "features": ["dashboard"],
         "sourceTypes": sorted(source_registry.REGISTRY),
         "actions": [
             {"type": a.name, "risk": a.default_risk, "label": a.label}

@@ -1674,3 +1674,40 @@ async def test_save_widget_saves_through_the_real_graph(monkeypatch):
 
     assert "Saved the widget" in result["messages"][-2].content, result["messages"][-2].content
     assert stored == {"member_sub": "sub-noah", "kind": "weather"}
+
+
+# --- the dashboard_setup route (ENG-72) -------------------------------------
+
+async def test_a_dashboard_setup_request_never_calls_the_voice_model(monkeypatch):
+    """Like openers, a dashboard build is the whole turn: the VOICE model
+    must not answer the empty input, and nothing is appended to a thread."""
+    monkeypatch.setattr("eve.context.get_family", lambda: Family([NOAH]))
+    monkeypatch.setattr("eve.context.load_persona", lambda: "You are Eve.")
+
+    called = []
+
+    def factory(_tier):
+        called.append("eve")
+        return FakeToolCallingModel(messages=iter([AIMessage(content="Hi.")]))
+
+    ran = []
+
+    async def dashboard(state, config):
+        ran.append(state["member"]["sub"])
+        return {}
+
+    app = build_graph(
+        model_factory=factory,
+        recall_fn=_no_recall,
+        extract_fn=_no_extract,
+        suggest_fn=_no_suggest,
+        dashboard_setup_fn=dashboard,
+    ).compile()
+    result = await app.ainvoke({"messages": []}, {"configurable": {
+        "langgraph_auth_user": {"identity": "sub-noah"},
+        "dashboard_setup": {"deviceId": "device-12345678", "purpose": "x", "columns": 4},
+    }})
+
+    assert called == []
+    assert ran == ["sub-noah"]
+    assert result["messages"] == []

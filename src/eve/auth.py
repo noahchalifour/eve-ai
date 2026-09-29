@@ -182,6 +182,11 @@ async def authenticate(headers: dict) -> dict:
         "role": member.role,
         "permissions": sorted(member.permissions),
         "is_authenticated": True,
+        # Whether this run is the unattended ambient service acting FOR the
+        # member. A turn composed by that pipeline is caught by its message
+        # marker (`turn_is_ambient`); a run with no member message at all
+        # (the dashboard builder) has only this to go on.
+        "ambient": impersonated,
     }
 
 
