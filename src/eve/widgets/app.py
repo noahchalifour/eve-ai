@@ -52,7 +52,7 @@ PROTOCOL = "provider-resource/1.0"
 MIN_REFRESH_SECONDS = 5
 
 # The surface-level action id the inline range control carries
-# (`eve.widgets.resolve._range_control`). The client maps it onto a
+# (`eve.widgets.presets._chart`). The client maps it onto a
 # `filters.replace` action rather than sending it verbatim, so the route's
 # vocabulary stays one entry long; this constant exists so the two modules
 # cannot drift on the spelling.

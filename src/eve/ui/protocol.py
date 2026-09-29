@@ -70,7 +70,7 @@ ACTION_IDS = frozenset({"surface.submit"})
 #
 # Each dot-separated segment starts with a lowercase letter (so `Home.Toggle`
 # still fails) but may mix case after that - `widget.setRange`
-# (`eve.widgets.resolve._range_control`) is an existing production id and
+# (`eve.widgets.presets._chart`) is an existing production id and
 # must keep validating.
 _WIDGET_ACTION_ID = re.compile(r"^[a-z][a-zA-Z0-9_]*(?:\.[a-z][a-zA-Z0-9_]*)+$")
 
