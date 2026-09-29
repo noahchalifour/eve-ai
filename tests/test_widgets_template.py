@@ -107,3 +107,14 @@ def test_a_template_that_fails_the_catalog_is_rejected(sources):
 
     bad = [{"id": "x", "type": "marquee", "properties": {}, "children": []}]
     assert "component-type" in template.validate(bad, sources, action_accepts=accepts)
+
+
+def test_a_binding_embedded_in_text_is_rejected():
+    """The client binds whole values only, so `Next: $data.x.y` would render
+    the literal `$data.x.y` to the member (seen on a built dashboard)."""
+    from eve.widgets import recipe, actions
+
+    candidate = {"version": 2, "sources": {"agenda": {"type": "calendar"}}, "template": [
+        {"id": "t", "type": "text", "properties": {"text": "Next: $data.agenda.next"}, "children": []}]}
+    error = recipe.validate(candidate, action_accepts=actions.accepts)
+    assert error and "whole value" in error

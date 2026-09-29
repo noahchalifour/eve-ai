@@ -73,3 +73,7 @@ def test_device_ids_are_bounded():
     assert not layout.valid_device_id("short")
     assert not layout.valid_device_id("has spaces in it")
     assert not layout.valid_device_id(None)
+
+
+def test_compact_closes_a_hole_left_by_a_dropped_tile():
+    assert layout.compact([(0, 2, 4, 2), (0, 4, 2, 2)], 4) == [(0, 0), (0, 2)]

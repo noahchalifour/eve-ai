@@ -41,10 +41,14 @@ async def _view(member_sub: str, row: dict) -> dict:
     """The dashboard as the client renders it. A tile whose widget left the
     library is dropped here, on read, rather than by a cascade."""
     library = {w["id"]: w for w in await widgets.list_for(member_sub)}
+    kept = [entry for entry in row["layout"] if entry.get("resourceId") in library]
+    # A dropped tile leaves a hole; close it the way every edit does, so the
+    # client never renders a gap it did not make.
+    spots = grid.compact([(e["x"], e["y"], e["w"], e["h"]) for e in kept], row["columns"])
     tiles = [
-        {**entry, "title": library[entry["resourceId"]]["title"], "kind": library[entry["resourceId"]]["kind"]}
-        for entry in row["layout"]
-        if entry.get("resourceId") in library
+        {**entry, "x": x, "y": y,
+         "title": library[entry["resourceId"]]["title"], "kind": library[entry["resourceId"]]["kind"]}
+        for entry, (x, y) in zip(kept, spots)
     ]
     return {
         "deviceId": row["device_id"],

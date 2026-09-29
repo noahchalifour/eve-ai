@@ -10,8 +10,8 @@ BASE = f"/provider-resources/v1/dashboards/{DEVICE}"
 ROW = {
     "id": "d-1", "device_id": DEVICE, "purpose": "Kitchen", "columns": 4, "revision": 3,
     "layout": [
-        {"resourceId": "w-1", "sizes": ["2x2", "4x2"], "x": 0, "y": 0, "w": 2, "h": 2},
-        {"resourceId": "w-gone", "sizes": ["4x2"], "x": 0, "y": 2, "w": 4, "h": 2},
+        {"resourceId": "w-gone", "sizes": ["4x2"], "x": 0, "y": 0, "w": 4, "h": 2},
+        {"resourceId": "w-1", "sizes": ["2x2", "4x2"], "x": 0, "y": 2, "w": 2, "h": 2},
     ],
 }
 
@@ -65,6 +65,7 @@ def test_a_dashboard_lists_its_tiles_with_library_titles(client, monkeypatch):
     assert body["purpose"] == "Kitchen" and body["columns"] == 4 and body["revision"] == 3
     # A tile whose widget left the library drops out on read.
     assert [t["resourceId"] for t in body["tiles"]] == ["w-1"]
+    assert (body["tiles"][0]["x"], body["tiles"][0]["y"]) == (0, 0)
     assert body["tiles"][0]["title"] == "Kitchen light"
     assert body["tiles"][0]["sizes"] == ["2x2", "4x2"]
 

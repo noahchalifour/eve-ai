@@ -92,6 +92,11 @@ def validate(components: object, sources: Sources, *, action_accepts: Callable[[
         for key, value in _strings(properties):
             if key in _TEMPLATE_ONLY:
                 continue
+            if not value.startswith(("$data", "$item")) and ("$data." in value or "$item." in value):
+                # A binding is a whole value; the client never interpolates
+                # one into a sentence, so this would render as literal text.
+                return (f"{key} {value!r} embeds a binding in text; a binding must be the whole value. "
+                        "Put the words in one text component and the binding in its own")
             if value.startswith("$data"):
                 if not _DATA.match(value):
                     return f"malformed binding {value!r}"

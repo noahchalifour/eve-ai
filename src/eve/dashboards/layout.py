@@ -66,6 +66,18 @@ def pack(sizes: list[tuple[int, int]], columns: int) -> list[tuple[int, int]]:
     return placed
 
 
+def compact(tiles: list[tuple[int, int, int, int]], columns: int) -> list[tuple[int, int]]:
+    """Gravity: tiles in reading order of their current spot, each dropped
+    into the first free spot from the top. Returns one `(x, y)` per tile, in
+    the order given. Mirrors the client's `DashboardLayout.compact`."""
+    order = sorted(range(len(tiles)), key=lambda i: (tiles[i][1], tiles[i][0]))
+    spots = pack([(tiles[i][2], tiles[i][3]) for i in order], columns)
+    placed: list[tuple[int, int]] = [(0, 0)] * len(tiles)
+    for i, spot in zip(order, spots):
+        placed[i] = spot
+    return placed
+
+
 def validate(placements: object, stored: list[dict], columns: int) -> list[dict] | str:
     """The placements a client may save, normalised, or why not.
 
