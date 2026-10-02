@@ -72,6 +72,9 @@ def _public(row: dict) -> dict:
     read it invites one to send it."""
     return {
         "routineId": row["id"],
+        # ENG-372. Additive: a client predating it ignores the key and
+        # renders a reminder as a routine with a cadence it may not know.
+        "kind": row.get("kind") or "routine",
         "title": row["title"],
         "instruction": row["instruction"],
         "cadence": row["cadence"],
@@ -93,7 +96,8 @@ async def capabilities(member: dict = Depends(current_member)) -> dict:
     hide the destination."""
     return {
         "protocol": PROTOCOL,
-        "cadenceKinds": ["every_hours", "daily_at", "weekly_at"],
+        "cadenceKinds": ["every_hours", "daily_at", "weekly_at", "once_at"],
+        "kinds": ["routine", "reminder"],
         "statuses": list(_ASSIGNABLE_STATUS),
         "limits": {
             "minEveryHours": cadence_rules.MIN_EVERY_HOURS,
@@ -139,7 +143,7 @@ async def patch_routine(
         )
 
     if body.cadence is not None:
-        error = cadence_rules.validate(body.cadence)
+        error = cadence_rules.validate_at(body.cadence, datetime.now(UTC))
         if error is not None:
             raise HTTPException(status_code=400, detail=f"invalid cadence: {error}")
         fields["cadence"] = body.cadence

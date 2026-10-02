@@ -46,7 +46,8 @@ def test_capabilities_names_the_protocol_and_the_cadence_vocabulary(client):
     assert response.status_code == 200
     body = response.json()
     assert body["protocol"] == "provider-routine/1.0"
-    assert set(body["cadenceKinds"]) == {"every_hours", "daily_at", "weekly_at"}
+    assert set(body["cadenceKinds"]) == {"every_hours", "daily_at", "weekly_at", "once_at"}
+    assert set(body["kinds"]) == {"routine", "reminder"}
     assert body["limits"]["minEveryHours"] == 1
 
 

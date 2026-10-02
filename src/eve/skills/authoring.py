@@ -25,7 +25,7 @@ from langgraph.prebuilt import InjectedState
 from opentelemetry import trace
 
 from eve.memory.store import add, procedure_by_name, supersede
-from eve.state import EveState, may_author, text_of
+from eve.state import EveState, may_author, text_of, turn_read_web
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ async def write_skill(
         ),
         "",
     )
-    if not may_author(human):
+    if not may_author(human) or turn_read_web(state["messages"]):
         return "error: cannot record a procedure from this turn."
 
     member = state["member"]

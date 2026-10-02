@@ -360,6 +360,7 @@ async def test_recall_joins_with_the_configured_budget(monkeypatch, wired):
             memory_token_budget=1200,
             self_authoring_enabled=False,
             memory_recall_embed_budget_ms=120,
+            shortcuts_enabled=False,
         ),
     )
 

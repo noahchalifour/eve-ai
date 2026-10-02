@@ -27,6 +27,7 @@ from eve.images import store as image_store
 from eve.images.hydrate import hydrate, reference
 from eve.models import TIER_VISION, Tier, get_model
 from eve.settings import get_settings
+from eve.shortcuts import capture as shortcut_capture
 from eve.skills.specialist_search import build_skills_search
 from eve.specialists.permissions import permission_denial
 from eve.state import EveState
@@ -156,6 +157,13 @@ def build_specialist(
                 "eve.specialist.latency_ms",
                 round((perf_counter() - started) * 1000, 1),
             )
+        # ENG-296: what the specialist actually did, so a request that keeps
+        # resolving to the same single call can become a shortcut. Detached
+        # and fail-silent; the answer is not delayed by it.
+        shortcut_capture.observe(
+            name, result["messages"], state.get("messages") or [], member,
+            (config.get("configurable") or {}).get("thread_id"),
+        )
         return str(result["messages"][-1].content)
 
     # The schema `tool()` infers comes straight from this signature, so the

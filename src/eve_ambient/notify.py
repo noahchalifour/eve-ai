@@ -167,6 +167,32 @@ def _click_url(thread_id: str) -> str | None:
         return None
 
 
+REMINDER_TITLE = "Eve - reminder"
+
+
+def is_reminder(signal: Signal) -> bool:
+    return signal.source == _ROUTINE_SOURCE and signal.payload.get("kind") == "reminder"
+
+
+async def deliver_reminder(signal: Signal, notifier: Notifier) -> str:
+    """A reminder is the member's own words, due now (ENG-372). No thread
+    and no VOICE turn: composing a sentence around "take the laundry out"
+    costs a paid call and can only make it worse.
+
+    Returns "" (delivered, no thread) or raises DeliveryError so the
+    pipeline defers and the routine's lease re-fires it."""
+    message = str(signal.payload.get("instruction") or signal.payload.get("title") or "").strip()
+    try:
+        sent = await notifier.send(
+            title=REMINDER_TITLE, body=message or "Reminder", urgent=False, click_url=None
+        )
+    except Exception as exc:
+        raise DeliveryError(f"the reminder push raised: {exc}") from exc
+    if not sent:
+        raise DeliveryError("the reminder push failed")
+    return ""
+
+
 async def deliver(
     signal: Signal, member: Member, verdict: FilterVerdict, notifier: Notifier,
     *, thread_id: str | None = None,
@@ -175,7 +201,11 @@ async def deliver(
     already owns (design doc: "compose a turn as Eve on the originating
     thread," for the `computer` source) - it is never created here and never
     discarded here, unlike the fresh, ambient-only thread every other source
-    still gets."""
+    still gets.
+
+    A reminder returns "" - delivered, with no thread to point at."""
+    if is_reminder(signal):
+        return await deliver_reminder(signal, notifier)
     reused = thread_id is not None
     async with _client(member.sub) as client:
         if not reused:

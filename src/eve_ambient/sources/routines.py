@@ -82,10 +82,16 @@ async def poll(_member_sub: str) -> list[Signal]:
             # Scheduled before the signal is emitted, and from `now` rather
             # than from the missed slot, so a service that was down overnight
             # fires once and moves on instead of delivering a backlog.
-            await store.schedule_next(
-                routine["id"],
-                cadence_rules.next_after(routine["cadence"], routine["timezone"], now),
-            )
+            #
+            # A one-shot (ENG-372) is NOT rescheduled: it keeps the claim's
+            # lease, and `record_outcome` retires it once delivered. A push
+            # that fails therefore re-fires when the lease lapses, under the
+            # same failure limit as any routine, instead of being lost.
+            if not cadence_rules.is_one_shot(routine["cadence"]):
+                await store.schedule_next(
+                    routine["id"],
+                    cadence_rules.next_after(routine["cadence"], routine["timezone"], now),
+                )
 
             scheduled_for = routine["scheduled_for"]
             signals.append(
@@ -97,6 +103,7 @@ async def poll(_member_sub: str) -> list[Signal]:
                     summary=_summary(routine),
                     payload={
                         "routine_id": routine["id"],
+                        "kind": routine.get("kind") or "routine",
                         "title": routine["title"],
                         "instruction": routine["instruction"],
                         "cadence": routine["cadence"],
@@ -132,16 +139,24 @@ async def record_outcome(signal: Signal, resolution: str) -> None:
     """
     if signal.source != SOURCE_NAME:
         return
-    outcome = _OUTCOMES.get(resolution)
-    if outcome is None:
-        return
     routine_id = signal.payload.get("routine_id")
     if not routine_id:
         return
+    one_shot = cadence_rules.is_one_shot(signal.payload.get("cadence") or {})
+    outcome = _OUTCOMES.get(resolution)
+    if outcome is None:
+        if not one_shot:
+            return
+        # A one-shot that resolved without running (unpermitted, filtered)
+        # is retired anyway: left leased, it would re-fire every lease
+        # interval forever.
+        outcome = "silent"
     try:
         await store.record_run(
             routine_id, outcome, get_settings().routine_failure_limit
         )
+        if one_shot and outcome != "error":
+            await store.expire(routine_id)
     except Exception:
         # The notification has already been delivered. Losing this row is
         # strictly better than letting it escape and re-resolve the signal.

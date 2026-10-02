@@ -234,7 +234,8 @@ async def test_a_malformed_expiry_is_refused(monkeypatch):
 async def test_listing_reports_cadence_and_last_outcome(monkeypatch):
     from eve.routines import tools
 
-    async def fake_list_for(member_sub):
+    async def fake_list_for(member_sub, kind=None):
+        assert kind == "routine"
         return [{**ROW, "last_outcome": "silent", "last_run_at": datetime(2026, 1, 10, tzinfo=UTC)}]
 
     monkeypatch.setattr(tools.store, "list_for", fake_list_for)
@@ -248,7 +249,8 @@ async def test_listing_reports_cadence_and_last_outcome(monkeypatch):
 async def test_listing_says_so_when_there_are_none(monkeypatch):
     from eve.routines import tools
 
-    async def fake_list_for(member_sub):
+    async def fake_list_for(member_sub, kind=None):
+        assert kind == "routine"
         return []
 
     monkeypatch.setattr(tools.store, "list_for", fake_list_for)
@@ -263,7 +265,8 @@ async def test_cancelling_by_title_deletes_the_match(monkeypatch):
 
     deleted = {}
 
-    async def fake_find(member_sub, text):
+    async def fake_find(member_sub, text, kind=None):
+        assert kind == "routine"
         return [ROW]
 
     async def fake_delete(member_sub, routine_id):
@@ -282,7 +285,8 @@ async def test_cancelling_by_title_deletes_the_match(monkeypatch):
 async def test_an_ambiguous_title_cancels_nothing_and_lists_the_candidates(monkeypatch):
     from eve.routines import tools
 
-    async def fake_find(member_sub, text):
+    async def fake_find(member_sub, text, kind=None):
+        assert kind == "routine"
         return [ROW, {**ROW, "id": "r-2", "title": "Flight club"}]
 
     async def unreachable(*args, **kwargs):

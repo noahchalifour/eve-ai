@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +48,12 @@ class MemoryBundle(TypedDict):
     # budget. Read by the span attributes in recall.py.
     vector_used: bool
     latency_ms: float
+    # ENG-296: this member's live shortcuts, loaded by `recall` alongside the
+    # always-on layers and rendered by `build_system_prompt`. NotRequired so
+    # a bundle checkpointed before this key existed still validates. Plain
+    # dicts (eve_shortcut rows), not Memory: a shortcut is executed, never
+    # read as a fact.
+    shortcuts: NotRequired[list[dict]]
 
 
 # Pydantic, not a dataclass: these are the structured-output schema handed to

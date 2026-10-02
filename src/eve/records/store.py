@@ -113,3 +113,47 @@ async def collections(member_sub: str) -> list[str]:
                 (member_sub,),
             )
             return [row[0] for row in await cur.fetchall()]
+
+async def delete_keys(member_sub: str, collection: str, keys: list[str]) -> list[str]:
+    """Delete this member's entries with these keys; returns the keys that
+    existed. Keyed rather than by id so a caller that only knows what the
+    member said ("take milk off the list") never has to read first.
+
+    Added for lists (ENG-372). Ordinary recorded data still has no delete
+    path through Eve: a list item is meant to go away, a logged run is not.
+    """
+    if not keys:
+        return []
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM eve_record"
+                " WHERE member_sub = %s AND collection = %s AND key = ANY(%s)"
+                " RETURNING key",
+                (member_sub, collection, list(keys)),
+            )
+            return [row[0] for row in await cur.fetchall()]
+
+
+async def clear(member_sub: str, collection: str) -> int:
+    """Delete every entry in one of this member's collections."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM eve_record WHERE member_sub = %s AND collection = %s",
+            (member_sub, collection),
+        )
+        return cur.rowcount
+
+
+async def collections_with_prefix(member_sub: str, prefix: str) -> list[str]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT DISTINCT collection FROM eve_record"
+                " WHERE member_sub = %s AND collection LIKE %s ORDER BY collection",
+                (member_sub, prefix.replace("%", r"\%").replace("_", r"\_") + "%"),
+            )
+            return [row[0] for row in await cur.fetchall()]
