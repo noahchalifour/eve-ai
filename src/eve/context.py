@@ -55,6 +55,14 @@ _RULES_PREAMBLE = (
 )
 
 
+def _render_shortcuts(rows: list) -> str:
+    if not rows:
+        return ""
+    from eve.shortcuts.tools import render
+
+    return render(rows)
+
+
 def build_system_prompt(
     persona: str,
     member: MemberContext,
@@ -99,9 +107,12 @@ def build_system_prompt(
         )
     if memory["digest"]:
         body += f"\n### Where this conversation has got to\n{memory['digest']}\n"
+    # ENG-296. Its own top-level section rather than a memory subsection: a
+    # shortcut is something Eve can do, not something she remembers.
+    shortcuts = _render_shortcuts(memory.get("shortcuts") or [])
     if not body:
-        return prompt
-    return prompt + "\n## What you remember\n" + body
+        return prompt + shortcuts
+    return prompt + "\n## What you remember\n" + body + shortcuts
 
 
 def principal_sub(config: RunnableConfig | None) -> str | None:

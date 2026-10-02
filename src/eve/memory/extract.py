@@ -26,7 +26,7 @@ from eve.memory.store import (
 from eve.memory.types import Extraction, Operation
 from eve.models import Tier, get_model
 from eve.settings import get_settings
-from eve.state import is_ambient_text, may_author, text_of
+from eve.state import is_ambient_text, may_author, text_of, turn_read_web
 from eve.ui import protocol
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ _AUTHORED_LAYERS = ("rule", "procedure")
 
 
 def _filter_authored(
-    ops: list[Operation], human: str, rule_ids: set[str]
+    ops: list[Operation], human: str, rule_ids: set[str], *, read_web: bool = False
 ) -> tuple[list[Operation], int]:
     """Drop rule and procedure operations unless this turn may author.
 
@@ -203,7 +203,9 @@ def _filter_authored(
     The predicate itself lives in eve.state, shared with write_skill: one
     guard, two authoring paths.
     """
-    allowed = may_author(human)
+    # A turn that read the web authors nothing either (ENG-372): the page
+    # text is in the transcript the REFLEX pass reads.
+    allowed = may_author(human) and not read_web
     kept, rejected = [], 0
     for op in ops:
         layer = getattr(op, "layer", None)
@@ -269,7 +271,8 @@ async def _run_extraction(state: dict, config: RunnableConfig) -> None:
             )
             rule_ids = {m.id for m in candidates if getattr(m, "layer", None) == "rule"}
             operations, rejected = _filter_authored(
-                list(result.operations), human, rule_ids
+                list(result.operations), human, rule_ids,
+                read_web=turn_read_web(state["messages"]),
             )
             counts = await apply_operations(operations, member, thread_id, run_id)
             rules_written = sum(

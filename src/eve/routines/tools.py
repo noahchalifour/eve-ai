@@ -19,7 +19,7 @@ from langgraph.prebuilt import InjectedState
 from eve.routines import cadence as cadence_rules, store
 from eve.settings import get_settings
 from eve.specialists.permissions import permission_denial
-from eve.state import EveState, turn_is_ambient
+from eve.state import WEB_AUTHORING_REFUSAL, EveState, turn_is_ambient, turn_read_web
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,16 @@ async def schedule_routine(
     # This is what makes a fork bomb unreachable.
     if turn_is_ambient(state.get("messages") or []):
         return _refuse_ambient(member)
+    # An instruction replayed unattended forever must not be written from
+    # web text (ENG-372).
+    if turn_read_web(state.get("messages") or []):
+        return WEB_AUTHORING_REFUSAL
 
     error = cadence_rules.validate(cadence)
+    if error is None and cadence_rules.is_one_shot(cadence):
+        # One-off messages are reminders, which are delivered verbatim and
+        # never cost a VOICE turn.
+        error = "a one-off belongs in set_reminder, not a routine"
     if error is not None:
         return f"That schedule was rejected: {error}."
 
@@ -150,7 +158,7 @@ async def list_routines(
         return denial
 
     try:
-        rows = await store.list_for(member["sub"])
+        rows = await store.list_for(member["sub"], kind="routine")
     except Exception as exc:
         logger.warning("list_routines failed", exc_info=True)
         return f"error: {exc.__class__.__name__}"
@@ -193,7 +201,7 @@ async def cancel_routine(
         return denial
 
     try:
-        matches = await store.find_by_title(member["sub"], reference)
+        matches = await store.find_by_title(member["sub"], reference, kind="routine")
     except Exception as exc:
         logger.warning("cancel_routine lookup failed", exc_info=True)
         return f"error: {exc.__class__.__name__}"

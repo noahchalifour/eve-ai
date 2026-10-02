@@ -305,6 +305,26 @@ class Settings(BaseSettings):
     # once should queue, not fan out to five agents on one box.
     linear_max_live_sessions: int = 3
 
+    # ENG-372 general-purpose tools. Off by default: web search and page
+    # reading send queries and URLs out of the household, through eve-tools.
+    # Calculator, date_time, calendar, weather and lists need no switch.
+    web_enabled: bool = False
+
+    # ENG-296 learned shortcuts. Off by default, like every learning path:
+    # a deployment that has not opted in learns nothing and binds no
+    # run_shortcut.
+    shortcuts_enabled: bool = False
+    # Uncontradicted observations of one fingerprint, inside the window,
+    # before it becomes a shortcut.
+    shortcut_promote_after: int = 3
+    shortcut_window_days: int = 30
+    # Consecutive failed runs before a shortcut retires itself.
+    shortcut_max_failures: int = 3
+    # Shortcuts unused this long drop out of the prompt (the row stays).
+    shortcut_idle_days: int = 90
+    # How many go in the prompt.
+    shortcut_prompt_limit: int = 12
+
     # EVE-21 images. A member photo lives 30 days by explicit decision, not
     # forever by default; an Immich copy is a cache of something Immich
     # already keeps, so a day is enough (spec 2.4).

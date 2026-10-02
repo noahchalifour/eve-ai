@@ -76,6 +76,35 @@ def turn_is_ambient(messages: list) -> bool:
     return True
 
 
+# Tools whose result is text from the open web (ENG-372). Named here, not in
+# `eve.general`, so `state` keeps importing nothing from the tool modules.
+WEB_TOOL_NAMES = frozenset({"web_search", "fetch_url"})
+
+
+def turn_read_web(messages: list) -> bool:
+    """True when this turn has already called a web tool.
+
+    The rule (Phase 5a design 6.3, extended): tool results are not authoring
+    input. A page can say anything, and a turn that read one must not author
+    a rule, a procedure, or an unattended routine out of what it said. Read
+    from the messages since the member last spoke, the same window
+    `graph._tool_rounds_this_turn` uses, so the restriction resets per turn.
+    """
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            return False
+        for call in getattr(message, "tool_calls", None) or []:
+            if call.get("name") in WEB_TOOL_NAMES:
+                return True
+    return False
+
+
+WEB_AUTHORING_REFUSAL = (
+    "Not from this turn: it read content from the web, and I do not set up "
+    "standing behaviour from what a web page says. Ask me again directly."
+)
+
+
 def text_of(content) -> str:
     """Content is a string on the Chat Completions path and a list of blocks
     on the Responses path - the same split `eve_ambient.notify._text_of`

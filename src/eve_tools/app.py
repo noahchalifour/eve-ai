@@ -21,6 +21,7 @@ from eve_tools import (
     mcp_dispatch,
     monarch,
     weather,
+    web,
 )
 from eve_tools.settings import get_tools_settings
 
@@ -60,6 +61,10 @@ _HANDLERS = {
     "health.get_activity": lambda a: health.get_activity(
         a["member_sub"], a.get("days", 1)
     ),
+    # ENG-372. `web.fetch` builds its own credential-free client and guards
+    # every hop against private and cluster addresses (eve_tools.web, ADR 0022).
+    "web.search": lambda a: web.search(a["query"], a.get("max_results", 5)),
+    "web.fetch": lambda a: web.fetch(a["url"], a.get("max_chars", 8000)),
     "mcp.invoke": lambda a: mcp_dispatch.invoke(
         a["server_id"], a["tool_name"], a["arguments"]
     ),

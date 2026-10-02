@@ -149,6 +149,8 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
         spent = sum(len(m.content) // 4 for m in (*profile, *household, *rules))
         episodic = fit_budget(episodic, settings.memory_token_budget - spent)
 
+        shortcuts = await _shortcuts_for(sub) if settings.shortcuts_enabled else []
+
         latency_ms = (perf_counter() - started) * 1000
         _record_span(
             profile, household, episodic, rules, vector_used, latency_ms, joined
@@ -163,11 +165,27 @@ async def recall(state: dict, config: RunnableConfig) -> dict:
                 digest=digest,
                 vector_used=vector_used,
                 latency_ms=latency_ms,
+                shortcuts=shortcuts,
             )
         }
     finally:
         if embed_task is not None:
             await _cancel_and_await(embed_task)
+
+
+async def _shortcuts_for(sub: str) -> list[dict]:
+    """ENG-296. A failure here costs the turn its shortcuts, never its
+    memory: Eve falls back to the specialists she always had."""
+    from eve.shortcuts import store as shortcut_store
+
+    settings = get_settings()
+    try:
+        return await shortcut_store.active_for(
+            sub, settings.shortcut_prompt_limit, settings.shortcut_idle_days
+        )
+    except Exception:
+        logger.warning("recall: could not load shortcuts", exc_info=True)
+        return []
 
 
 def _fuse_memories(lexical: list[Memory], vectors: list[Memory]) -> list[Memory]:

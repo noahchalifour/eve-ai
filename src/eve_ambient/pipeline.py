@@ -156,7 +156,7 @@ async def handle_signal(
             continue
         try:
             await store.record_notice(
-                sub, signal.source, signal.key, verdict.urgent, thread_id
+                sub, signal.source, signal.key, verdict.urgent, thread_id or None
             )
         except Exception:
             # The push already happened and the thread already exists (fix

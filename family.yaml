@@ -51,6 +51,9 @@ members:
       # schedule. A bare noun like `finances`, because the tools are the
       # only write surface and there is no read-only half to distinguish.
       - routines
+      # ENG-372: web search and reading a page, through eve-tools. Sends
+      # the query or URL out of the household, so it is a grant, not a given.
+      - web
     # Phase 6: the Immich album holding his clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""
@@ -83,6 +86,9 @@ members:
       # schedule. A bare noun like `finances`, because the tools are the
       # only write surface and there is no read-only half to distinguish.
       - routines
+      # ENG-372: web search and reading a page, through eve-tools. Sends
+      # the query or URL out of the household, so it is a grant, not a given.
+      - web
     # Phase 6: the Immich album holding her clothes, catalogued by
     # `eve-wardrobe sync`. Find the id in Immich's album URL.
     wardrobe_album: ""

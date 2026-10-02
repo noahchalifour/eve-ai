@@ -65,6 +65,10 @@ class ToolsSettings(BaseSettings):
     # the one above expires. Unset, a 401 fails as it always has.
     linear_client_id: str = ""
     linear_client_secret: str = ""
+    # ENG-372: the cluster's SearXNG, e.g. http://searxng.searxng.svc:8080.
+    # Unset means `web.search` answers an error. No key: SearXNG is
+    # self-hosted and unauthenticated inside the cluster.
+    searxng_url: str = ""
 
 
 @lru_cache(maxsize=1)

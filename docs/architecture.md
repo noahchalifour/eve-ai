@@ -846,6 +846,62 @@ committed to a table that will run unattended. The mounted surface only
 lists, patches (title, cadence, status, expiry, each under optimistic
 concurrency), and deletes what already exists.
 
+## General-purpose tools
+
+ENG-372. Things any assistant is expected to do that are not a household
+domain, all top-level on Eve (`src/eve/general/`) rather than a specialist:
+each is one deterministic call with no inner reasoning loop.
+
+| Tool | Where it runs | Gate |
+|---|---|---|
+| `calculate` | local: whitelisted AST walk; unit conversions via `pint` | none |
+| `date_time` | local: `zoneinfo`; relative phrases resolved against the member's clock | none |
+| `get_calendar` | eve-tools `calendar.list_events` | `calendar.read`, checked before the call |
+| `get_weather` | eve-tools `home.weather` | none |
+| `list_add` / `list_show` / `list_remove` / `list_clear` | `eve_record`, collection `list.<slug>` | household scope writes need `memory.write_shared` |
+| `set_reminder` / `list_reminders` / `cancel_reminder` | `eve_routine`, `kind='reminder'` | `EVE_ROUTINES_ENABLED` + `routines` |
+| `web_search` / `fetch_url` | eve-tools `web.search` (SearXNG) / `web.fetch` | `EVE_WEB_ENABLED` + `web` |
+
+**Reminders are one-shot routines.** A `{"once_at": <aware ISO>}` cadence
+joins the closed vocabulary; the routines source claims a due reminder with
+the same lease, does not reschedule it, and `notify.deliver` pushes the
+member's own words with no thread and no VOICE turn. `record_outcome`
+expires it once delivered; a failed push is a `DeliveryError`, so the lease
+re-fires it under the routine failure limit instead of losing it.
+
+**Lists** are keyed records: `key` is the normalised item text, so a repeat
+is idempotent and removal needs no lookup. Household lists live under the
+sentinel owner `household:shared`. `eve.records.store` gained keyed delete
+and clear for this; recorded data in general still has no delete path
+through Eve.
+
+**Web.** See [ADR 0022](adr/0022-web-access-goes-through-eve-tools.md):
+both handlers live in eve-tools; the fetch builds its own credential-free
+client, resolves and pins public addresses, and guards every redirect hop.
+Fetched text reaches the model wrapped as untrusted content, and a turn that
+called a web tool may not author a rule, procedure, routine or reminder
+(`eve.state.turn_read_web`).
+
+## Learned shortcuts
+
+ENG-296, [ADR 0021](adr/0021-learned-shortcuts-are-a-table.md). When a
+specialist run reduces to exactly one call from
+`eve.shortcuts.allowlist.FAST_ACTIONS` (discovery such as `list_entities`
+stripped), `build_specialist` hands the trace to `eve.shortcuts.capture`,
+which records an observation in a detached task. Three uncontradicted
+observations of one fingerprint in 30 days promote it to an `eve_shortcut`
+row; observations differing only in the variant argument (`turn_on` vs
+`turn_off`) collapse into one shortcut whose options are the observed values.
+
+`recall` loads the member's live shortcuts with the always-on memory layers,
+and `build_system_prompt` renders them under "Your shortcuts". Eve calls
+`run_shortcut(name, option)`, which re-checks permission and the allowlist,
+calls eve-tools directly, and on failure tells Eve to use the specialist in
+the same turn (three consecutive failures retire it). A turn that opens with
+a correction retracts the thread's last observation. `eve-shortcut
+list|show|revoke` is the operator surface. Off by default
+(`EVE_SHORTCUTS_ENABLED`).
+
 ## Auth and thread scoping
 
 `src/eve/auth.py` registers a `langgraph_sdk.Auth` instance with two
@@ -1744,3 +1800,5 @@ a computer - the pod spec, not the user account, is what contains her.
 - [ADR 0018 — Openers are a thread-free, chip-only run](adr/0018-openers-are-a-thread-free-chip-only-run.md)
 - [ADR 0019 — One generic record store, and widgets are recipes over it](adr/0019-one-generic-record-store.md)
 - [ADR 0020 — The harness route is a layer the pulled profile cannot reach](adr/0020-the-harness-route-is-a-layer-the-profile-cannot-reach.md)
+- [ADR 0021 — Learned shortcuts are a table, not a memory layer](adr/0021-learned-shortcuts-are-a-table.md)
+- [ADR 0022 — Web access goes through eve-tools](adr/0022-web-access-goes-through-eve-tools.md)

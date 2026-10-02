@@ -25,8 +25,12 @@ from eve.memory.db import get_pool
 _COLUMNS = (
     "id, member_sub, title, instruction, cadence, timezone, status,"
     " next_run_at, last_run_at, last_outcome, consecutive_failures,"
-    " expires_at, revision, created_at, updated_at"
+    " expires_at, revision, created_at, updated_at, kind"
 )
+
+# `routine` is a standing request Eve carries out with a VOICE turn;
+# `reminder` (ENG-372) is a one-shot message delivered verbatim, no model.
+KINDS = ("routine", "reminder")
 
 # Only these may be written through `update`. A caller cannot reach
 # consecutive_failures, revision, or member_sub by naming them.
@@ -53,15 +57,18 @@ async def create(
     timezone: str,
     next_run_at: datetime,
     expires_at: datetime | None,
+    kind: str = "routine",
 ) -> dict:
+    if kind not in KINDS:
+        raise ValueError(f"unknown routine kind {kind!r}")
     pool = await get_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "INSERT INTO eve_routine"
                 " (member_sub, title, instruction, cadence, timezone,"
-                "  next_run_at, expires_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                "  next_run_at, expires_at, kind)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                 f" RETURNING {_COLUMNS}",
                 (
                     member_sub,
@@ -71,19 +78,23 @@ async def create(
                     timezone,
                     next_run_at,
                     expires_at,
+                    kind,
                 ),
             )
             return _row(await cur.fetchone())
 
 
-async def list_for(member_sub: str) -> list[dict]:
+async def list_for(member_sub: str, kind: str | None = None) -> list[dict]:
+    """Every row this member owns, or only one kind. `None` is the Routines
+    screen's read, which shows both."""
     pool = await get_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_COLUMNS} FROM eve_routine"
-                " WHERE member_sub = %s ORDER BY created_at DESC",
-                (member_sub,),
+                " WHERE member_sub = %s AND (%s::text IS NULL OR kind = %s)"
+                " ORDER BY created_at DESC",
+                (member_sub, kind, kind),
             )
             return [_row(dict(row)) for row in await cur.fetchall()]
 
@@ -102,7 +113,9 @@ async def get(member_sub: str, routine_id: str) -> dict | None:
             return _row(await cur.fetchone())
 
 
-async def find_by_title(member_sub: str, text: str) -> list[dict]:
+async def find_by_title(
+    member_sub: str, text: str, kind: str | None = None
+) -> list[dict]:
     """Substring, case-insensitive, because a member says "stop tracking
     flights" and not a uuid. The caller decides what an ambiguous match
     means."""
@@ -112,8 +125,9 @@ async def find_by_title(member_sub: str, text: str) -> list[dict]:
             await cur.execute(
                 f"SELECT {_COLUMNS} FROM eve_routine"
                 " WHERE member_sub = %s AND title ILIKE %s"
+                "   AND (%s::text IS NULL OR kind = %s)"
                 " ORDER BY created_at DESC",
-                (member_sub, f"%{text}%"),
+                (member_sub, f"%{text}%", kind, kind),
             )
             return [_row(dict(row)) for row in await cur.fetchall()]
 

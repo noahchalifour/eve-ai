@@ -59,6 +59,13 @@ from eve.specialists.mail import ask_mail
 from eve.specialists.stylist import ask_stylist
 from eve.state import LOOP_EXHAUSTED as _LOOP_EXHAUSTED, EveState
 from eve.dashboards import setup as dashboard_setup
+from eve.general.calc import calculate
+from eve.general.lists import list_add, list_clear, list_remove, list_show
+from eve.general.lookups import fetch_url, get_calendar, get_weather, web_search
+from eve.general.reminders import cancel_reminder, list_reminders, set_reminder
+from eve.general.timeutil import date_time
+from eve.shortcuts import capture as shortcut_capture
+from eve.shortcuts.tools import run_shortcut
 from eve.suggest import openers as openers_node, openers_requested, suggest as suggest_node
 from eve.title import title as title_node
 from eve.tools_authoring.propose import propose_tool
@@ -86,6 +93,17 @@ _BASE_TOOLS = [
     # The one authoring entry point for widgets; its own guards check kind,
     # recipe shape, and permissions before anything is stored.
     save_widget,
+    # ENG-372 general-purpose tools that need no switch: local computation,
+    # or a read the member's existing grant already covers (calendar.read is
+    # checked inside get_calendar; weather and lists are household-level).
+    calculate,
+    date_time,
+    get_calendar,
+    get_weather,
+    list_add,
+    list_show,
+    list_remove,
+    list_clear,
 ]
 
 
@@ -124,6 +142,16 @@ def _static_tools(config: RunnableConfig | None = None) -> list:
         tools.append(schedule_routine)
         tools.append(list_routines)
         tools.append(cancel_routine)
+        # Reminders are one-shot routines (ENG-372): same switch, same
+        # ambient pipeline delivers them.
+        tools.append(set_reminder)
+        tools.append(list_reminders)
+        tools.append(cancel_reminder)
+    if settings.web_enabled:
+        tools.append(web_search)
+        tools.append(fetch_url)
+    if settings.shortcuts_enabled:
+        tools.append(run_shortcut)
     # Not a setting but the connected client's own capability declaration
     # (`config.configurable.assistant_ui`). A second setting for the same
     # question would be a second thing to keep in step, and a surface emitted
@@ -194,6 +222,20 @@ _TOOL_LABELS = {
     "schedule_routine": "Setting that up to run on a schedule",
     "list_routines": "Checking what I am watching for you",
     "cancel_routine": "Stopping that routine",
+    "calculate": "Working that out",
+    "date_time": "Checking the time",
+    "get_calendar": "Checking your calendar",
+    "get_weather": "Checking the weather",
+    "web_search": "Looking that up",
+    "fetch_url": "Reading that page",
+    "set_reminder": "Setting a reminder",
+    "list_reminders": "Checking your reminders",
+    "cancel_reminder": "Cancelling that reminder",
+    "list_add": "Adding that to the list",
+    "list_show": "Checking the list",
+    "list_remove": "Taking that off the list",
+    "list_clear": "Clearing the list",
+    "run_shortcut": "Taking care of that",
 }
 
 
@@ -389,6 +431,12 @@ def build_graph(
             # `max_tool_loop_iterations` times and nothing changes between
             # passes, so the extra frames are stream noise.
             ui_stream.emit_tool_labels(_labels_for(static))
+            # ENG-296: a turn opening with a correction retracts the last
+            # shortcut observation on this thread. Detached, no model call.
+            shortcut_capture.note_turn_start(
+                state["messages"], state["member"]["sub"],
+                (config.get("configurable") or {}).get("thread_id"),
+            )
         bound_model = model.bind_tools([*static, *dynamic])
         # Through the MODULE, not a from-import. `tests/test_graph.py`
         # monkeypatches `eve.context.load_persona`, and a module-level
